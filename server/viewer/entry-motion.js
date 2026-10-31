@@ -7,7 +7,7 @@ export function layoutBounds(node) {
 }
 export function revealProgress(rect, viewport, edge) {
   const height = viewport.bottom - viewport.top;
-  const end = viewport.line + (edge === 'bottom' ? 1 : -1) * height * .15;
+  const end = viewport.line + (edge === 'bottom' ? 1 : -1) * height * .10;
   return Math.max(0, Math.min(1, edge === 'bottom'
     ? (viewport.bottom - rect.top) / Math.max(1, viewport.bottom - end)
     : (rect.bottom - viewport.top) / Math.max(1, end - viewport.top)));
@@ -56,7 +56,7 @@ export function createEntryMotion({ container, viewport, signal }) {
       const view = viewport();
       for (const unit of groups) {
         const rect = layoutBounds(unit.nodes[0]);
-        if (rect.top <= view.line + (view.bottom - view.top) * .15 && rect.bottom >= view.top) settle(unit);
+        if (rect.top <= view.line + (view.bottom - view.top) * .10 && rect.bottom >= view.top) settle(unit);
         else if (rect.bottom < view.top) unit.edge = 'top';
       }
     }
@@ -94,7 +94,6 @@ export function createEntryMotion({ container, viewport, signal }) {
         if (!rects.some(rect => rect.bottom > view.top && rect.top < view.bottom)) continue;
         unit.progress = Math.max(unit.progress, ...rects.map(rect => revealProgress(rect, view, unit.edge)));
         if (unit.progress >= 1) { settle(unit); continue; }
-        for (const node of unit.nodes) node.style.filter = `blur(${(1 - unit.progress) * 4}px)`;
         if (unit.state === 'armed' && unit.progress >= .25) {
           const distance = unit.kind === 'prompt' ? -36 : innerWidth <= 760 ? -22 : 28;
           unit.state = 'playing';

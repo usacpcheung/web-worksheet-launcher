@@ -1000,7 +1000,7 @@ export default {
       "saving": "儲存中..."
     },
     "stepper": {
-      "content": "內容",
+      "content": "閱讀",
       "instruction": "說明",
       "instructionNumber": "第 {number} 個說明",
       "question": "題目",

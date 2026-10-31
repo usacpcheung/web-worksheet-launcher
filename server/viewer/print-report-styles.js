@@ -7,8 +7,8 @@ export const PRINT_REPORT_CSS = `
 
     :root {
       color-scheme: light;
-      font-family: "Worksheet Chinese", "Georgia", "Times New Roman", serif;
-      color: #111;
+      font-family: "Worksheet Chinese", Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      color: #20344d;
       background: #fff;
     }
 
@@ -18,10 +18,10 @@ export const PRINT_REPORT_CSS = `
 
     body {
       margin: 0;
-      color: #111;
+      color: #20344d;
       background: #fff;
       font-size: 11.5pt;
-      line-height: 1.45;
+      line-height: 1.65;
     }
 
     .print-report {
@@ -48,8 +48,8 @@ export const PRINT_REPORT_CSS = `
       margin: 0 0 2.4mm;
       text-align: center;
       font-size: 15.5pt;
-      line-height: 1.2;
-      font-weight: 700;
+      line-height: 1.3;
+      font-weight: 600;
     }
 
     .print-meta {
@@ -74,9 +74,10 @@ export const PRINT_REPORT_CSS = `
       font-weight: 400;
     }
 
-    .print-question {
-      margin: 0 0 9mm;
-      padding: 0 0 4mm;
+    .print-question, .print-content {
+      margin: 0 0 7mm;
+      padding: 7mm 0 7mm 12mm;
+      border-bottom: 0.25mm solid #dce6f5;
       background: transparent;
       break-inside: auto;
       page-break-inside: auto;
@@ -92,12 +93,108 @@ export const PRINT_REPORT_CSS = `
     .print-question-header {
       break-after: avoid;
       page-break-after: avoid;
-      margin-bottom: 3mm;
+      margin: 0;
+      height: 0;
     }
 
     .print-question-number {
-      font-size: 13pt;
-      font-weight: 700;
+      position: relative;
+      margin: 0;
+      font-size: 9pt;
+      font-weight: 500;
+      color: #256ac4;
+    }
+
+    .print-question-ordinal {
+      position: absolute;
+      right: calc(100% + 3mm);
+      top: -1.5mm;
+      font-size: 22pt;
+      line-height: 1.2;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .print-question-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 7mm;
+      align-items: start;
+    }
+
+    .print-question--flow .print-question-layout {
+      display: block;
+    }
+
+    .print-question--flow .print-answer-area {
+      margin-top: 5mm;
+    }
+
+    .print-prompt-area, .print-answer-area {
+      min-width: 0;
+    }
+
+    .print-content-text {
+      overflow-wrap: anywhere;
+      line-height: 1.8;
+    }
+
+    .print-question-section--prompt > h3 {
+      display: none;
+    }
+
+    .print-answer-text {
+      border: 0.25mm solid #c8d7e0;
+      border-radius: 3mm;
+      background: #f8fbff;
+      padding: 4mm;
+      min-height: 15mm;
+      overflow-wrap: anywhere;
+    }
+
+    .print-choices {
+      display: flex;
+      flex-direction: column;
+      gap: 2.5mm;
+      margin-bottom: 3mm;
+    }
+
+    .print-choice {
+      display: flex;
+      align-items: baseline;
+      gap: 2.5mm;
+      border: 0.25mm solid #cbd8e1;
+      border-radius: 3mm;
+      padding: 3mm;
+      break-inside: avoid;
+    }
+
+    .print-choice-label {
+      flex: 1;
+      min-width: 0;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+
+    .print-choice-prefix, .print-choice-mark {
+      flex: none;
+      font-weight: 600;
+    }
+
+    .print-choice-mark { min-width: 3mm; }
+    .print-choice.is-selected { background: #edf5ff; border-color: #256ac4; }
+    .print-choices--boolean { flex-direction: row; }
+    .print-choices--boolean .print-choice { flex: 1; min-width: 0; }
+    .print-choice.is-selected[data-boolean-value="true"] { background: #e8f6ee; border-color: #88ba9b; }
+    .print-choice.is-selected[data-boolean-value="false"] { background: #fbeff0; border-color: #d5a3ab; }
+
+    .print-choices + .print-answer-text {
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      min-height: 0;
+      background: transparent;
+      font-size: 9pt;
     }
 
     .print-question-section {
@@ -128,9 +225,8 @@ export const PRINT_REPORT_CSS = `
     .print-question-section h3 {
       margin: 0 0 2mm;
       font-size: 10pt;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      color: #444;
+      font-weight: 400;
+      color: #526985;
       break-after: avoid;
       page-break-after: avoid;
     }
@@ -145,7 +241,23 @@ export const PRINT_REPORT_CSS = `
       word-break: break-word;
     }
 
-    .print-question-text { font-weight: 500; }
+    .print-question-text { font-size: 12pt; font-weight: 450; line-height: 1.65; overflow-wrap: anywhere; }
+
+    /* Same prompt hierarchy at the print base size. */
+    .print-question-text.worksheet-text :is(h2, h3, h4, h5, h6) {
+      font-weight:600;
+      line-height:1.3;
+      margin:.9em 0 .3em;
+    }
+    .print-question-text.worksheet-text h2 { font-size:1.35em; }
+    .print-question-text.worksheet-text h3 { font-size:1.18em; }
+    .print-question-text.worksheet-text h4 { font-size:1.08em; }
+    .print-question-text.worksheet-text :is(h5, h6) { font-size:1em; }
+    .print-question-text.worksheet-text strong { font-weight:700; }
+    .print-question-text.worksheet-text :is(ul, ol) { margin:.55em 0; padding-inline-start:1.5em; }
+    .print-question-text.worksheet-text li + li { margin-top:.25em; }
+    .print-question-text.worksheet-text blockquote { margin:.6em 0; padding-inline-start:.8em; border-color:#b7cce6; }
+    .print-question-text.worksheet-text > :first-child { margin-top:0; }
 
     .print-question-image-wrap {
       margin-top: 0;

@@ -32,7 +32,7 @@ export function describeSections(blocks, t) {
   });
 }
 
-export function createWorksheetNavigation({ t, actions, navigate, operationPanel, signal }) {
+export function createWorksheetNavigation({ t, actions, navigate, operationPanel, utilityActions, utilityHome, signal }) {
   const root = make('div', 'viewer-navigation');
   const panel = make('aside', 'viewer-action-panel');
   panel.setAttribute('aria-label', t('viewer.navigation.actions'));
@@ -67,7 +67,8 @@ export function createWorksheetNavigation({ t, actions, navigate, operationPanel
   const head = make('div', 'viewer-chooser__header');
   const title = make('h2', '', t('viewer.navigation.browse'));
   title.id = 'viewer-chooser-title';
-  const close = button('viewer-chooser__close', '×');
+  const close = button('viewer-chooser__close');
+  close.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="m6 6 12 12M18 6 6 18"/></svg>';
   close.setAttribute('aria-label', t('common.actions.close'));
   head.append(title, close);
   const location = make('p', 'viewer-chooser__location');
@@ -172,10 +173,17 @@ export function createWorksheetNavigation({ t, actions, navigate, operationPanel
   }
   const adapt = () => {
     const active = document.activeElement;
+    const utilityFocused = utilityActions?.contains(active);
     closeDrawer(false);
     if (narrow.matches) drawer.append(panel);
     else root.prepend(panel);
-    if (panel.contains(active) || active === drawerClose || (!narrow.matches && active === launcher)) {
+    // Move the existing controls, retaining handlers, state and their mobile home.
+    if (utilityActions && utilityHome) {
+      if (narrow.matches) utilityHome.append(utilityActions);
+      else panel.prepend(utilityActions);
+    }
+    if (utilityFocused) active.focus({ preventScroll: true });
+    else if (panel.contains(active) || active === drawerClose || (!narrow.matches && active === launcher)) {
       (narrow.matches ? launcher : browse).focus({ preventScroll: true });
     }
     scheduleFit();
@@ -204,7 +212,7 @@ export function createWorksheetNavigation({ t, actions, navigate, operationPanel
         if (!entry.isQuestion) mark.innerHTML = bookIcon;
         mark.setAttribute('aria-hidden', 'true');
         const words = make('span', 'viewer-chooser__words');
-        words.append(make('span', 'viewer-chooser__title', entry.title || entry.label), make('span', 'viewer-chooser__kind', entry.label));
+        words.append(make('span', 'viewer-chooser__title', entry.title || (entry.isQuestion ? entry.label : t('common.values.untitled'))));
         const state = make('span', 'viewer-chooser__state');
         state.setAttribute('aria-hidden', 'true');
         row.append(mark, words, state);
@@ -217,6 +225,8 @@ export function createWorksheetNavigation({ t, actions, navigate, operationPanel
     current = activeIndex;
     const entry = entries[current];
     if (!entry) return;
+    ringLabel.classList.toggle('viewer-sr-only', !entry.isQuestion);
+    location.classList.toggle('viewer-sr-only', !entry.isQuestion);
     setText(ringLabel, t(entry.isQuestion ? 'viewer.navigation.currentQuestion' : 'viewer.navigation.currentReading'));
     if (entry.isQuestion) setText(ringValue, String(entry.number));
     else if (!ringValue.firstElementChild) ringValue.innerHTML = bookIcon;

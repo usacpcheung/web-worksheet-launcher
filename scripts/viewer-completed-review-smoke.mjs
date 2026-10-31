@@ -104,7 +104,7 @@ for(const locale of ['en','zh-Hant']) {
   // Text questions are not automatically graded by the existing viewer.
   assert.equal(await current.locator('.viewer-check-banner').count(),0);
   // Navigate through the existing accessible next-block control.
-  await clickViewerAction(page, locale==='en'?'Next section':'下一節');
+  await clickViewerAction(page, locale==='en'?'Next':'下一節');
   await current.locator('.question-card__review-status').waitFor();
   assert.equal(await current.locator('.question-card__review-status').inputValue(),locale==='en'?'Not answered':'未作答');
   assert.equal(await field().isVisible(),false);
@@ -116,7 +116,7 @@ for(const locale of ['en','zh-Hant']) {
   await current.locator('.question-card__review-status').evaluate(e=>e.scrollIntoView({block:'center'}));
   assert.equal(await current.locator('.question-card__review-status').evaluate(e=>e.getBoundingClientRect().bottom<=innerHeight),true);
   await shot('review-'+locale+'-'+width+'-unanswered.png');
-  await clickViewerAction(page, locale==='en'?'Next section':'下一節');
+  await clickViewerAction(page, locale==='en'?'Next':'下一節');
   const number=current.locator('.viewer-answer-area > input');
   assert.equal(await number.inputValue(),'7');
   assert.equal(await number.isDisabled(),true);

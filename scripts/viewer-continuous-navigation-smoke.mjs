@@ -202,7 +202,10 @@ try {
   await section('q1').locator('.question-card__voice-btn').click();
   await page.waitForFunction(() => window.viewerSession.voice.active?.state === 'recording');
   await page.mouse.move(width / 2, 100);
-  await page.mouse.wheel(0, -100);
+  // The voice button may require scrolling within a tall mobile question.
+  // Cross the real boundary instead of assuming a fixed 100px reaches it.
+  const reverseDistance = await section('q1').evaluate(node => Math.max(100, innerHeight * .45 - node.getBoundingClientRect().top + 100));
+  await page.mouse.wheel(0, -reverseDistance);
   await page.waitForFunction(() => window.viewerSession.state.lastActiveBlockId === 'intro');
   await ready;
   const beforeReverseCompletion = await page.evaluate(() => ({ y: scrollY, focus: document.activeElement.id }));

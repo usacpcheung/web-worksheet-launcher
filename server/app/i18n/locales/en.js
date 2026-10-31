@@ -659,8 +659,8 @@ export default {
     navigation: {
       "actions": "Worksheet actions",
       "browse": "Browse worksheet",
-      "previousSection": "Previous section",
-      "nextSection": "Next section",
+      "previousSection": "Previous",
+      "nextSection": "Next",
       "previousPage": "Previous page",
       "nextPage": "Next page",
       "page": "{page} / {total}",
@@ -1000,7 +1000,7 @@ export default {
       "saving": "Saving..."
     },
     "stepper": {
-      "content": "Content",
+      "content": "Reading",
       "instruction": "Instruction",
       "instructionNumber": "Instruction Number {number}",
       "question": "Question",

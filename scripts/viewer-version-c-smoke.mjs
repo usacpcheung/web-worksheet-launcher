@@ -33,6 +33,32 @@ try {
   assert.equal(await page.locator('.viewer-section-label').count(),20);
   assert.deepEqual(await page.locator('.viewer-section-label').allTextContents(),Array.from({length:20},(_,i)=>i%5===0?(locale==='en'?`Reading ${i/5+1}`:`閱讀 ${i/5+1}`):(locale==='en'?`Question ${i-Math.floor(i/5)}`:`第 ${i-Math.floor(i/5)} 題`)));
   assert.equal(await page.locator('.viewer-progress-count').innerText(),locale==='en'?'Answered 2/16':'已作答 2/16');
+  const utilities=page.locator('.viewer-header-actions');
+  await utilities.evaluate(node=>{window.originalUtilities=node;window.originalLanguageTrigger=node.querySelector('summary');});
+  assert(await utilities.evaluate(node=>node.parentElement.matches('.viewer-action-panel')));
+  assert(await utilities.evaluate(node=>node.getBoundingClientRect().bottom<document.querySelector('.viewer-progress-ring').getBoundingClientRect().top));
+  const utilityBounds=await utilities.locator(':scope > button:visible, :scope > details > summary').evaluateAll(nodes=>nodes.map(n=>{const r=n.getBoundingClientRect();return {top:r.top,width:r.width,height:r.height};}));
+  assert.equal(utilityBounds.length,4);
+  assert(utilityBounds.every(r=>r.width===40&&r.height===40&&Math.abs(r.top-utilityBounds[0].top)<1));
+  await utilities.locator('summary').click();
+  assert(await utilities.locator('.language-selector__menu').evaluate(node=>{
+   const r=node.getBoundingClientRect(),panel=node.closest('.viewer-action-panel').getBoundingClientRect();
+   return r.left>=panel.left&&r.right<=panel.right&&r.bottom<=panel.bottom;
+  }),'desktop language menu is not clipped by the action rail');
+  await utilities.locator('.language-selector__option').filter({hasText:locale==='en'?'English':'繁體中文'}).click();
+  await utilities.locator('summary').focus();
+  await page.setViewportSize({width:390,height:844});
+  await page.waitForFunction(()=>window.originalUtilities.parentElement.matches('.viewer-header-top')&&document.activeElement===window.originalLanguageTrigger);
+  await page.setViewportSize({width:1280,height:900});
+  await page.waitForFunction(()=>window.originalUtilities.parentElement.matches('.viewer-action-panel')&&document.activeElement===window.originalLanguageTrigger);
+  assert.deepEqual(await page.locator('.viewer-header h1').evaluate(n=>{const s=getComputedStyle(n);return [s.fontSize,s.fontWeight];}),['48px','600']);
+  assert.deepEqual(await page.locator('.viewer-question-number').first().evaluate(n=>{const s=getComputedStyle(n);return [s.fontSize,s.fontWeight];}),['36px','500']);
+  assert.deepEqual(await page.locator('.viewer-question-number').allTextContents(),Array.from({length:16},(_,i)=>String(i+1).padStart(2,'0')));
+  assert.equal(await page.locator('.viewer-answer-area .viewer-question-heading').count(),0,'question identity stays with the prompt, outside the answer area');
+  assert.equal(await page.locator('.viewer-question-kind, .viewer-chooser__kind').count(),0);
+  assert.equal(await page.locator('.viewer-section-label:not(.viewer-sr-only)').count(),0);
+  assert(await page.locator('.viewer-progress-ring__label').evaluate(node=>node.classList.contains('viewer-sr-only')));
+  assert.equal(await page.locator('.viewer-progress-ring .viewer-book-icon').count(),1);
   // Equal answer surfaces, reserved audio column, single/multi track size parity.
   const sizes=await page.locator('[data-block-id="b4"] .choice-button-group__row').evaluateAll(rows=>rows.map(r=>({answer:r.firstElementChild.getBoundingClientRect().width,audio:r.querySelector('.viewer-audio-control__trigger')?.getBoundingClientRect().width})));
   assert(sizes.every(r=>Math.abs(r.answer-sizes[0].answer)<1));
@@ -43,7 +69,21 @@ try {
   for (const width of [1280,320]) {
    await page.setViewportSize({width,height:900});
    await chooseViewerSection(page,1);
+   const geometry=await page.locator('[data-block-id="b1"]').evaluate(section=>{
+    const bounds=selector=>section.querySelector(selector).getBoundingClientRect();
+    const number=bounds('.viewer-question-number'), heading=bounds('.viewer-question-heading'), prompt=bounds('.question-card__prompt-row');
+    return {numberLeft:number.left,numberRight:number.right,headingLeft:heading.left,headingBottom:heading.bottom,promptTop:prompt.top,overflow:document.documentElement.scrollWidth-innerWidth};
+   });
+   assert(geometry.numberLeft>=0&&geometry.numberRight<=geometry.headingLeft&&geometry.headingBottom<=geometry.promptTop&&geometry.overflow<=0,JSON.stringify(geometry));
+   if(width===320) assert(await page.evaluate(()=>{
+    const edge=document.querySelector('.viewer-actions-launcher').getBoundingClientRect().left;
+    return [...document.querySelectorAll('.viewer-answer-area > input, .viewer-answer-area > textarea, .choice-button-group__item, .boolean-segmented-control')]
+     .filter(node=>!node.hidden).every(node=>node.getBoundingClientRect().right<=edge-4);
+   }),'answer controls retain clearance from the floating launcher throughout scrolling');
    const prompt=page.locator('[data-block-id="b1"] .viewer-audio-control--question');
+   assert.equal(await prompt.locator('.viewer-audio-control__trigger').innerText(),'','prompt playback stays icon-only');
+   const audioDimensions=await page.locator('[data-block-id="b1"] .viewer-audio-control__trigger, [data-block-id="b2"] .viewer-audio-control__trigger, [data-block-id="b4"] .viewer-audio-control__trigger').evaluateAll(nodes=>nodes.map(node=>{const r=node.getBoundingClientRect();return [r.width,r.height];}));
+   assert(audioDimensions.every(([w,h])=>w===50&&h===44),'single/multiple prompt and option audio keep the same compact size');
    await prompt.locator('button').first().click();
    assert(await prompt.locator('.viewer-audio-control__menu').evaluate(node=>{const r=node.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth;}),'prompt language menu stays within viewport');
    assert.equal(await prompt.locator('.viewer-audio-control__menu-item').count(),2);
@@ -109,6 +149,11 @@ try {
    const current=await page.evaluate(()=>window.viewerSession.state.lastActiveBlockId);
    await page.locator('.viewer-browse').click();
    assert.equal(await page.locator('dialog[open]').count(),1);
+   assert(await page.locator('.viewer-chooser__close').evaluate(button=>{
+    const b=button.getBoundingClientRect(),icon=button.querySelector('svg').getBoundingClientRect();
+    return b.width===40&&b.height===40&&Math.abs((b.left+b.right)-(icon.left+icon.right))<1
+     &&Math.abs((b.top+b.bottom)-(icon.top+icon.bottom))<1;
+   }),'chooser SVG close icon is centered in its circular button');
    const backgroundScroll = await page.evaluate(()=>scrollY);
    await page.mouse.move(1,1);
    await page.mouse.wheel(0,1200);
@@ -141,11 +186,19 @@ try {
    await page.evaluate(()=>window.viewerSession.notifyStateChange());
    assert.deepEqual(await first.boundingBox(),before);
    if(shots)await page.screenshot({path:`${shots}/chooser-${locale}-${viewport.width}-${viewport.height}.png`});
-   await page.keyboard.press('Escape');
+   await page.locator('.viewer-chooser__close').click();
+   assert.equal(await page.locator('dialog[open]').count(),0);
+   assert(await page.evaluate(()=>document.activeElement.matches('.viewer-browse,.viewer-actions-launcher')));
   }
   // Enlarged text uses measured row heights; resize keeps the focused item.
   await page.setViewportSize({width:390,height:844});
   await page.evaluate(()=>{document.documentElement.style.fontSize='32px';});
+  await page.setViewportSize({width:320,height:568});
+  assert(await page.locator('.viewer-question-number').evaluateAll(nodes=>nodes.every(node=>{
+   const number=node.getBoundingClientRect(),heading=node.parentElement.getBoundingClientRect();
+   return number.left>=0&&number.right<=heading.left;
+  })),'decorative margin numbers remain visible with enlarged document text');
+  await page.setViewportSize({width:390,height:844});
   await openViewerActions(page);
   await page.locator('.viewer-browse').click();
   await page.locator('.viewer-chooser__item').first().focus();
@@ -164,7 +217,7 @@ try {
   await page.locator('.viewer-browse').click();
   assert(await page.locator('[data-section-index="19"]').evaluate(node=>!node.hidden&&node===document.activeElement));
   await page.keyboard.press('Escape');
-  await clickViewerAction(page,locale==='en'?'Previous section':'上一節');
+  await clickViewerAction(page,locale==='en'?'Previous':'上一節');
   assert.equal(await page.evaluate(()=>window.viewerSession.state.lastActiveBlockId),'b18');
   await clickViewerAction(page,locale==='en'?'Save':'儲存');
   await page.waitForFunction(()=>!window.viewerSession.state.autosavePending);

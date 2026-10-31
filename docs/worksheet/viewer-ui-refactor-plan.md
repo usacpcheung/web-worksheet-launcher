@@ -51,9 +51,9 @@ new business behavior or adding demo-only functions.
 | Selected direction | Continuous worksheet, mixed question/content order, Version C ordered and paginated chooser; no internal chooser scrollbar at supported sizes. |
 | Selected direction | Question-only numbering; content remains navigable. Ring position and answered completion are independent. Previous/Next labels refer to sections. |
 | Selected direction | Cooler blue theme, equal MC answer widths, equal audio trigger dimensions, plain option letters and equal-width True/False controls with existing green/red semantics. |
-| Selected direction | Preserve both blur clearing and layered movement. Hover must not shift buttons or flash during state updates. |
+| Selected direction | Keep content sharp without blur; preserve layered movement. Hover must not shift buttons or flash during state updates. |
 | Reference layout | Desktop side action area; mobile launcher/drawer. Verify exact placement against the full production action inventory. |
-| Latest trial values | Reading line at 40% viewport height; reveal settles at approximately 55% when entering from below. These are tuning values, not a package/API contract. |
+| Latest trial values | Reading line at 45% viewport height (approved Style A follow-up); reveal settles at approximately 55% when entering from below. These are tuning values, not a package/API contract. |
 | Pending final visual acceptance | Revised C mockup's motion timing, hover appearance, spacing and small-screen usability. |
 | Accepted behavior rules | D1–D6 and the operation-panel placement in section 4, agreed 2026-10-30. D7 is accepted in section 11; D8 is agreed in the stage 4 motion plan. |
 
@@ -124,7 +124,7 @@ implementation details to verify, not additional product decisions. D7 is accept
 | D8 | Animation replay and interaction | Revealed content stays clear while visible. Prepare replay only after fully leaving the viewport with a margin; never replay on answer/status updates. Focus, selection and open controls stay stable. Explicit jumps settle immediately. | Decide whether the latest mockup's off-screen replay remains desirable in real use. |
 | D9 | Operation status with multiple text questions mounted | Use one shared operation panel and retain question-specific hints/recovery. Keep Stop/Cancel/View reachable while the source is off-screen, including from content or non-text sections. Give one live region responsibility for announcing the operation stage; do not duplicate announcements or active controls in every mounted text question. | Current `createVoiceControls` creates a status component for each text question. Placement accepted: one fixed bottom-right operation panel on desktop, across the lower mobile viewport with clearance for controls. Keep one operation live region; reuse actual state/actions and per-question recovery. Do not duplicate Stop/Cancel/View in every mounted question. |
 
-The 40% line uses the visual viewport (clipped to the layout viewport), with
+The 45% line uses the visual viewport (clipped to the layout viewport), with
 keyboard/resize suppression under D5. The 2026-10-30 acceptance correction keeps
 operation-panel height out of reading-line geometry: a panel appearing must not
 make a small downward scroll select the preceding section. Input clearance still
@@ -214,7 +214,7 @@ review/fix/review loop has no remaining issue requiring a fix.
 
 ### PR 4 — Presentation motion and integrated release acceptance
 
-- Add blur and layered movement independently of state/navigation. Apply accepted
+- Add layered movement without blur independently of state/navigation. Apply accepted
   timing, replay rules, reduced motion and interaction protection; resolve D8.
 - Repeat PR 2 performance checks with motion enabled, without prematurely adding
   virtualization that would unmount active controls or invalidate geometry.
@@ -241,7 +241,7 @@ questions; it does not authorize coding unresolved behavior.
 | Persistence/review | Visual resume to the existing target after delayed media/fonts, imported IDs, package load, save/export/upload, completed read-only state, check feedback and actual print report | 1–4 |
 | Responsive/accessibility | Desktop, tablet, 390px/320px mobile, short landscape, 200%/400% zoom and large text, real mobile keyboard, both locales, keyboard/dialog focus, screen-reader labels, contrast | 2–4 |
 | Chooser stability | No internal scroll at tested sizes; every item reachable; no movement/flicker with pointer at row edge or async state updates; current and answered states distinct | 3–4 |
-| Motion | Both directions, visible slides, earlier settling, no blur restart while visible, protected editing/selection/menu, reduced-motion and print | 4 |
+| Motion | Both directions, visible slides, earlier settling, no animation restart while visible, protected editing/selection/menu, reduced-motion and print | 4 |
 | Performance/layout | Recorded baseline and representative package/device sizes, load/scroll/input response, image/font loading, no scroll-frame persistence or network requests, no leaks; mandatory gate in PR 2 | 2–4 |
 
 Start from `npm test` and relevant existing browser scripts, particularly
@@ -417,3 +417,16 @@ still belongs to the complete Version C candidate before merging.
 Stage 3 evidence: [Version C validation](viewer-version-c-validation.md).
 
 Stage 4: [motion implementation and D8 agreement](viewer-motion-implementation.md).
+
+
+Latest tuning decision: the accepted Style A mockup sets the reading line to 45%,
+superseding the original 40% trial noted in the historical stage records.
+The existing 15% reveal buffer remains, settling at 60% when entering from below.
+
+### Approved motion refinement
+
+The follow-up removes entrance blur and reduces the reveal buffer to 10% of the
+usable viewport: movement settles at 55% when entering from below and 35% when
+entering from above, with the reading line unchanged at 45%. Timed slides may
+finish earlier. Durations, interaction protection, replay and reduced-motion
+handling remain unchanged. This supersedes the earlier 15% buffer noted above.

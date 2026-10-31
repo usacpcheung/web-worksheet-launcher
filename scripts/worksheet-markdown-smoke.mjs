@@ -5,6 +5,34 @@ import { mkdir } from 'node:fs/promises';
 const base = process.env.VIEWER_SMOKE_URL || 'http://127.0.0.1:8765';
 const shots = process.env.VIEWER_SMOKE_SCREENSHOTS;
 if (shots) await mkdir(shots, { recursive: true });
+
+async function assertPromptTypography(locator, baseSize) {
+  const metrics = await locator.evaluate(root => {
+    const style = selector => {
+      const node = selector ? root.querySelector(selector) : root;
+      const css = getComputedStyle(node);
+      return { size: parseFloat(css.fontSize), weight: css.fontWeight, line: parseFloat(css.lineHeight),
+        italic: css.fontStyle, margin: parseFloat(css.marginTop), family: css.fontFamily };
+    };
+    return { base: style(), headings: ['h2','h3','h4','h5','h6'].map(style), paragraph: style('p'),
+      list: style('li'), quote: style('blockquote'), bold: style('strong'), italic: style('em'),
+      firstMargin: style(':scope > :first-child').margin,
+      orderedStart: root.querySelector('ol').start };
+  });
+  assert.equal(metrics.base.size, baseSize);
+  assert(Math.abs(metrics.base.line / baseSize - 1.65) < .01);
+  for (const [index, ratio] of [1.35,1.18,1.08,1,1].entries()) {
+    assert(Math.abs(metrics.headings[index].size / baseSize - ratio) < .01);
+    assert.equal(metrics.headings[index].weight, '600');
+    assert.equal(metrics.headings[index].family, metrics.base.family);
+  }
+  for (const part of ['paragraph','list','quote']) assert.equal(metrics[part].size, baseSize);
+  assert.equal(metrics.bold.weight, '700');
+  assert.equal(metrics.italic.italic, 'italic');
+  assert.equal(metrics.firstMargin, 0);
+  assert.equal(metrics.orderedStart, 3, 'Author numbered-list start remains intact');
+}
+
 const browser = await chromium.launch();
 try {
   for (const locale of ['en', 'zh-Hant']) for (const width of [1280, 390]) {
@@ -85,7 +113,7 @@ try {
     assert.equal(await page.locator('.editor-prompt-counter').isVisible(), false);
     await page.locator('#editor-block-kind').selectOption('question');
     assert.equal(await page.evaluate(() => window.editorSession.state.draft.blocks.at(-1).prompt.format), 'limited-markdown-v1');
-    await field.fill('## Question heading\n### Question\n**Explain** your answer.');
+    await field.fill('## Question heading\n### Question\n**Explain** your answer. 解釋你的答案。\n\nA second paragraph. 第二段。\n#### Detail\n- First point 第一點\n- A longer point that wraps on narrow screens 較長的項目會在窄螢幕換行\n##### Steps\n3. Consider 想一想\n4. Respond 回答\n###### Note\n> *Reflect* before answering. 回答前先思考。');
     await toggle.click();
     assert.equal(await preview.locator('h3').innerText(), 'Question');
     assert.equal(await page.evaluate(() => window.injected), undefined);
@@ -136,8 +164,9 @@ try {
       plain.remove(); return result;
     });
     assert.deepEqual(typography.plain, typography.markdown, 'Legacy and Markdown prompts share typography');
-    assert.equal(typography.markdown[2], '500');
-    assert.equal(typography.bold, '700'); assert.equal(typography.heading, '700');
+    assert.equal(typography.markdown[2], '450');
+    assert.equal(typography.bold, '700'); assert.equal(typography.heading, '600');
+    await assertPromptTypography(page.locator('.question-card__prompt-label'), width === 1280 ? 22 : 20);
     await page.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').fill('**Literal learner answer**');
     await page.evaluate(() => window.viewerSession.completeLocalAttempt());
     // Session completion notifies state; the prompt stays formatted and the answer stays literal.
@@ -156,6 +185,7 @@ try {
     await printPage.setContent(html);
     await printPage.emulateMedia({ media: 'print' });
     assert.equal(await printPage.locator('.print-question-text h3').innerText(), 'Question');
+    await assertPromptTypography(printPage.locator('.print-question-text'), 16);
     if (shots) await printPage.screenshot({ path: `${shots}/markdown-print-${locale}-${width}.png`, fullPage: true });
     await printPage.close();
     if (shots) await page.screenshot({ path: `${shots}/markdown-viewer-${locale}-${width}.png`, fullPage: true });

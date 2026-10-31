@@ -23,10 +23,19 @@ try {
   await page.evaluate(()=>{const node=document.querySelector('[data-block-id="q3"] .question-card__prompt-row');window.scrollTo(0,scrollY+node.getBoundingClientRect().top-innerHeight*.75);});
   await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
   const prompt=page.locator('[data-block-id="q3"] .question-card__prompt-row');
-  assert(await prompt.evaluate(n=>n.style.filter.startsWith('blur(')));
+  assert.equal(await prompt.evaluate(n=>getComputedStyle(n).filter),'none','entrance remains sharp');
   assert(await prompt.evaluate(n=>n.getAnimations().some(a=>a.id==='viewer-entry-prompt')));
+  // Freeze the clock so this checks scroll settling, not screenshot/runner speed.
+  await prompt.evaluate(n=>n.getAnimations().forEach(a=>a.pause()));
   if(shots)await page.screenshot({path:`${shots}/entry-${locale}-${width}.png`});
+  await page.evaluate(()=>{const node=document.querySelector('[data-block-id="q3"] .question-card__prompt-row');window.scrollTo(0,scrollY+node.getBoundingClientRect().top-innerHeight*.59);});
+  await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
+  assert(await prompt.evaluate(n=>n.getAnimations().some(a=>a.id==='viewer-entry-prompt')),'59% does not force the slide to settle');
+  await page.evaluate(()=>{const node=document.querySelector('[data-block-id="q3"] .question-card__prompt-row');window.scrollTo(0,scrollY+node.getBoundingClientRect().top-innerHeight*.54);});
+  await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
+  assert.equal(await prompt.evaluate(n=>n.getAnimations().length),0,'entry settles by 55%, before the 45% reading line');
   await chooseViewerSection(page,3);
+  assert(await page.locator('[data-block-id="q3"]').evaluate(n=>Math.abs(n.getBoundingClientRect().top-innerHeight*.45)<3),'explicit navigation aligns to the 45% reading line');
   assert.equal(await prompt.evaluate(n=>n.style.filter),'');
   assert.equal(await prompt.evaluate(n=>n.getAnimations().length),0);
   await page.mouse.move(1,1);

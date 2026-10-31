@@ -394,6 +394,51 @@ test('viewer beginServerSignIn shows popup blocked message when popup cannot ope
   );
 });
 
+test('worksheet print preserves mixed section order, content formatting and stable answer identities', async () => {
+  const mod = await loadViewerModule();
+  const blocks = [
+    { blockId: 'q2', position: 3, kind: 'question', prompt: { text: 'Choose' }, responseConfig: {
+      inputType: 'multiple_choice', selectionMode: 'multi', shuffleOptions: true,
+      options: [{value:'a',label:'Alpha'}, {value:'b',label:'Beta'}, {value:'c',label:'Gamma'}],
+    } },
+    { blockId: 'intro', position: 0, kind: 'content', content: {text:'## Read first\n**Important**', format:'limited-markdown-v1'} },
+    { blockId: 'q1', position: 1, kind: 'question', prompt: {text:'Zero'}, responseConfig:{inputType:'number'} },
+    { blockId: 'reading', position: 2, kind: 'content', content: {text:'<script>unsafe()</script>'} },
+    { blockId: 'q3', position: 4, kind: 'question', prompt: {text:'False'}, responseConfig:{inputType:'boolean'} },
+    { blockId: 'end', position: 5, kind: 'content', content: {text:'End of worksheet'} },
+  ];
+  const answers = {q1:{value:0}, q2:{value:['c','a']}, q3:{value:false}};
+  const before = JSON.stringify({blocks, answers});
+  const model = await mod.buildWorksheetPrintReportModel({viewerPayload:{blocks}, answers, localAttemptId:'print-fixture'});
+  assert.deepEqual(model.sections.map(s=>s.blockId), ['intro','q1','reading','q2','q3','end']);
+  assert.deepEqual(model.questions.map(q=>q.questionNumber), [1,2,3]);
+  assert.equal(model.questions[0].answerText, '0');
+  assert.equal(model.questions[2].answerText, 'False');
+  assert.deepEqual(model.questions[2].choices.map(c=>c.selected), [false,true]);
+  const displayed = mod.deterministicShuffle(blocks[0].responseConfig.options, 'print-fixture:q2');
+  assert.deepEqual(model.questions[1].choices.map(c=>c.label), displayed.map(o=>o.label));
+  assert.deepEqual(model.questions[1].choices.map(c=>c.selected), displayed.map(o=>['a','c'].includes(o.value)));
+  assert.equal(JSON.stringify({blocks, answers}), before, 'printing does not mutate worksheet or answers');
+  const html = mod.buildWorksheetPrintReportHtml(model);
+  assert.match(html, /<h2>Read first<\/h2>/);
+  assert.match(html, /&lt;script&gt;unsafe\(\)&lt;\/script&gt;/);
+  const positions = ['intro','q1','reading','q2','q3','end'].map(id=>html.indexOf(`data-block-id="${id}"`));
+  assert(positions.every((position,i)=>position>=0 && (!i || position>positions[i-1])));
+  const readingOnly = await mod.buildWorksheetPrintReportModel({viewerPayload:{blocks:[blocks[1],blocks[5]]}});
+  assert.equal(readingOnly.questions.length, 0);
+  assert.match(mod.buildWorksheetPrintReportHtml(readingOnly), /End of worksheet/);
+});
+
+test('long printed choices use flowing layout instead of an unbreakable answer section', async () => {
+  const mod = await loadViewerModule();
+  const model = await mod.buildWorksheetPrintReportModel({viewerPayload:{blocks:[{
+    blockId:'long',kind:'question',prompt:{text:'Select'},responseConfig:{inputType:'multiple_choice',
+      options:Array.from({length:20},(_,i)=>({value:String(i),label:'Long option '.repeat(50)}))},
+  }]}});
+  assert.equal(model.questions[0].layoutMode, 'flow');
+  assert.equal(model.questions[0].sectionBreakModes.answer, 'flow');
+});
+
 test('buildWorksheetPrintReportModel formats answers, grading, and question images for print', async () => {
   const mod = await loadViewerModule();
   const viewerPayload = {
