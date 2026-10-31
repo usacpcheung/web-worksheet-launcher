@@ -1,4 +1,6 @@
 export const PRINT_REPORT_CSS = `
+.print-option-image{display:block;max-width:100%;max-height:35mm;width:auto;height:auto;object-fit:contain;grid-column:2;}
+
     @import url("${new URL('../app/fonts/worksheet-chinese.css', import.meta.url).href}");
     @page {
       size: A4 portrait;

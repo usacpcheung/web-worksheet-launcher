@@ -1,3 +1,6 @@
+import { showOptionPreview } from './option-preview.js';
+import { mountOptionImageEditor } from './option-image-editor.js';
+import { optionImageRef, optionHasContent, imageDescription } from '../app/option-images.js';
 import { runPublicationFlow, runPublicationAttempt } from '../app/api/publication-flow.js';
 import { runAudioGeneration, waitForAudioAttachment, AUDIO_GENERATION_PHASE_TIMEOUT_MS } from '../app/bridge/audio-generation.js';
 import { prepareMutation } from '../app/auth/mutation-auth.js';
@@ -165,6 +168,7 @@ function getProtectedActionErrorMessage(result, fallbackText = editorNotificatio
 }
 
 function normalizeMediaUsage(usage) {
+  if (usage === 'option_image') return 'option_image';
   if (usage === 'option_audio') return 'option_audio';
   if (usage === 'question_audio') return 'question_audio';
   if (usage === 'question_image') return 'question_image';
@@ -206,7 +210,7 @@ function collectQuestionAssetIds(block) {
   collectAudioTrackAssetIds(block?.prompt?.audioTracks).forEach((assetId) => ids.add(assetId));
   const options = Array.isArray(block?.responseConfig?.options) ? block.responseConfig.options : [];
   options.forEach((option) => {
-    normalizeMediaRefs(option?.mediaRefs, 'option_audio').forEach((ref) => ids.add(ref.assetId));
+    normalizeMediaRefs(option?.mediaRefs).forEach((ref) => ids.add(ref.assetId));
     collectAudioTrackAssetIds(option?.audioTracks).forEach((assetId) => ids.add(assetId));
   });
   return Array.from(ids);
@@ -453,7 +457,7 @@ function getBlockDeletePolicy(block) {
 function getOptionDeletePolicy(option) {
   const normalized = normalizeResponseOption(option);
   const hasTypedContent = hasTypedText(normalized.label) || hasTypedText(normalized.value);
-  const hasAssets = normalizeMediaRefs(normalized.mediaRefs, 'option_audio').length > 0
+  const hasAssets = normalizeMediaRefs(normalized.mediaRefs).length > 0
     || collectAudioTrackAssetIds(normalized.audioTracks).length > 0;
   return {
     mode: hasTypedContent || hasAssets ? 'confirm_delete' : 'safe_direct_delete',
@@ -474,7 +478,7 @@ function getSwitchImpact(fromType, toType, questionState) {
   const optionAttachmentCountToRemove = shouldRemoveOptions
     ? normalizedOptions.reduce(
       (count, option) => count
-        + normalizeMediaRefs(option.mediaRefs, 'option_audio').length
+        + normalizeMediaRefs(option.mediaRefs).length
         + collectAudioTrackAssetIds(option.audioTracks).length,
       0
     )
@@ -862,13 +866,14 @@ function mapOptionsTextToResponseOptions(rawText) {
 function normalizeResponseOption(option, fallback = '') {
   if (isRecord(option)) {
     const id = isNonEmptyString(option.id) ? String(option.id) : createLocalId('opt');
-    const value = String(option.value ?? option.label ?? fallback);
+    const value = String(option.value ?? option.label ?? fallback) || (optionImageRef(option) ? id : '');
     const label = String(option.label ?? option.value ?? fallback);
     return {
       id,
       value,
       label,
-      mediaRefs: normalizeMediaRefs(option.mediaRefs, 'option_audio'),
+      mediaRefs: normalizeMediaRefs(option.mediaRefs).filter(ref => ['option_audio', 'option_image'].includes(ref.usage)),
+      ...(option.imageDescription !== undefined ? { imageDescription: imageDescription(option.imageDescription) } : {}),
       audioTracks: normalizeAudioTracks(option.audioTracks),
     };
   }
@@ -1132,7 +1137,7 @@ function normalizeDraftAssets(assets) {
       return {
         assetId: String(asset.assetId),
         kind: asset.kind === 'audio' ? 'audio' : 'image',
-        usage: ['question_image', 'question_audio', 'option_audio'].includes(asset.usage)
+        usage: ['question_image', 'question_audio', 'option_audio', 'option_image'].includes(asset.usage)
           ? asset.usage
           : 'question_image',
         mimeType: isNonEmptyString(asset.mimeType) ? asset.mimeType : null,
@@ -1520,6 +1525,7 @@ class EditorDraftSession {
           );
         }
         if (block.responseConfig?.inputType === 'multiple_choice') {
+          if ((block.responseConfig.options || []).some(option => !optionHasContent(option))) errors.push(`draft.blocks[${index}].responseConfig.options: ${t('optionImages.required')}`);
           const duplicateOptionValues = getDuplicateOptionValues(block.responseConfig.options);
           if (duplicateOptionValues.length > 0) {
             errors.push(
@@ -2213,6 +2219,136 @@ class EditorDraftSession {
     return { ok: true, removedAssetId };
   }
 
+  async attachOptionImage(blockId, optionId, file, options = {}) {
+    if (options.isCurrent && !options.isCurrent()) return { ok: false, reason: 'stale-target' };
+    if (!this.state.draft || !blockId || !optionId) return { ok: false, reason: 'missing-input' };
+    const validation = validateMediaFile(file, 'image');
+    if (!validation.ok) {
+      this.setMediaFeedback(validation.message);
+      return { ok: false, reason: 'validation', message: validation.message };
+    }
+    const block = this.findBlock(blockId);
+    if (!block || block.kind !== 'question') return { ok: false, reason: 'missing-question' };
+    const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+    if (responseConfig.inputType !== 'multiple_choice') return { ok: false, reason: 'not-multiple-choice' };
+    const existingOption = (responseConfig.options || []).map((option) => normalizeResponseOption(option)).find((o) => o.id === optionId);
+    if (!existingOption) {
+      this.setMediaFeedback(editorNotification('media.optionTextRequired'));
+      return { ok: false, reason: 'missing-option' };
+    }
+    const currentRef = getSingleMediaRef(existingOption.mediaRefs, 'option_image');
+    if (currentRef && options.confirmReplace !== true) {
+      return { ok: false, reason: 'confirm-replace-required', existingAssetId: currentRef.assetId };
+    }
+
+    const draftId = this.state.draft.localId;
+    const generation = this._audioDraftGeneration;
+    const priorRefsForUsage = normalizeMediaRefs(existingOption.mediaRefs, 'option_image');
+    const replacedAssetIds = priorRefsForUsage.map((ref) => ref.assetId);
+
+    const newAsset = await this.createLocalAssetRecord(file, 'option_image', 'image');
+    const latestBlock = this.findBlock(blockId);
+    const latestConfig = normalizeQuestionResponseConfig(latestBlock?.responseConfig);
+    const latestOption = (latestConfig.options || []).map(item => normalizeResponseOption(item)).find(item => item.id === optionId);
+    if ((options.isCurrent && !options.isCurrent()) || this.state.draft?.localId !== draftId
+      || this._audioDraftGeneration !== generation || latestBlock?.kind !== 'question'
+      || latestConfig.inputType !== 'multiple_choice' || !latestOption
+      || JSON.stringify(normalizeMediaRefs(latestOption.mediaRefs, 'option_image')) !== JSON.stringify(priorRefsForUsage)) {
+      await this.storage.localAssets?.remove?.(newAsset.assetId);
+      return { ok: false, reason: 'stale-target' };
+    }
+    this.state.draft.blocks = this.state.draft.blocks.map((candidate) => {
+      if (candidate.blockId !== blockId || candidate.kind !== 'question') return candidate;
+      const cfg = normalizeQuestionResponseConfig(candidate.responseConfig);
+      const nextOptions = (cfg.options || []).map((option) => {
+        const normalized = normalizeResponseOption(option);
+        if (normalized.id !== optionId) return normalized;
+        return {
+          ...normalized,
+          mediaRefs: setSingleMediaRef(normalized.mediaRefs, 'option_image', newAsset.assetId),
+          value: normalized.value || normalized.id,
+          imageDescription: '',
+        };
+      });
+      return {
+        ...candidate,
+        responseConfig: normalizeQuestionResponseConfig({ ...cfg, options: nextOptions }),
+      };
+    });
+
+    const replacedSet = new Set(replacedAssetIds);
+    const existingAssets = normalizeDraftAssets(this.state.draft.assets);
+    const referenced = collectDraftQuestionAssetIds(this.state.draft);
+    const filtered = existingAssets.filter((asset) => !replacedSet.has(asset.assetId) || referenced.has(asset.assetId));
+    filtered.push(newAsset);
+    this.state.draft.assets = filtered;
+
+    this.clearMediaFeedback();
+    this.touchDraft();
+    const result = { ok: true, assetId: newAsset.assetId, replacedAssetId: replacedAssetIds[0] || null };
+    options.onCommitted?.(result);
+    this.cleanupReplacedMedia(replacedAssetIds);
+    return result;
+  }
+
+  async removeOptionImage(blockId, optionId, options = {}) {
+    if (!this.state.draft || !blockId || !optionId) return { ok: false, reason: 'missing-input' };
+    const block = this.findBlock(blockId);
+    if (!block || block.kind !== 'question') return { ok: false, reason: 'missing-question' };
+    const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+    if (responseConfig.inputType !== 'multiple_choice') return { ok: false, reason: 'not-multiple-choice' };
+    const existingOption = (responseConfig.options || []).map((option) => normalizeResponseOption(option)).find((o) => o.id === optionId);
+    if (!existingOption) return { ok: false, reason: 'missing-option' };
+    const currentRef = getSingleMediaRef(existingOption.mediaRefs, 'option_image');
+    if (!currentRef) {
+      this.setMediaFeedback(t('optionImages.unavailable'));
+      return { ok: false, reason: 'missing-media' };
+    }
+    if (options.confirmRemove !== true) {
+      return { ok: false, reason: 'confirm-remove-required', existingAssetId: currentRef.assetId };
+    }
+
+    const refsForUsage = normalizeMediaRefs(existingOption.mediaRefs, 'option_image');
+    const removedAssetIds = refsForUsage.map((ref) => ref.assetId);
+    const removedAssetId = removedAssetIds[0];
+
+    this.state.draft.blocks = this.state.draft.blocks.map((candidate) => {
+      if (candidate.blockId !== blockId || candidate.kind !== 'question') return candidate;
+      const cfg = normalizeQuestionResponseConfig(candidate.responseConfig);
+      const nextOptions = (cfg.options || []).map((option) => {
+        const normalized = normalizeResponseOption(option);
+        if (normalized.id !== optionId) return normalized;
+        return {
+          ...normalized,
+          mediaRefs: removeSingleMediaRef(normalized.mediaRefs, 'option_image'),
+          imageDescription: '',
+        };
+      });
+      return {
+        ...candidate,
+        responseConfig: normalizeQuestionResponseConfig({ ...cfg, options: nextOptions }),
+      };
+    });
+
+    const removedSet = new Set(removedAssetIds);
+    this.state.draft.assets = normalizeDraftAssets(this.state.draft.assets)
+      .filter((asset) => !removedSet.has(asset.assetId) || collectDraftQuestionAssetIds(this.state.draft).has(asset.assetId));
+
+    this.clearMediaFeedback();
+    this.touchDraft();
+    this.cleanupReplacedMedia(removedAssetIds);
+    return { ok: true, removedAssetId };
+  }
+
+  updateOptionImageDescription(blockId, optionId, text) {
+    const block = this.findBlock(blockId);
+    if (!block || block.responseConfig?.inputType !== 'multiple_choice') return;
+    const option = block.responseConfig.options?.find(option => option.id === optionId);
+    if (!optionImageRef(option)) return;
+    option.imageDescription = imageDescription(text);
+    this.touchDraft();
+  }
+
   getAudioTrackTarget(blockId, target, optionId = null) {
     const block = this.findBlock(blockId);
     if (!block || block.kind !== 'question') return null;
@@ -2460,7 +2596,7 @@ class EditorDraftSession {
       ? (Array.isArray(normalizeQuestionResponseConfig(block.responseConfig).options)
         ? normalizeQuestionResponseConfig(block.responseConfig).options
           .flatMap((option) => [
-            ...normalizeMediaRefs(option?.mediaRefs, 'option_audio').map((ref) => ref.assetId),
+            ...normalizeMediaRefs(option?.mediaRefs).map((ref) => ref.assetId),
             ...collectAudioTrackAssetIds(option?.audioTracks),
           ])
         : [])
@@ -2792,7 +2928,7 @@ class EditorDraftSession {
           label: '',
         });
       }
-      options[index] = { ...options[index], value: normalizedLabel, label: normalizedLabel };
+      options[index] = { ...options[index], value: optionImageRef(options[index]) ? (options[index].value || options[index].id) : normalizedLabel, label: normalizedLabel };
       persistedOptionId = String(options[index].id || '');
       return {
         ...block,
@@ -2861,7 +2997,7 @@ class EditorDraftSession {
         });
         nextOptions[optionIndex] = {
           ...existing,
-          value: label,
+          value: optionImageRef(existing) ? (existing.value || existing.id) : label,
           label,
           mediaRefs: removeSingleMediaRef(existing.mediaRefs, 'option_audio'),
         };
@@ -2919,7 +3055,7 @@ class EditorDraftSession {
         ? responseConfig.options.map((option) => normalizeResponseOption(option))
         : [];
       if (options[index]) {
-        normalizeMediaRefs(options[index]?.mediaRefs, 'option_audio').forEach((ref) => removedAssetIds.push(ref.assetId));
+        normalizeMediaRefs(options[index]?.mediaRefs).forEach((ref) => removedAssetIds.push(ref.assetId));
         collectAudioTrackAssetIds(options[index]?.audioTracks).forEach((assetId) => removedAssetIds.push(assetId));
       }
       options.splice(index, 1);
@@ -3593,6 +3729,7 @@ class EditorDraftSession {
     if (collectLegacyAudioTargets(draft.blocks).length > 0) {
       throw new Error('Legacy audio must be migrated before preview, export, or upload.');
     }
+    if (draft.blocks.some(block => block.responseConfig?.inputType === 'multiple_choice' && (block.responseConfig.options || []).some(option => !optionHasContent(option)))) throw new Error(t('optionImages.required'));
     const assets = new Map();
     const draftAssets = normalizeDraftAssets(draft.assets);
     for (const asset of draftAssets) {
@@ -6692,7 +6829,7 @@ function renderEditorShell(session) {
         const normalized = normalizeResponseOption(opt);
         return [
           String(normalized.id ?? ''),
-          ...normalizeMediaRefs(normalized.mediaRefs, 'option_audio').map((ref) => String(ref?.assetId ?? '')),
+          ...normalizeMediaRefs(normalized.mediaRefs).map((ref) => String(ref?.assetId ?? '')),
           ...normalizeAudioTracks(normalized.audioTracks).map((track) => `${track.language}:${track.assetId}:${track.sourceTextHash}`),
         ];
       }))
@@ -6767,7 +6904,7 @@ function renderEditorShell(session) {
         || optionT2AInFlightKeys.has(optionT2AKey);
       return [
         String(normalized.id ?? ''),
-        ...normalizeMediaRefs(normalized.mediaRefs, 'option_audio').map((ref) => String(ref?.assetId ?? '')),
+        ...normalizeMediaRefs(normalized.mediaRefs).map((ref) => String(ref?.assetId ?? '')),
         ...normalizeAudioTracks(normalized.audioTracks).map((track) => `${track.language}:${track.assetId}:${track.sourceTextHash}`),
         optionTextState.eligible ? '1' : '0',
         optionTextState.exceedsLimit ? '1' : '0',
@@ -7950,7 +8087,7 @@ function renderEditorShell(session) {
               removalItems.push('Option value/text used in answers.');
             }
             if (outcome.policy.hasAssets) {
-              removalItems.push('Option audio file and attachment metadata.');
+              removalItems.push('Option image/audio files and attachment metadata.');
             }
             const confirmed = await showConfirmDialog({
               title: `Delete option ${optionIndex + 1}?`,
@@ -7964,6 +8101,9 @@ function renderEditorShell(session) {
           updateSummary();
         });
         row.append(correctToggle, optionInput, optionActionsMenu, removeBtn);
+        mountOptionImageEditor({ row, option, blockId: selectedBlock.blockId, session, icon: createEditorIcon,
+          confirm: bodyText => confirmDangerAction({ title: t('optionImages.manage'), bodyText, confirmLabel: t('common.actions.apply'), removalItems: [] }),
+          refresh: () => updateSummary(), run: runMediaAction });
         const optionT2AHint = document.createElement('span');
         optionT2AHint.className = 'muted option-row__meta';
         optionT2AHint.dataset.optionT2aHint = '1';
@@ -7975,6 +8115,12 @@ function renderEditorShell(session) {
         questionOptionsList.appendChild(row);
       });
       rightPanel.append(questionOptionsList, questionOptionWarning, addOptionBtn, questionOptions);
+      const optionPreview = document.createElement('button'); optionPreview.type = 'button'; optionPreview.className = 'media-action-btn';
+      setMediaActionButtonContent(optionPreview, 'eye', t('optionImages.preview'));
+      optionPreview.onclick = () => showOptionPreview(session.findBlock(selectedBlock.blockId), session);
+      const optionFooter = document.createElement('div'); optionFooter.className = 'editor-option-footer';
+      optionFooter.append(addOptionBtn, optionPreview); rightPanel.append(optionFooter);
+
       if (Number.isInteger(activeOptionInputIndex)) {
         const replacementOptionInput = questionOptionsList.querySelector(`input[data-option-input="1"][data-option-index="${activeOptionInputIndex}"]`);
         if (replacementOptionInput instanceof HTMLInputElement) {
@@ -9083,7 +9229,7 @@ function normalizeQuestionResponseConfig(responseConfig, options = {}) {
     const optionIdByValue = new Map();
     normalizedOptions.forEach((option, index) => {
       const optionId = getOptionIdForAnswerKey(option);
-      const optionValue = getOptionValueForAnswerKey(sourceOptions[index]);
+      const optionValue = getOptionValueForAnswerKey(optionImageRef(option) ? option : sourceOptions[index]);
       if (!optionId || optionValue === null) return;
       optionById.set(optionId, optionValue);
       if (!optionIdByValue.has(optionValue)) {
@@ -9143,7 +9289,7 @@ function normalizeQuestionResponseConfig(responseConfig, options = {}) {
     }
 
     normalized.options = forContract
-      ? normalizedOptions.map((option) => ({ value: option.value, label: option.label }))
+      ? normalizedOptions.map((option) => ({ value: option.value, label: option.label, ...(optionImageRef(option) ? { id: option.id, mediaRefs: [optionImageRef(option)], imageDescription: option.imageDescription || '' } : {}) }))
       : normalizedOptions;
 
     if (normalized.selectionMode === 'single') {

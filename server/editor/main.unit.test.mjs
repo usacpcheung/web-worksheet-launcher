@@ -151,7 +151,7 @@ async function loadEditorModule() {
   const filePath = path.resolve('server/editor/main.js');
   const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/bridge/audio-generation.js'", JSON.stringify(new NodeURL('../app/bridge/audio-generation.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./text-preview.js'", JSON.stringify(new NodeURL('./text-preview.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
 
-  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/api/publication-flow.js'", JSON.stringify(new NodeURL('../app/api/publication-flow.js', import.meta.url).href)).replaceAll("'../app/auth/mutation-auth.js'", JSON.stringify(new NodeURL('../app/auth/mutation-auth.js', import.meta.url).href)).replaceAll("'../app/auth/session-state-adapter.js'", JSON.stringify(new NodeURL('../app/auth/session-state-adapter.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-return.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-return.js', import.meta.url).href)).replaceAll("'../app/auth/session-coordinator.js'", JSON.stringify(new NodeURL('../app/auth/session-coordinator.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-flow.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-flow.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-prompt.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-prompt.js', import.meta.url).href)).replaceAll("'../app/api/deletion-flow.js'", JSON.stringify(new NodeURL('../app/api/deletion-flow.js', import.meta.url).href)).replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-drag-reorder.js'", JSON.stringify(new NodeURL('./block-drag-reorder.js', import.meta.url).href)), [
+  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'./option-preview.js'", JSON.stringify(new NodeURL('./option-preview.js', import.meta.url).href)).replaceAll("'../app/option-images.js'", JSON.stringify(new NodeURL('../app/option-images.js', import.meta.url).href)).replaceAll("'./option-image-editor.js'", JSON.stringify(new NodeURL('./option-image-editor.js', import.meta.url).href)).replaceAll("'../app/api/publication-flow.js'", JSON.stringify(new NodeURL('../app/api/publication-flow.js', import.meta.url).href)).replaceAll("'../app/auth/mutation-auth.js'", JSON.stringify(new NodeURL('../app/auth/mutation-auth.js', import.meta.url).href)).replaceAll("'../app/auth/session-state-adapter.js'", JSON.stringify(new NodeURL('../app/auth/session-state-adapter.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-return.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-return.js', import.meta.url).href)).replaceAll("'../app/auth/session-coordinator.js'", JSON.stringify(new NodeURL('../app/auth/session-coordinator.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-flow.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-flow.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-prompt.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-prompt.js', import.meta.url).href)).replaceAll("'../app/api/deletion-flow.js'", JSON.stringify(new NodeURL('../app/api/deletion-flow.js', import.meta.url).href)).replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-drag-reorder.js'", JSON.stringify(new NodeURL('./block-drag-reorder.js', import.meta.url).href)), [
     {
       name: 'replace editor dependency imports with test doubles',
       pattern: /import\s*\{\s*editorStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];\s*import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*import\s*\{\s*createServerApiClient\s*\}\s*from\s*['"]\.\.\/app\/api\/server-api-client\.js['"];\s*import\s*\{\s*createWorksheetPackageFromDraft,\s*parseWorksheetPackage,\s*\}\s*from\s*['"]\.\/worksheet-package\.js['"];\s*/,
@@ -6478,4 +6478,46 @@ test('late confirmed publication retains its result without feedback or refresh 
   const result = await work;
   assert.equal(result.publicationResult, response); assert.equal(result.ok, true);
   assert.equal(session.state.notifications.length, count); assert.equal(session.state.publishingDraftIds.size, 0);
+});
+
+test('option images preserve identity and audio, clear descriptions on replace, and leave empty removals invalid', async () => {
+  const mod = await loadEditorModule();
+  const { session, removedIds } = createSessionWithQuestion(mod, { inputType: 'multiple_choice', options: [
+    { id: 'o1', value: '', label: '', audioTracks: [{ language: 'english', assetId: 'audio1', sourceTextHash: 'audio1-hash' }] },
+    { id: 'o2', value: 'Text', label: 'Text' },
+  ] });
+  const option = () => session.findBlock('q1').responseConfig.options[0];
+  const first = await session.attachOptionImage('q1', 'o1', createFakeFile({ name: 'one.png', type: 'image/png' }));
+  assert.equal(first.ok, true); assert.equal(option().value, 'o1'); assert.equal(option().label, '');
+  assert.equal(option().audioTracks[0].assetId, 'audio1');
+  session.updateQuestionCorrectAnswerChoice('q1', 'o1');
+  session.updateOptionImageDescription('q1', 'o1', '圖'.repeat(201));
+  assert.equal(Array.from(option().imageDescription).length, 200);
+  session.updateQuestionOptionAtIndex('q1', 0, 'Caption');
+  assert.equal(option().value, 'o1'); assert.equal(session.findBlock('q1').responseConfig.correctAnswer, 'o1');
+  session.applyQuestionOptionMultilinePaste('q1', 0, 'New caption\nOther caption');
+  assert.equal(option().value, 'o1'); assert.equal(session.findBlock('q1').responseConfig.correctAnswer, 'o1');
+  const file = createFakeFile({ name: 'two.webp', type: 'image/webp' });
+  assert.equal((await session.attachOptionImage('q1', 'o1', file)).reason, 'confirm-replace-required');
+  const second = await session.attachOptionImage('q1', 'o1', file, { confirmReplace: true });
+  assert.equal(option().imageDescription, ''); assert(removedIds.includes(first.assetId));
+  session.updateQuestionOptionAtIndex('q1', 0, '');
+  await session.removeOptionImage('q1', 'o1', { confirmRemove: true });
+  assert(removedIds.includes(second.assetId)); assert.equal(option().audioTracks[0].assetId, 'audio1');
+  assert.equal(session.validateCurrentDraft().valid, false);
+  assert.equal((await session.attachOptionImage('q1', 'o1', createFakeFile({ name: 'bad.svg', type: 'image/svg+xml' }))).reason, 'validation');
+  assert.equal((await session.attachOptionImage('q1', 'o1', createFakeFile({ name: 'big.png', type: 'image/png', size: 9 * 1024 * 1024 }))).reason, 'validation');
+  clearTimeout(session.autosaveTimer);
+});
+
+test('late option image read cannot attach after the target is deleted', async () => {
+  const mod = await loadEditorModule();
+  const { session, removedIds } = createSessionWithQuestion(mod, { inputType: 'multiple_choice', options: [{ id: 'o1', value: 'A', label: 'A' }] });
+  let release;
+  const file = { name: 'late.png', type: 'image/png', size: 3, arrayBuffer: () => new Promise(resolve => { release = resolve; }) };
+  const pending = session.attachOptionImage('q1', 'o1', file);
+  while (!release) await new Promise(resolve => setImmediate(resolve));
+  session.removeQuestionOption('q1', 0); release(new Uint8Array([1, 2, 3]).buffer);
+  assert.equal((await pending).reason, 'stale-target'); assert.equal(session.state.draft.assets.length, 0); assert.equal(removedIds.length, 1);
+  clearTimeout(session.autosaveTimer);
 });

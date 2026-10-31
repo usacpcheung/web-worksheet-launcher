@@ -1,3 +1,4 @@
+@import url('../app/image-dialog.css');
 @import url('../app/fonts/worksheet-chinese.css');
 
 :root {
@@ -3236,3 +3237,22 @@ html:has(.viewer-navigation dialog[open]) {
     transform: none !important;
   }
 }
+/* Optional image choices preserve text-only layouts and value-based answer controls. */
+.choice-button-group.choice-button-group--images{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.choice-button-group--images .choice-button-group__row{display:grid;grid-template-columns:minmax(0,1fr) 44px;align-items:start;gap:10px;min-width:0}
+.choice-button-group--images .choice-button-group__item{display:grid;grid-template-columns:24px minmax(0,1fr);gap:12px;align-items:start;width:100%;height:100%;min-width:0;padding:14px}
+.choice-button-group--images .choice-button-group__prefix{grid-column:1;grid-row:1}
+.choice-button-group--images .choice-button-group__label-wrap{grid-column:2;grid-row:1;min-width:0;overflow-wrap:anywhere}
+.viewer-option-image{grid-column:1/-1;display:flex;width:100%;height:96px;align-items:center;justify-content:center;background:#f3f7fc;border-radius:8px;font-size:14px;overflow:hidden}
+.viewer-option-image:empty{background:transparent}
+.viewer-option-image img{max-width:100%;max-height:96px;object-fit:contain;width:auto;height:auto}
+.viewer-option-tools{display:flex;flex-direction:column;gap:10px;width:44px}
+.viewer-option-audio-slot{min-height:44px}
+.viewer-option-enlarge{display:grid;place-items:center;width:44px;height:44px;border:1px solid #d5e3f5;border-radius:10px;background:white;color:#48678e;cursor:pointer;padding:10px}
+.viewer-option-enlarge svg{width:20px;height:20px}
+.viewer-option-enlarge:hover{background:#edf4ff;border-color:#8eb6eb}
+.viewer-option-enlarge:disabled{opacity:.5;cursor:default}
+@media(max-width:760px){.choice-button-group.choice-button-group--images{grid-template-columns:1fr}}
+
+.viewer-shell--continuous .question-card:has(.choice-button-group--images){grid-template-columns:minmax(0,1fr)}
+.viewer-shell--continuous .question-card:has(.choice-button-group--images) .viewer-answer-area{grid-column:1;grid-row:auto}

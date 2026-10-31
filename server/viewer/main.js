@@ -1,3 +1,5 @@
+import { createChoiceButtonGroup as renderChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, getChoicePrefix } from './choice-button-group.js';
+import { optionImageRef, imageDescription, hasOptionImages } from '../app/option-images.js';
 import { prepareMutation } from '../app/auth/mutation-auth.js';
 import { createSilentSessionStateAdapter } from '../app/auth/session-state-adapter.js';
 import { redirectReadSignIn, takeReadAuthReturn } from '../app/auth/read-auth-return.js';
@@ -831,14 +833,14 @@ function parseUploadedAttemptPackage(zipBytes) {
     throw new Error('Uploaded attempt package is missing required files.');
   }
   const manifest = JSON.parse(decodeUtf8(manifestEntry));
-  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2].includes(manifest?.packageVersion)) {
+  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3].includes(manifest?.packageVersion)) {
     throw new Error('Uploaded attempt package format is not supported.');
   }
   const worksheet = JSON.parse(decodeUtf8(worksheetEntry));
   assertWorksheetTextFormats(worksheet.blocks);
-  if (hasMarkdown(worksheet.blocks) && manifest.packageVersion !== 2) throw new Error('Markdown requires attempt package version 2.');
+  if (hasMarkdown(worksheet.blocks) && manifest.packageVersion < 2) throw new Error('Markdown requires attempt package version 2.');
   const attempt = JSON.parse(decodeUtf8(attemptEntry));
-  assertAttemptPackage(manifest, worksheet, attempt, { allowLegacyEnvelope: true });
+  assertAttemptPackage(manifest, worksheet, attempt, { allowLegacyEnvelope: true, files });
   const assets = [];
   const assetManifest = Array.isArray(manifest?.assets) ? manifest.assets : [];
   assetManifest.forEach((asset) => {
@@ -882,7 +884,7 @@ function parseLocalAttemptPackage(zipBytes) {
   if (manifest?.format === 'worksheet-package') {
     throw new Error(t('viewer.notifications.localAttemptImport.worksheetPackageNotAttempt'));
   }
-  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2].includes(manifest?.packageVersion)) {
+  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3].includes(manifest?.packageVersion)) {
     throw new Error(t('viewer.notifications.localAttemptImport.invalidPackage'));
   }
 
@@ -897,9 +899,9 @@ function parseLocalAttemptPackage(zipBytes) {
   try {
     worksheet = JSON.parse(decodeUtf8(worksheetEntry));
     assertWorksheetTextFormats(worksheet.blocks);
-    if (hasMarkdown(worksheet.blocks) && manifest.packageVersion !== 2) throw new Error('Markdown requires attempt package version 2.');
+    if (hasMarkdown(worksheet.blocks) && manifest.packageVersion < 2) throw new Error('Markdown requires attempt package version 2.');
     attempt = JSON.parse(decodeUtf8(attemptEntry));
-    assertAttemptPackage(manifest, worksheet, attempt, { allowLegacyEnvelope: true });
+    assertAttemptPackage(manifest, worksheet, attempt, { allowLegacyEnvelope: true, files });
   } catch {
     throw new Error(t('viewer.notifications.localAttemptImport.invalidPackage'));
   }
@@ -944,9 +946,9 @@ function normalizeOptionMediaRefs(mediaRefs) {
   return mediaRefs
     .map((ref) => {
       if (!isRecord(ref)) return null;
-      if (ref.usage !== 'option_audio') return null;
+      if (!['option_audio', 'option_image'].includes(ref.usage)) return null;
       if (typeof ref.assetId !== 'string' || !ref.assetId.trim()) return null;
-      return { usage: 'option_audio', assetId: String(ref.assetId) };
+      return { usage: ref.usage, assetId: String(ref.assetId) };
     })
     .filter(Boolean);
 }
@@ -1027,6 +1029,7 @@ function computeViewerPayloadFingerprint(payload) {
               value: String(option?.value ?? option?.label ?? ''),
               label: String(option?.label ?? option?.value ?? ''),
               mediaRefs: normalizeOptionMediaRefs(option?.mediaRefs),
+              imageDescription: imageDescription(option?.imageDescription),
               audioTracks: normalizeAudioTrackList(option?.audioTracks),
             }))
             : [],
@@ -1122,6 +1125,7 @@ function normalizeViewerBlock(block, index) {
                 value: String(value),
                 label: String(label),
                 mediaRefs: normalizeOptionMediaRefs(option.mediaRefs),
+                imageDescription: imageDescription(option.imageDescription),
                 audioTracks: normalizeAudioTrackList(option.audioTracks),
               };
             }
@@ -1323,169 +1327,8 @@ function applyBooleanGroupState(groupNode, rawValue, isDisabled = false) {
   });
 }
 
-function getChoicePrefix(index) {
-  let label = '';
-  let current = Number(index) + 1;
-  while (current > 0) {
-    const remainder = (current - 1) % 26;
-    label = String.fromCharCode(65 + remainder) + label;
-    current = Math.floor((current - 1) / 26);
-  }
-  return `${label}.`;
-}
-
-function applyChoiceButtonGroupState(groupNode, rawValue, selectionMode = 'single', isDisabled = false) {
-  if (!groupNode) return;
-  const isMulti = selectionMode === 'multi';
-  const selectedSet = isMulti
-    ? new Set(Array.isArray(rawValue) ? rawValue.map((value) => String(value)) : [])
-    : new Set(rawValue === null || rawValue === undefined || rawValue === '' ? [] : [String(rawValue)]);
-  const buttons = Array.from(groupNode.querySelectorAll('button[data-choice-value]'));
-  let hasSelected = false;
-  buttons.forEach((button) => {
-    const choiceValue = String(button.dataset.choiceValue || '');
-    const isSelected = selectedSet.has(choiceValue);
-    if (isSelected) hasSelected = true;
-    button.classList.toggle('is-selected', isSelected);
-    if (isMulti) {
-      button.setAttribute('aria-pressed', String(isSelected));
-    } else {
-      button.setAttribute('aria-checked', String(isSelected));
-    }
-    button.disabled = isDisabled;
-  });
-  if (!isMulti) {
-    buttons.forEach((button, index) => {
-      const choiceValue = String(button.dataset.choiceValue || '');
-      const isSelected = selectedSet.has(choiceValue);
-      button.tabIndex = hasSelected ? (isSelected ? 0 : -1) : (index === 0 ? 0 : -1);
-    });
-  }
-}
-
-function computeNextChoiceValue({ selectionMode = 'single', currentValue, clickedValue, validValues = [] }) {
-  const clicked = String(clickedValue ?? '');
-  const allowedValues = new Set(validValues.map((value) => String(value)));
-  if (!allowedValues.has(clicked)) {
-    return selectionMode === 'multi' ? [] : '';
-  }
-
-  if (selectionMode === 'multi') {
-    const normalizedCurrent = Array.isArray(currentValue)
-      ? currentValue.map((value) => String(value)).filter((value, idx, allValues) => allValues.indexOf(value) === idx)
-      : [];
-    const nextSet = new Set(normalizedCurrent);
-    if (nextSet.has(clicked)) {
-      nextSet.delete(clicked);
-    } else {
-      nextSet.add(clicked);
-    }
-    // Return selected values in validValues (option) order to keep answers deterministic
-    return validValues
-      .map((value) => String(value))
-      .filter((value) => nextSet.has(value));
-  }
-
-  const normalizedCurrent = String(currentValue ?? '');
-  return normalizedCurrent === clicked ? '' : clicked;
-}
-
-function createChoiceButtonGroup({
-  block,
-  labelId,
-  controlId,
-  optionSource,
-  session,
-  updateSummary,
-  reportMediaFeedback,
-  signal,
-}) {
-  const selectionMode = block.responseConfig?.selectionMode === 'multi' ? 'multi' : 'single';
-  const validValues = optionSource.map((option) => String(option.value ?? option.label ?? ''));
-  const container = document.createElement('div');
-  container.className = 'choice-button-group';
-  container.setAttribute('aria-labelledby', labelId);
-  if (selectionMode === 'single') {
-    container.setAttribute('role', 'radiogroup');
-  } else {
-    container.setAttribute('role', 'group');
-  }
-  optionSource.forEach((opt, optionIndex) => {
-    const row = document.createElement('div');
-    row.className = 'choice-button-group__row';
-    const value = String(opt.value ?? opt.label ?? '');
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'choice-button-group__item';
-    button.dataset.choiceValue = value;
-    button.id = `${controlId}-${String(opt?.id || optionIndex).replace(/[^A-Za-z0-9_-]/g, '_')}`;
-    if (selectionMode === 'single') {
-      button.setAttribute('role', 'radio');
-      button.setAttribute('aria-checked', 'false');
-      button.tabIndex = optionIndex === 0 ? 0 : -1;
-    } else {
-      button.setAttribute('aria-pressed', 'false');
-    }
-
-    const prefix = document.createElement('span');
-    prefix.className = 'choice-button-group__prefix';
-    prefix.textContent = getChoicePrefix(optionIndex);
-
-    const labelWrap = document.createElement('span');
-    labelWrap.className = 'choice-button-group__label-wrap';
-
-    const labelText = document.createElement('span');
-    labelText.className = 'choice-button-group__label';
-    labelText.textContent = String(opt.label ?? opt.value ?? '');
-    labelWrap.appendChild(labelText);
-
-    button.append(prefix, labelWrap);
-
-    button.addEventListener('click', () => {
-      const currentValue = session.state.answers?.[block.blockId]?.value;
-      const nextValue = computeNextChoiceValue({
-        selectionMode,
-        currentValue,
-        clickedValue: value,
-        validValues,
-      });
-      session.setAnswer(block.blockId, nextValue);
-      updateSummary();
-    }, { signal });
-    row.appendChild(button);
-
-    const optionAudioControl = createViewerAudioControl({
-      audioTracks: opt?.audioTracks,
-      legacyAudioRef: normalizeOptionMediaRefs(opt?.mediaRefs)[0] || null,
-      kind: 'option',
-      session,
-      reportMediaFeedback,
-      signal,
-    });
-    if (optionAudioControl) row.appendChild(optionAudioControl);
-
-    container.appendChild(row);
-  });
-
-  if (selectionMode === 'single') {
-    container.addEventListener('keydown', (event) => {
-      if (!['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft'].includes(event.key)) return;
-      const radioButtons = Array.from(container.querySelectorAll('button[data-choice-value]'));
-      const currentIndex = radioButtons.indexOf(document.activeElement);
-      if (currentIndex === -1) return;
-      event.preventDefault();
-      const isForward = event.key === 'ArrowDown' || event.key === 'ArrowRight';
-      const nextIndex = isForward
-        ? (currentIndex + 1) % radioButtons.length
-        : (currentIndex - 1 + radioButtons.length) % radioButtons.length;
-      radioButtons.forEach((btn, idx) => {
-        btn.tabIndex = idx === nextIndex ? 0 : -1;
-      });
-      radioButtons[nextIndex].focus();
-    }, { signal });
-  }
-
-  return container;
+function createChoiceButtonGroup(options) {
+  return renderChoiceButtonGroup({ ...options, createViewerAudioControl });
 }
 
 function coerceAnswerValueForQuestion(questionBlock, rawValue, options = {}) {
@@ -1736,7 +1579,7 @@ function getOptionDisplayTextByValue(block, rawValue) {
   if (matchedIndex < 0) {
     return normalizedValue;
   }
-  const label = String(options[matchedIndex]?.label ?? options[matchedIndex]?.value ?? normalizedValue);
+  const label = String(options[matchedIndex]?.label ?? options[matchedIndex]?.value ?? normalizedValue) || t('optionImages.imageAlt', { option: getChoicePrefix(matchedIndex) });
   return `${getChoicePrefix(matchedIndex)} ${label}`;
 }
 
@@ -2030,11 +1873,13 @@ async function buildWorksheetPrintReportModel({
       ? (Array.isArray(learnerValue) ? learnerValue.map(String) : [])
       : learnerValue == null ? [] : [String(learnerValue)];
     const choices = config.inputType === 'multiple_choice'
-      ? displayedOptions.map((option, optionIndex) => ({
+      ? await Promise.all(displayedOptions.map(async (option, optionIndex) => ({
         label: String(option.label ?? option.value ?? ''),
         prefix: getChoicePrefix(optionIndex),
+        image: optionImageRef(option) ? await resolvePrintQuestionImage(optionImageRef(option), storage) : null,
+        imageAlt: imageDescription(option.imageDescription) || t('optionImages.imageAlt', { option: getChoicePrefix(optionIndex) }),
         selected: selectedValues.includes(String(option.value ?? option.label ?? '')),
-      }))
+      })))
       : config.inputType === 'boolean'
         ? [true, false].map(value => ({ label: value ? 'True' : 'False', booleanValue: String(value),
           selected: coerceAnswerValueByInputType('boolean', learnerValue) === value }))
@@ -2171,6 +2016,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
           <div class="print-choice${choice.selected ? ' is-selected' : ''}"${choice.booleanValue ? ` data-boolean-value="${escapeHtml(choice.booleanValue)}"` : ''}>
             ${choice.prefix ? `<span class="print-choice-prefix">${escapeHtml(choice.prefix)}</span>` : ''}
             <span class="print-choice-label">${escapeHtml(choice.label)}</span>
+            ${choice.image?.status === 'ready' ? `<img class="print-option-image" src="${escapeHtml(choice.image.src)}" alt="${escapeHtml(choice.imageAlt)}">` : choice.image ? `<span>${escapeHtml(t('optionImages.unavailable'))}</span>` : ''}
             <span class="print-choice-mark" aria-hidden="true">${choice.selected ? '✓' : ''}</span>
           </div>`).join('')}
       </div>` : '';
@@ -3800,7 +3646,7 @@ class ViewerAttemptSession {
     assertWorksheetTextFormats(worksheet.blocks);
     const manifest = {
       format: 'worksheet-attempt-package',
-      packageVersion: hasMarkdown(worksheet.blocks) ? 2 : 1,
+      packageVersion: hasOptionImages(worksheet.blocks) ? 3 : hasMarkdown(worksheet.blocks) ? 2 : 1,
       schemaVersion: 1,
       generatedAt: nowIso(),
       worksheet: {
@@ -6355,6 +6201,7 @@ function renderViewerShell(session) {
           opt?.value ?? '',
           opt?.label ?? '',
           JSON.stringify(normalizeOptionMediaRefs(opt?.mediaRefs)),
+          imageDescription(opt?.imageDescription),
         ])
         : [],
       hasGlobalCheckResult,
@@ -6675,6 +6522,7 @@ function renderViewerShell(session) {
           )
           : block.responseConfig.options;
         control = createChoiceButtonGroup({
+          createViewerAudioControl,
           block,
           labelId: label.id,
           controlId,
