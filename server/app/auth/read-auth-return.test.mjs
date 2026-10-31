@@ -97,3 +97,16 @@ test('oversized prepared metadata blocks navigation instead of silently losing f
     save: async () => {}, localId: () => 'local', subject: () => 'A', isCurrent: () => true }));
   assert.equal(h.target(), undefined); assert.equal(getPendingIntent(), null);
 });
+
+test('editor audio same-tab return preserves work and requires a fresh user action', async () => {
+  const h = fixture();
+  const intent = { kind: 'mutation', operation: 'generateAudio', id: 'draft-one' };
+  assert.equal(validReadIntent('viewer', intent), false);
+  assert.equal(validReadIntent('roleplayscene', intent), false);
+  await redirectReadSignIn({ app: 'editor', intent, save: async () => {}, localId: () => 'draft-one', subject: () => null, isCurrent: () => true });
+  window.location.href = h.target();
+  const returned = takeReadAuthReturn('editor');
+  assert.equal(returned.readIntent.operation, 'generateAudio');
+  assert.equal(returned.localId, 'draft-one');
+  assert.equal(takeReadAuthReturn('editor'), null);
+});

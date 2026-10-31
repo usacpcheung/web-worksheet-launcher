@@ -209,3 +209,15 @@ Run affected automated suites before deployed acceptance. Real VPS/local-browser
 The user-facing behavior above is agreed. Internal helper signatures, probe cache strategy and adapter structure are implementation choices to resolve against code/tests, not new product decisions. Before introducing same-tab fallback, validate the actual return mechanism and persisted-work guarantees against the existing popup/message contract and deployment. Before changing 403 handling, verify bridge and proxy response shapes; a successful worksheet probe is not blanket authorization for another service.
 
 Completion requires every mapped feature to follow its continuation policy, no remaining duplicate authentication implementation without an explicit reason, passing cross-app tests, and updated current references. Backend authorization, OIDC configuration and storage/ownership policy changes are outside this refactor unless separately approved.
+
+### Editor audio-generation consent
+
+Prompt and option T2A (including legacy and multilingual regeneration) prepare
+through `prepareMutation` and the existing read-auth coordinator. Signed-out
+users choose Sign in or Cancel; recovered popup sessions require an explicit
+Generate audio confirmation. The provider boundary receives the confirmed
+account lease and sends at most one request. A provider authentication failure
+never opens login or repeats generation automatically. Draft identity, target,
+source text, language-track identity and cancellation remain guarded throughout.
+Same-tab fallback preserves local work and returns a retry message; it does not
+replay generation. Viewer and RolePlayScene provider workflows are unchanged.
