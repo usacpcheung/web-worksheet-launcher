@@ -15,7 +15,8 @@ import { PackageLoadProgress, packageLoadLabel } from './package-load-progress.j
 import { setWorksheetText, renderWorksheetText, WORKSHEET_TEXT_CSS, installWorksheetTextStyles, assertWorksheetTextFormats, hasMarkdown } from '../app/worksheet-text.js';
 import { createVoiceWorkflow, normalizeVoiceRecovery, REWRITE_INPUT_LIMIT, unicodeLength, hasPendingRecovery, getVoiceRecovery } from './answer-voice-workflow.js';
 import { createVoiceControls, createVoiceStatus } from './answer-voice-ui.js';
-import { createBlockViewHost, createBlockViewScope } from './block-view-host.js';
+import { createWorksheetViewHost, createBlockViewScope } from './block-view-host.js';
+import { createSectionNavigation } from './section-navigation.js';
 import { viewerStorage } from './storage/index.js';
 import { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';
 import { validateViewerPayloadSchema } from '../app/contracts/validators.js';
@@ -5815,7 +5816,7 @@ function renderViewerShell(session) {
   }, { signal });
 
   const shell = document.createElement('div');
-  shell.className = 'viewer-shell';
+  shell.className = 'viewer-shell viewer-shell--continuous';
 
   const header = document.createElement('header');
   header.className = 'viewer-header';
@@ -5864,6 +5865,9 @@ function renderViewerShell(session) {
   const crossQuestionStatus = createVoiceStatus({ session, t,
     view: blockId => navigateToBlockIndex(getOrderedBlocks().findIndex(block => block.blockId === blockId)),
   });
+  crossQuestionStatus.root.id = 'viewer-operation-status';
+  crossQuestionStatus.root.classList.add('viewer-operation-panel');
+  let sectionNavigation;
   let stepperOrderSignature = null;
   let lastStepperActiveIndex = -1;
   const numberInputErrors = new Map();
@@ -6808,6 +6812,12 @@ function renderViewerShell(session) {
         rewriteMessages.className = 'question-card__rewrite-messages';
 
         const voiceUi = createVoiceControls({ session, block, control, t, signal,
+          sharedStatusId: crossQuestionStatus.root.id,
+          canRestoreFocus: () => {
+            const rect = control.getBoundingClientRect();
+            return rect.bottom > 0 && rect.top < window.innerHeight
+              && (card.contains(document.activeElement) || crossQuestionStatus.root.contains(document.activeElement));
+          },
           view: blockId => navigateToBlockIndex(getOrderedBlocks().findIndex(item => item.blockId === blockId)),
           applied: value => {
             cacheRawControlValue(block.blockId, value.text);
@@ -6819,7 +6829,7 @@ function renderViewerShell(session) {
         rewriteButton.type = 'button';
         rewriteButton.className = 'question-card__rewrite-btn icon-nav-btn';
         rewriteButton.textContent = t('viewer.rewrite.action');
-        rewriteButton.setAttribute('aria-describedby', `${control.id}-voice-status`);
+        rewriteButton.setAttribute('aria-describedby', crossQuestionStatus.root.id);
         rewriteButton.addEventListener('click', () => {
           if (!rewriteButton.disabled) voiceUi.rewrite();
         }, { signal: scope.signal });
@@ -6881,9 +6891,26 @@ function renderViewerShell(session) {
         card.append(helper, control, mediaFeedback, inputError);
       }
 
+    let lastControlState;
     const update = () => {
       if (scope.signal.aborted) return;
       const activeElement = document.activeElement;
+      // Keep every mounted answer synchronized, without rewriting hundreds of
+      // unchanged off-screen controls on each keystroke or recording timer tick.
+      const controlState = JSON.stringify([
+        session.state.answers?.[block.blockId]?.value, localInputCache.get(block.blockId),
+        numberInputErrors.get(block.blockId), session.state.status,
+        Boolean(session.voice.active), session.voice.active?.blockId === block.blockId,
+        session.state.isRewriting && session.state.rewritingBlockId === block.blockId,
+        Object.hasOwn(session.state.undoBuffer || {}, block.blockId),
+        Object.hasOwn(session.state.rewriteMessageByBlock || {}, block.blockId) ? session.state.rewriteMessageByBlock[block.blockId] : null,
+        getVoiceRecovery(session.state.voiceRecovery, block.blockId),
+        session.state.voiceApplied?.blockId === block.blockId ? session.state.voiceApplied.id : null,
+        card.contains(activeElement),
+      ]);
+      if (session.state.lastActiveBlockId !== block.blockId && !card.contains(activeElement)
+        && controlState === lastControlState) return;
+      lastControlState = controlState;
       const inputType = block.responseConfig?.inputType || 'text';
       const storedValue = session.state.answers?.[block.blockId]?.value;
       const cachedRawValue = localInputCache.get(block.blockId);
@@ -6970,8 +6997,8 @@ function renderViewerShell(session) {
       } else if (inputType !== 'multiple_choice' && inputType !== 'boolean') {
         control.disabled = session.state.status === 'completed';
       }
-      const card = control.closest('.question-card');
-      const errorNode = card?.querySelector('.input-error');
+      const answerCard = control.closest('.question-card');
+      const errorNode = answerCard?.querySelector('.input-error');
       if (errorNode) {
         errorNode.textContent = inputType === 'number' ? (numberInputErrors.get(block.blockId) || '') : '';
       }
@@ -6980,12 +7007,15 @@ function renderViewerShell(session) {
     return { element: card, update, dispose: scope.dispose };
   };
 
-  const blockViewHost = createBlockViewHost({
+  const blockViewHost = createWorksheetViewHost({
     container: blockList,
     createView: createBlockView,
-    beforeReplace: () => {
-      closeOpenViewerAudioMenu();
-      session.stopActiveAudio('interrupted');
+    presentation: getBlockPresentation,
+    beforeReplace: block => {
+      if (block.blockId === getOrderedBlocks()[currentBlockIndex]?.blockId) {
+        closeOpenViewerAudioMenu();
+        session.stopActiveAudio('interrupted');
+      }
     },
     signal,
   });
@@ -7009,16 +7039,18 @@ function renderViewerShell(session) {
       ? Math.trunc(requestedNumericIndex)
       : currentBlockIndex;
     const clampedIndex = Math.min(Math.max(safeRequestedIndex, 0), orderedBlocks.length - 1);
-    if (clampedIndex === currentBlockIndex) {
-      return;
+    const source = options.source || 'explicit';
+    if (source === 'interaction') sectionNavigation?.interact();
+    if (clampedIndex !== currentBlockIndex) {
+      closeOpenViewerAudioMenu();
+      session.stopActiveAudio('interrupted');
+      // Commit identity before voice navigation notifies listeners synchronously.
+      currentBlockIndex = clampedIndex;
+      persistNavigationState(orderedBlocks);
+      session.voice.navigate();
+      renderUI();
     }
-
-    closeOpenViewerAudioMenu();
-    session.stopActiveAudio('interrupted');
-    session.voice.navigate();
-    currentBlockIndex = clampedIndex;
-    persistNavigationState(orderedBlocks);
-    renderUI();
+    if (source === 'explicit') sectionNavigation?.jump(clampedIndex, { focus: true });
   };
 
   const goPrev = () => {
@@ -7036,8 +7068,12 @@ function renderViewerShell(session) {
     if (orderedBlocks.length === 0) return;
     currentBlockIndex = Math.min(Math.max(currentBlockIndex, 0), orderedBlocks.length - 1);
     const currentBlock = orderedBlocks[currentBlockIndex];
+    // Resume can select a fallback when saved IDs/indices are absent or stale.
+    // Expose that same identity to mounted controls without a synthetic navigation.
+    session.state.lastActiveIndex = currentBlockIndex;
+    session.state.lastActiveBlockId = currentBlock.blockId;
     crossQuestionStatus.update(currentBlock.blockId);
-    crossQuestionStatus.root.hidden = !session.voice.active || (currentBlock.kind === 'question' && (currentBlock.responseConfig?.inputType || 'text') === 'text');
+    crossQuestionStatus.root.hidden = !session.voice.active;
     const stepperSignature = getStepperOrderSignature(orderedBlocks);
     const activeIndexChanged = currentBlockIndex !== lastStepperActiveIndex;
     const orderChanged = stepperSignature !== stepperOrderSignature;
@@ -7052,7 +7088,7 @@ function renderViewerShell(session) {
     }
     stepperOrderSignature = stepperSignature;
     lastStepperActiveIndex = currentBlockIndex;
-    blockViewHost.update(currentBlock, getBlockPresentation(currentBlock));
+    blockViewHost.update(orderedBlocks, currentBlock.blockId);
 
     const summary = computeAnswerSummary(session.state.viewerPayload, session.state.answers);
     status.textContent = session.state.isFinalizing
@@ -7248,6 +7284,26 @@ function renderViewerShell(session) {
   app.append(shell, detailsModal);
   bottomBarRoot.append(bottomBar);
   renderUI();
+  sectionNavigation = createSectionNavigation({
+    container: blockList, signal, getCurrentIndex: () => currentBlockIndex,
+    layoutElements: [header, bottomBar, crossQuestionStatus.root],
+    activate: index => navigateToBlockIndex(index, { source: 'scroll' }),
+    getBottomInset: () => {
+      const bar = bottomBar.getBoundingClientRect();
+      const panelTop = crossQuestionStatus.root.hidden ? window.innerHeight : crossQuestionStatus.root.getBoundingClientRect().top;
+      return Math.max(0, window.innerHeight - Math.min(bar.top, panelTop));
+    },
+  });
+  const activateControl = event => {
+    const section = event.target.closest?.('.viewer-block-section');
+    if (!section || !event.target.closest('input, textarea, button, select, a, [contenteditable="true"]')) return;
+    const index = getOrderedBlocks().findIndex(block => block.blockId === section.dataset.blockId);
+    if (index >= 0) navigateToBlockIndex(index, { source: 'interaction' });
+  };
+  // Capture runs before playback/answer handlers, including keyboard activation.
+  blockList.addEventListener('focusin', activateControl, { capture: true, signal });
+  blockList.addEventListener('click', activateControl, { capture: true, signal });
+  sectionNavigation.restore();
 }
 
 function cleanupViewerAuthCallbackUrlParams() {

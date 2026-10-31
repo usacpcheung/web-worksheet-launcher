@@ -9,6 +9,7 @@ if (screenshots) await mkdir(screenshots, { recursive: true });
 const browser=await chromium.launch({headless:true});
 try {
 const page=await browser.newPage({viewport:{width:1280,height:900}});
+const current = page.locator('.viewer-block-section.is-current');
 const errors=[];page.on('pageerror',e=>errors.push(e.message));
 page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
 const shot = async name => { if (screenshots) { await page.screenshot({path: screenshots + '/' + name, fullPage: false, animations: 'disabled'}); } };
@@ -39,18 +40,18 @@ await page.evaluate(async()=>{
 errors.length=0;
 await page.goto(base + '/server/viewer/index.html?localAttemptId=voice-smoke');
 
-const field=()=>page.locator('.question-card > textarea:not(.question-card__review-status)');
+const field=()=>current.locator('.question-card > textarea:not(.question-card__review-status)');
 // Live editable -> temporarily locked -> completed transition, with real viewer rendering.
 // Navigation can finish before IndexedDB-backed attempt loading renders the controls.
-await page.getByRole('button',{name:'Add by voice',exact:true}).waitFor({state:'visible'});
-assert.equal(await page.getByRole('button',{name:'Add by voice',exact:true}).isVisible(),true);
-assert.equal(await page.getByRole('button',{name:'Rewrite',exact:true}).isEnabled(),true);
-assert.equal(await page.getByRole('button',{name:'Undo',exact:true}).isDisabled(),true);
-await page.getByRole('button',{name:'Add by voice',exact:true}).click();
+await current.getByRole('button',{name:'Add by voice',exact:true}).waitFor({state:'visible'});
+assert.equal(await current.getByRole('button',{name:'Add by voice',exact:true}).isVisible(),true);
+assert.equal(await current.getByRole('button',{name:'Rewrite',exact:true}).isEnabled(),true);
+assert.equal(await current.getByRole('button',{name:'Undo',exact:true}).isDisabled(),true);
+await current.getByRole('button',{name:'Add by voice',exact:true}).click();
 await page.getByRole('button',{name:'Stop',exact:true}).waitFor();
 for(const name of ['Add by voice','Rewrite','Undo']) {
- assert.equal(await page.getByRole('button',{name,exact:true}).isVisible(),true);
- assert.equal(await page.getByRole('button',{name,exact:true}).isDisabled(),true);
+ assert.equal(await current.getByRole('button',{name,exact:true}).isVisible(),true);
+ assert.equal(await current.getByRole('button',{name,exact:true}).isDisabled(),true);
 }
 assert.equal(await page.locator('.viewer-voice-status:visible').count(),1);
 await page.getByRole('button',{name:'Stop',exact:true}).click();
@@ -59,17 +60,17 @@ await transcriptionReady;
 finishTranscription();hold=false;
 await page.waitForFunction(()=>window.viewerSession.voice.active?.state==='rewriting');
 for(const selector of ['.question-card__voice-btn','.question-card__rewrite-btn','.question-card__undo-btn']) {
- assert.equal(await page.locator(selector).isVisible(),true);
- assert.equal(await page.locator(selector).isDisabled(),true);
+ assert.equal(await current.locator(selector).isVisible(),true);
+ assert.equal(await current.locator(selector).isDisabled(),true);
 }
 assert.match(await page.locator('.viewer-voice-status:visible').innerText(),/Rewriting/);
 await rewriteReady;
 finishRewrite();
 await page.waitForFunction(()=>!window.viewerSession.voice.active);
-assert.equal(await page.getByRole('button',{name:'Undo',exact:true}).isEnabled(),true);
+assert.equal(await current.getByRole('button',{name:'Undo',exact:true}).isEnabled(),true);
 await page.getByRole('button',{name:'Submit',exact:true}).click();
 await page.waitForFunction(()=>window.viewerSession.state.status==='completed'&&!window.viewerSession.state.isFinalizing);
-assert.equal(await page.locator('.question-card__text-footer').isVisible(),false);
+assert.equal(await current.locator('.question-card__text-footer').isVisible(),false);
 assert.equal(await field().inputValue(),'Earlier answer New segment');
 assert.equal(await field().evaluate(e=>e.readOnly&&!e.disabled),true);
 
@@ -94,33 +95,33 @@ for(const locale of ['en','zh-Hant']) {
   await field().focus();
   assert.equal(await field().evaluate(e=>document.activeElement===e),true);
   for(const selector of ['.question-card__voice-btn','.question-card__rewrite-btn','.question-card__undo-btn','.text-counter','.question-card__rewrite-hint','.viewer-voice-hint'])
-   assert.equal(await page.locator(selector).isVisible(),false,selector);
+   assert.equal(await current.locator(selector).isVisible(),false,selector);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   await shot('review-'+locale+'-'+width+'-answered.png');
   await page.evaluate(()=>{window.viewerSession.checkAnswers();});
   assert.equal(await field().inputValue(),'My submitted answer. 我的已提交答案。');
   // Text questions are not automatically graded by the existing viewer.
-  assert.equal(await page.locator('.viewer-check-banner').count(),0);
+  assert.equal(await current.locator('.viewer-check-banner').count(),0);
   // Navigate through the existing accessible next-block control.
   await page.getByRole('button',{name:locale==='en'?'Go to next block':'前往下一個區塊',exact:true}).click();
-  await page.locator('.question-card__review-status').waitFor();
-  assert.equal(await page.locator('.question-card__review-status').inputValue(),locale==='en'?'Not answered':'未作答');
+  await current.locator('.question-card__review-status').waitFor();
+  assert.equal(await current.locator('.question-card__review-status').inputValue(),locale==='en'?'Not answered':'未作答');
   assert.equal(await field().isVisible(),false);
-  assert.equal(await page.locator('.question-card__review-status').evaluate(e=>e.readOnly&&!e.disabled),true);
+  assert.equal(await current.locator('.question-card__review-status').evaluate(e=>e.readOnly&&!e.disabled),true);
   assert.equal(await page.evaluate(()=>String(window.viewerSession.state.answers.q2?.value??'')), '');
-  const reviewSize=await page.locator('.question-card__review-status').boundingBox();
+  const reviewSize=await current.locator('.question-card__review-status').boundingBox();
   assert.ok(reviewSize.height>=170);
-  assert.equal(await page.locator('.question-card__text-footer').isVisible(),false);
-  await page.locator('.question-card__review-status').evaluate(e=>e.scrollIntoView({block:'center'}));
-  assert.equal(await page.locator('.question-card__review-status').evaluate(e=>e.getBoundingClientRect().bottom<=document.querySelector('.viewer-bottom-bar').getBoundingClientRect().top),true);
+  assert.equal(await current.locator('.question-card__text-footer').isVisible(),false);
+  await current.locator('.question-card__review-status').evaluate(e=>e.scrollIntoView({block:'center'}));
+  assert.equal(await current.locator('.question-card__review-status').evaluate(e=>e.getBoundingClientRect().bottom<=document.querySelector('.viewer-bottom-bar').getBoundingClientRect().top),true);
   await shot('review-'+locale+'-'+width+'-unanswered.png');
   await page.getByRole('button',{name:locale==='en'?'Go to next block':'前往下一個區塊',exact:true}).click();
-  const number=page.locator('.question-card > input');
+  const number=current.locator('.question-card > input');
   assert.equal(await number.inputValue(),'7');
   assert.equal(await number.isDisabled(),true);
-  assert.equal(await page.locator('.question-card__review-status').count(),0);
-  assert.equal(await page.locator('.viewer-check-banner.is-correct').isVisible(),true);
-  assert.equal(await page.locator('.viewer-check-reveal').isVisible(),true);
+  assert.equal(await current.locator('.question-card__review-status').count(),0);
+  assert.equal(await current.locator('.viewer-check-banner.is-correct').isVisible(),true);
+  assert.equal(await current.locator('.viewer-check-reveal').isVisible(),true);
  }
 }
 assert.deepEqual(errors,[]);

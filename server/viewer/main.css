@@ -929,6 +929,36 @@ body {
   display: flex;
 }
 
+/* Stage 2 is deliberately motion-free. The Version C visual layer follows. */
+.viewer-shell--continuous #viewer-answer-form {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding-bottom: 160px;
+}
+.viewer-block-section { flex: none; min-width: 0; }
+.viewer-block-section:focus-visible { outline: 2px solid #2563eb; outline-offset: 4px; }
+.viewer-shell--continuous .viewer-card-transition { animation: none; }
+.viewer-shell--continuous .viewer-operation-panel {
+  position: fixed;
+  right: 20px;
+  bottom: calc(var(--viewer-bottom-bar-clearance) + 8px);
+  z-index: 60;
+  box-sizing: border-box;
+  width: min(380px, calc(100vw - 24px));
+  padding: 12px;
+  border: 1px solid #d4e0ee;
+  border-radius: 12px;
+  background: white;
+  box-shadow: 0 6px 24px rgb(15 23 42 / 12%);
+}
+@media (max-width: 760px) {
+  .viewer-shell--continuous .viewer-operation-panel { left: 12px; right: 12px; width: auto; }
+}
+@media print {
+  .viewer-operation-panel { display: none !important; }
+}
+
 .viewer-header h1,
 .viewer-section h2 {
   margin: 0;

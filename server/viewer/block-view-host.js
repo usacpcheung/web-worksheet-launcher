@@ -58,3 +58,33 @@ export function createBlockViewScope() {
     },
   };
 }
+
+// Stable section wrappers separate scroll geometry from the lifetime of a card.
+export function createWorksheetViewHost({ container, createView, presentation, beforeReplace, signal }) {
+  const entries = new Map();
+  signal.addEventListener('abort', () => { entries.clear(); container.replaceChildren(); }, { once: true });
+  return {
+    update(blocks, currentId) {
+      if (signal.aborted) return;
+      const ids = new Set(blocks.map(block => block.blockId));
+      for (const [id, entry] of entries) if (!ids.has(id)) {
+        entry.host.dispose(); entry.element.remove(); entries.delete(id);
+      }
+      blocks.forEach((block, index) => {
+        let entry = entries.get(block.blockId);
+        if (!entry) {
+          const element = document.createElement('section');
+          element.className = 'viewer-block-section';
+          element.dataset.blockId = block.blockId;
+          element.tabIndex = -1;
+          const host = createBlockViewHost({ container: element, createView,
+            beforeReplace: () => beforeReplace(block), signal });
+          entry = { element, host }; entries.set(block.blockId, entry);
+        }
+        if (container.children[index] !== entry.element) container.insertBefore(entry.element, container.children[index] || null);
+        entry.element.classList.toggle('is-current', block.blockId === currentId);
+        entry.host.update(block, presentation(block));
+      });
+    },
+  };
+}

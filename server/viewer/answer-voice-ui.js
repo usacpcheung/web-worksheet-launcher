@@ -38,12 +38,12 @@ export function createVoiceStatus({ session, t, view }) {
   } };
 }
 
-export function createVoiceControls({ session, block, control, t, view, applied, signal }) {
+export function createVoiceControls({ session, block, control, t, view, applied, signal, sharedStatusId, canRestoreFocus }) {
   let intent = null;
   let placedSelection = null;
   const root = document.createElement('div'); root.className = 'viewer-voice';
-  const status = createVoiceStatus({ session, t, view });
-  status.root.id = `${control.id}-voice-status`;
+  const status = sharedStatusId ? null : createVoiceStatus({ session, t, view });
+  if (status) status.root.id = `${control.id}-voice-status`;
   const capture = (event) => {
     if (event.type === 'select' && placedSelection?.text === control.value
       && placedSelection.index === control.selectionStart && placedSelection.index === control.selectionEnd) return;
@@ -98,7 +98,8 @@ export function createVoiceControls({ session, block, control, t, view, applied,
   const actions = document.createElement('div'); actions.className = 'viewer-voice-recovery-actions';
   actions.append(retry, insert, append, signIn, discard);
   recovery.append(message, editorLabel, actions);
-  root.append(status.root, hint, recovery);
+  if (status) root.append(status.root);
+  root.append(hint, recovery);
   let lastApplied = null;
   function update() {
     const completed = session.state.status === 'completed';
@@ -109,10 +110,10 @@ export function createVoiceControls({ session, block, control, t, view, applied,
     const record = getVoiceRecovery(session.state.voiceRecovery, block.blockId);
     add.disabled = Boolean(op) || hasPendingRecovery(record) || !supportsAnswerRecording()
       || control.value.length >= (block.responseConfig?.maxLength || 200);
-    add.setAttribute('aria-describedby', status.root.id);
+    add.setAttribute('aria-describedby', sharedStatusId || status.root.id);
     control.readOnly = Boolean(own);
     control.classList.toggle('viewer-voice-readonly', Boolean(own));
-    status.update(block.blockId);
+    status?.update(block.blockId);
     hint.textContent = own ? t('viewer.voice.locked') : hasPendingRecovery(record) ? t('viewer.voice.resolveRecovery')
       : !supportsAnswerRecording() ? t('viewer.voice.errors.RECORDING_UNSUPPORTED')
       : control.value.length >= (block.responseConfig?.maxLength || 200) ? t('viewer.voice.noRoom')
@@ -143,11 +144,14 @@ export function createVoiceControls({ session, block, control, t, view, applied,
     if (value?.blockId === block.blockId && value.id !== lastApplied && !op
       && String(session.state.answers?.[block.blockId]?.value ?? '') === value.text) {
       lastApplied = value.id; intent = null;
-      const visible = session.state.lastActiveBlockId === block.blockId && !document.hidden && control.isConnected;
+      const visible = session.state.lastActiveBlockId === block.blockId && !document.hidden && control.isConnected
+        && (!canRestoreFocus || canRestoreFocus());
       applied(value, visible);
       if (visible) {
         placedSelection = { text: value.text, index: value.caret };
-        control.focus(); control.setSelectionRange(value.caret, value.caret);
+        if (canRestoreFocus) control.focus({ preventScroll: true });
+        else control.focus();
+        control.setSelectionRange(value.caret, value.caret);
       }
       hint.textContent = t('viewer.voice.ready');
     }
