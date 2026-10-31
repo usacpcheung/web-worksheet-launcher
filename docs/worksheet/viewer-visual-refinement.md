@@ -198,3 +198,29 @@ output. All 1,757 Node tests and six browser smokes passed (Markdown, Version C,
 continuous navigation, entry motion, voice and worksheet printing). Screenshots
 were inspected for desktop, mobile and print. Follow-up review found no issue
 requiring a fix. VPS deployment and native printing are not claimed.
+
+
+## Accepted Style A and 45% reading line
+
+The user accepted Style A from the standalone comparison and authorized changing
+the production reading line to 45%. The title now uses the existing font at
+weight 600, 48px desktop / 32px mobile (rem-based), normal letter spacing and
+1.3 line height. Unboxed blue question numbers use weight 500, 36px desktop,
+30px tablet and 24px mobile. Print retains its physical sizes with corresponding
+600/500 title/number weights. No new decorative line or badge is added.
+
+Section navigation now computes the reading line at 45% of the clipped visual
+viewport, independent of operation-panel height. Motion receives that same
+viewport; its existing 15% buffer naturally settles at 60% when entering from
+below (30% from above). Slide durations and the navigation/voice state machines
+are unchanged. This explicitly supersedes the earlier 40% geometry, not the
+existing interruption, cancellation or result-ownership rules.
+
+Review covered responsive typography, number clearance, shared geometry callers,
+operation-panel independence, explicit jumps, scroll boundaries and reveal
+settling. The boundary smoke's reverse-scroll measurement was updated to 45%.
+Browser assertions verify 45% jump alignment, early settling and Style A type
+sizes/weights. All 1,757 Node tests and six browser smokes passed (continuous
+navigation, entry motion, Version C, voice, worksheet printing and Markdown).
+Desktop/mobile rendered screenshots were inspected. Final review found no issue
+requiring another fix. No VPS deployment or merge was performed.

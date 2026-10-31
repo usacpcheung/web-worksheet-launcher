@@ -36,7 +36,7 @@ export function createSectionNavigation({ container, getCurrentIndex, activate, 
     // Operation chrome must not move section boundaries: otherwise its arrival
     // makes the next small downward scroll select the preceding section.
     const bottom = Math.min(top + (visual?.height || window.innerHeight), window.innerHeight);
-    return { top, bottom, line: top + Math.max(1, bottom - top) * 0.4 };
+    return { top, bottom, line: top + Math.max(1, bottom - top) * 0.45 };
   };
   const controlViewport = () => {
     const view = viewport();

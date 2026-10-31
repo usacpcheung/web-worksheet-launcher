@@ -48,8 +48,8 @@ export const PRINT_REPORT_CSS = `
       margin: 0 0 2.4mm;
       text-align: center;
       font-size: 15.5pt;
-      line-height: 1.2;
-      font-weight: 700;
+      line-height: 1.3;
+      font-weight: 600;
     }
 
     .print-meta {
@@ -111,7 +111,7 @@ export const PRINT_REPORT_CSS = `
       top: -1.5mm;
       font-size: 22pt;
       line-height: 1.2;
-      font-weight: 400;
+      font-weight: 500;
       font-variant-numeric: tabular-nums;
     }
 

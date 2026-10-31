@@ -51,6 +51,8 @@ try {
   await page.waitForFunction(()=>window.originalUtilities.parentElement.matches('.viewer-header-top')&&document.activeElement===window.originalLanguageTrigger);
   await page.setViewportSize({width:1280,height:900});
   await page.waitForFunction(()=>window.originalUtilities.parentElement.matches('.viewer-action-panel')&&document.activeElement===window.originalLanguageTrigger);
+  assert.deepEqual(await page.locator('.viewer-header h1').evaluate(n=>{const s=getComputedStyle(n);return [s.fontSize,s.fontWeight];}),['48px','600']);
+  assert.deepEqual(await page.locator('.viewer-question-number').first().evaluate(n=>{const s=getComputedStyle(n);return [s.fontSize,s.fontWeight];}),['36px','500']);
   assert.deepEqual(await page.locator('.viewer-question-number').allTextContents(),Array.from({length:16},(_,i)=>String(i+1).padStart(2,'0')));
   assert.equal(await page.locator('.viewer-answer-area .viewer-question-heading').count(),0,'question identity stays with the prompt, outside the answer area');
   assert.equal(await page.locator('.viewer-question-kind, .viewer-chooser__kind').count(),0);

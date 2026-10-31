@@ -204,7 +204,7 @@ try {
   await page.mouse.move(width / 2, 100);
   // The voice button may require scrolling within a tall mobile question.
   // Cross the real boundary instead of assuming a fixed 100px reaches it.
-  const reverseDistance = await section('q1').evaluate(node => Math.max(100, innerHeight * .4 - node.getBoundingClientRect().top + 100));
+  const reverseDistance = await section('q1').evaluate(node => Math.max(100, innerHeight * .45 - node.getBoundingClientRect().top + 100));
   await page.mouse.wheel(0, -reverseDistance);
   await page.waitForFunction(() => window.viewerSession.state.lastActiveBlockId === 'intro');
   await ready;

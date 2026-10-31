@@ -9,7 +9,7 @@ Implementation is in this PR; it remains unmerged and undeployed.
 Use the final Version C reference identified in the
 [viewer plan](viewer-ui-refactor-plan.md). Keep blur-to-clear and element movement
 as distinct effects. Begin while entering the viewport and finish about 15% of
-viewport height before the 40% reading line. Use the same visual viewport as
+viewport height before the 45% reading line (updated with the accepted Style A trial). Use the same visual viewport as
 section navigation. Operation-panel height affects input clearance, not the
 reading line or motion geometry (2026-10-30 acceptance correction).
 
