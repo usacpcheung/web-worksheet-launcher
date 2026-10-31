@@ -1,8 +1,9 @@
 import roleplayscene from './roleplayscene/en.js';
 
 export default {
-  optionImages: {"imageAlt": "Option {option} image", "enlarge": "Enlarge option {option} image", "unavailable": "Image unavailable", "manage": "Add or manage option image", "description": "Image description (optional)", "descriptionHelp": "For screen readers or unavailable images. Not a visible caption or audio source. Recommended for image-only options.", "count": "{count} / 200 characters", "placeholder": "Option text — optional with an image", "required": "Each option needs text or an image.", "replace": "Replace this option image? Its description will be cleared.", "remove": "Remove this option image? Text and audio will be kept.", "preview": "Preview this question"},
+  optionImages: {"imageAlt": "Option {option} image", "enlarge": "Enlarge option {option} image", "unavailable": "Image unavailable", "manage": "Add or manage option image", "description": "Image description (optional)", "descriptionHelp": "For screen readers or unavailable images. Not a visible caption or audio source. Recommended for image-only options.", "count": "{count} / 200 characters", "placeholder": "Option text — optional with an image", "required": "Each option needs text or an image.", "replace": "Replace this option image? Its description will be cleared.", "remove": "Remove this option image? Text and audio will be kept."},
   mutationAuth: {
+    generateAudio: 'Generate audio',
     upload: 'Upload',
     publish: 'Publish',
     delete: 'Delete',
@@ -95,12 +96,12 @@ export default {
     mode: 'Text display mode', syntax: 'You type', result: 'Result',
     backToEditor: 'Back to editor',
     returnSaveFailed: 'Your preview answers could not be saved. You are still in the viewer. Please try Back to editor again.',
-    helpNote: 'Headings: levels 2–6 (## to ######). Use a backslash before punctuation to display it literally. Ordinary line breaks and blank lines work. Lists and quotes have one level. Links, images, code and HTML remain plain text.',
+    helpNote: 'Headings: levels 2–4 (## to ####). Use a backslash before punctuation to display it literally. Ordinary line breaks and blank lines work. Lists and quotes have one level. Links, images, code and HTML remain plain text.',
     promptCount: '{count} / {max} spoken-text characters',
     promptTooLong: 'Question prompts must be within {max} spoken-text characters to publish or generate audio. Shorten the prompt; local saving is still available.',
     preview: 'Preview', edit: 'Edit', help: 'Formatting help', empty: 'Nothing to preview',
     converted: 'This worksheet now supports formatting. Its original text appearance has been preserved.',
-    examples: '## Heading\n### Subheading (levels 2–6)\n- Bullet point\n1. Numbered point\n> Quote\n**Bold** and *italic*\n\\* displays a literal *\n\nUse ordinary line breaks and blank lines. Lists and quotes have one level. Links, images, code and HTML are displayed as text.',
+    examples: '## Heading\n### Subheading (levels 2–4)\n- Bullet point\n1. Numbered point\n> Quote\n**Bold** and *italic*\n\\* displays a literal *\n\nUse ordinary line breaks and blank lines. Lists and quotes have one level. Links, images, code and HTML are displayed as text.',
   },
   roleplayscene,
   "common": {

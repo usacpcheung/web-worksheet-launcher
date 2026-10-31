@@ -14,14 +14,14 @@ async function assertPromptTypography(locator, baseSize) {
       return { size: parseFloat(css.fontSize), weight: css.fontWeight, line: parseFloat(css.lineHeight),
         italic: css.fontStyle, margin: parseFloat(css.marginTop), family: css.fontFamily };
     };
-    return { base: style(), headings: ['h2','h3','h4','h5','h6'].map(style), paragraph: style('p'),
+    return { base: style(), headings: ['h2','h3','h4'].map(style), paragraph: style('p'),
       list: style('li'), quote: style('blockquote'), bold: style('strong'), italic: style('em'),
       firstMargin: style(':scope > :first-child').margin,
       orderedStart: root.querySelector('ol').start };
   });
   assert.equal(metrics.base.size, baseSize);
-  assert(Math.abs(metrics.base.line / baseSize - 1.65) < .01);
-  for (const [index, ratio] of [1.35,1.18,1.08,1,1].entries()) {
+  assert(Math.abs(metrics.base.line / baseSize - 1.6) < .01);
+  for (const [index, ratio] of [1.55,1.35,1.15].entries()) {
     assert(Math.abs(metrics.headings[index].size / baseSize - ratio) < .01);
     assert.equal(metrics.headings[index].weight, '600');
     assert.equal(metrics.headings[index].family, metrics.base.family);
@@ -166,7 +166,7 @@ try {
     assert.deepEqual(typography.plain, typography.markdown, 'Legacy and Markdown prompts share typography');
     assert.equal(typography.markdown[2], '450');
     assert.equal(typography.bold, '700'); assert.equal(typography.heading, '600');
-    await assertPromptTypography(page.locator('.question-card__prompt-label'), width === 1280 ? 22 : 20);
+    await assertPromptTypography(page.locator('.question-card__prompt-label'), width === 1280 ? 20 : 18);
     await page.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').fill('**Literal learner answer**');
     await page.evaluate(() => window.viewerSession.completeLocalAttempt());
     // Session completion notifies state; the prompt stays formatted and the answer stays literal.

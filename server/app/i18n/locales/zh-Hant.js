@@ -1,8 +1,9 @@
 import roleplayscene from './roleplayscene/zh-Hant.js';
 
 export default {
-  optionImages: {"imageAlt": "選項 {option} 圖片", "enlarge": "放大選項 {option} 圖片", "unavailable": "圖片無法顯示", "manage": "加入或管理選項圖片", "description": "圖片描述（選填）", "descriptionHelp": "供螢幕閱讀器或圖片無法顯示時使用。不會顯示為選項文字或自動產生音訊。只有圖片的選項，建議填寫。", "count": "{count} / 200 字", "placeholder": "選項文字 — 附有圖片時可留空", "required": "每個選項需要文字或圖片。", "replace": "更換此選項圖片？原有圖片描述將會清除。", "remove": "移除此選項圖片？文字及音訊將會保留。", "preview": "預覽這一題"},
+  optionImages: {"imageAlt": "選項 {option} 圖片", "enlarge": "放大選項 {option} 圖片", "unavailable": "圖片無法顯示", "manage": "加入或管理選項圖片", "description": "圖片描述（選填）", "descriptionHelp": "供螢幕閱讀器或圖片無法顯示時使用。不會顯示為選項文字或自動產生音訊。只有圖片的選項，建議填寫。", "count": "{count} / 200 字", "placeholder": "選項文字 — 附有圖片時可留空", "required": "每個選項需要文字或圖片。", "replace": "更換此選項圖片？原有圖片描述將會清除。", "remove": "移除此選項圖片？文字及音訊將會保留。"},
   mutationAuth: {
+    generateAudio: '產生語音',
     upload: '上傳',
     publish: '發佈',
     delete: '刪除',
@@ -95,12 +96,12 @@ export default {
     mode: '文字顯示模式', syntax: '輸入格式', result: '顯示效果',
     backToEditor: '返回編輯器',
     returnSaveFailed: '未能儲存預覽作答，已留在檢視器。請再次按「返回編輯器」重試。',
-    helpNote: '標題支援第 2 至 6 級（## 至 ######）。在標點前加上反斜線，可顯示原本的符號。可直接換行或留空行。清單及引用只支援單層。連結、圖片、程式碼及 HTML 會顯示為純文字。',
+    helpNote: '標題支援第 2 至 4 級（## 至 ####）。在標點前加上反斜線，可顯示原本的符號。可直接換行或留空行。清單及引用只支援單層。連結、圖片、程式碼及 HTML 會顯示為純文字。',
     promptCount: '語音文字字元：{count} / {max}',
     promptTooLong: '題目的語音文字須在 {max} 個字元以內，才能發布或生成語訊。請縮短題目；仍可儲存至本機。',
     preview: '預覽', edit: '編輯', help: '文字格式說明', empty: '沒有內容可預覽',
     converted: '此工作紙現已支援文字格式，原有文字顯示方式已保留。',
-    examples: '## 標題\n### 小標題（支援第 2 至 6 級）\n- 項目\n1. 編號項目\n> 引用\n**粗體** 和 *斜體*\n\\* 顯示原本的 * 符號\n\n可直接換行或留空行。清單及引用只支援單層。連結、圖片、程式碼及 HTML 會顯示為文字。',
+    examples: '## 標題\n### 小標題（支援第 2 至 4 級）\n- 項目\n1. 編號項目\n> 引用\n**粗體** 和 *斜體*\n\\* 顯示原本的 * 符號\n\n可直接換行或留空行。清單及引用只支援單層。連結、圖片、程式碼及 HTML 會顯示為文字。',
   },
   roleplayscene,
   "common": {

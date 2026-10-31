@@ -95,3 +95,5 @@ a separate control. Completed-review enlargement and printed images are supporte
 
 Deploy the updated API parser together with editor/viewer assets and restart the API.
 No database migration is required. RolePlayScene package formats are unchanged.
+
+Editor preview uses the existing same-tab whole-worksheet viewer. There is no MC-only question preview dialog.

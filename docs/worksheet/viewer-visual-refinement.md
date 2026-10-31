@@ -175,6 +175,12 @@ inspected. Both nine-page PDFs still contain all 80 reading paragraphs and all
 
 ## Follow-up: structured question typography
 
+Historical mapping below is superseded by the 2026-10-31 trial in
+[Worksheet limited Markdown](worksheet-limited-markdown.md): 20px/18px prompt
+body, 1.6 line height, H2–H4 at 1.55/1.35/1.15em, and prompt audio at the
+top-right. Chinese, English and mixed text use the same provisional baseline;
+UI locale does not determine worksheet typography.
+
 Approved question-prompt mapping: body text is 1.375rem (22px at the default root)
 on desktop and 1.25rem (20px) in the existing narrow/short viewport layout, with
 1.65 line height. Headings h2–h6 use relative sizes 1.35, 1.18, 1.08, 1 and 1em,

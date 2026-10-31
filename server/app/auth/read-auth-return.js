@@ -6,7 +6,7 @@ const allowed = {
   roleplayscene: new Set(['drafts', 'published', 'draft', 'draft-download', 'publication', 'publication-download', 'publication-copy']),
 };
 const mutations = {
-  editor: new Set(['upload', 'publish', 'delete-draft', 'delete-publication']),
+  editor: new Set(['upload', 'publish', 'delete-draft', 'delete-publication', 'generateAudio']),
   viewer: new Set(['upload', 'delete-attempt']),
   roleplayscene: new Set(['upload', 'publish', 'delete-draft', 'delete-publication']),
 };

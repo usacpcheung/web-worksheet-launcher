@@ -1,4 +1,3 @@
-import { showOptionPreview } from './option-preview.js';
 import { mountOptionImageEditor } from './option-image-editor.js';
 import { optionImageRef, optionHasContent, imageDescription } from '../app/option-images.js';
 import { runPublicationFlow, runPublicationAttempt } from '../app/api/publication-flow.js';
@@ -2488,7 +2487,19 @@ class EditorDraftSession {
   }
 
   async requestGeneratedAudio(text, voice, isCurrent, signal) {
-    return runAudioGeneration({ auth: this.readAuth, api: this.apiClient, text, voice, isCurrent,
+    const auth = {
+      ensure: async options => {
+        const prepared = await prepareMutation(this.readAuth, {
+          isCurrent: options.isCurrent, signal: options.signal,
+          intent: { kind: 'mutation', operation: 'generateAudio', id: this.state.draft?.localId },
+        });
+        // Authentication recovery has already received explicit confirmation.
+        // Pass only its account lease to the one-shot provider boundary.
+        return prepared.ok ? { ok: true, isCurrent: prepared.isCurrent } : prepared.result;
+      },
+      observe: result => this.readAuth.observe?.(result),
+    };
+    return runAudioGeneration({ auth, api: this.apiClient, text, voice, isCurrent,
       signal, phaseTimeoutMs: this.audioPhaseTimeoutMs });
   }
 
@@ -2512,6 +2523,7 @@ class EditorDraftSession {
       return { ok: false, reason: 'draft-changed' };
     }
     if (audioResult.kind === 'superseded' && getAudioSourceTextHash(this.getAudioTrackTarget(blockId, target, optionId)?.text || '') !== expectedSourceTextHash) return { ok: false, reason: 'source-text-changed' };
+    if (['cancelled', 'superseded'].includes(audioResult?.kind)) return { ok: false, cancelled: true, status: 'cancelled', error: audioResult.error };
     if (!audioResult?.ok) return { ok: false, reason: 'generation-failed', error: audioResult?.error || null, source: audioResult?.source };
     const audioBytes = toValidGeneratedAudioBytes(audioResult.data);
     if (!audioBytes) return { ok: false, reason: 'invalid-audio-data' };
@@ -4619,6 +4631,7 @@ class EditorDraftSession {
     try {
       if (isAudioTrackLanguage(payload.language)) {
         const result = await this.generateAudioTrack(blockId, 'prompt', payload.language, { confirmReplace: true, signal });
+        if (result.cancelled) return result;
         if (!result.ok) {
           const message = result.reason === 'generation-failed' ? getApiErrorMessage(result, result.source === 'repository-api' ? 'session' : 'audio', result.source || 'bridge') : (result.error?.message || editorNotification('audioGeneration.failed'));
           this.setRecoveryMessage(message);
@@ -4631,6 +4644,7 @@ class EditorDraftSession {
       }
       const isCurrent = this.captureAudioTarget(blockId, 'prompt', null);
       const audioResult = await this.requestGeneratedAudio(promptText, {}, isCurrent, signal);
+      if (['cancelled', 'superseded'].includes(audioResult?.kind)) return { ok: false, cancelled: true, status: 'cancelled', error: audioResult.error };
       if (!audioResult?.ok) {
         const message = getApiErrorMessage(audioResult, audioResult.source === 'repository-api' ? 'session' : 'audio', audioResult.source || 'bridge');
         this.setRecoveryMessage(message);
@@ -4787,6 +4801,7 @@ class EditorDraftSession {
     try {
       if (isAudioTrackLanguage(payload.language)) {
         const result = await this.generateAudioTrack(blockId, 'option', payload.language, { optionId, confirmReplace: true, signal });
+        if (result.cancelled) return result;
         if (!result.ok) {
           const message = result.reason === 'generation-failed' ? getApiErrorMessage(result, result.source === 'repository-api' ? 'session' : 'audio', result.source || 'bridge') : (result.error?.message || editorNotification('audioGeneration.failed'));
           this.setRecoveryMessage(message);
@@ -4805,6 +4820,7 @@ class EditorDraftSession {
       }
       const isCurrent = this.captureAudioTarget(blockId, 'option', optionId);
       const audioResult = await this.requestGeneratedAudio(optionText, {}, isCurrent, signal);
+      if (['cancelled', 'superseded'].includes(audioResult?.kind)) return { ok: false, cancelled: true, status: 'cancelled', error: audioResult.error };
       if (!audioResult?.ok) {
         const message = getApiErrorMessage(audioResult, audioResult.source === 'repository-api' ? 'session' : 'audio', audioResult.source || 'bridge');
         this.setRecoveryMessage(message);
@@ -4884,7 +4900,6 @@ class EditorDraftSession {
       this._audioOperations.set(key, controller);
       try {
         const result = await this.replayProtectedAction({ actionId, payload }, { signal: controller.signal });
-        if (!controller.signal.aborted && result.error?.requiresSignIn) this.beginServerSignIn({ readRecovery: true });
         return result;
       } finally {
         if (this._audioOperations.get(key) === controller) this._audioOperations.delete(key);
@@ -7381,10 +7396,6 @@ function renderEditorShell(session) {
       const latestBlock = session.state.draft?.blocks?.find((block) => block.blockId === selectedBlock.blockId);
       const latestPromptState = getT2ATextEligibility(worksheetTextToPlain(latestBlock?.prompt), PROMPT_TEXT_LIMIT);
       if (!latestPromptState.eligible || promptT2AInFlightBlockIds.has(selectedBlock.blockId)) return;
-      const sessionReady = await session.ensureServerSessionReady();
-      if (!sessionReady.ok) {
-        return;
-      }
       promptT2AInFlightBlockIds.add(selectedBlock.blockId);
       promptT2AInFlightBlockId = selectedBlock.blockId;
       updateSummary();
@@ -7411,7 +7422,7 @@ function renderEditorShell(session) {
           localDraftId: session.state.draft?.localId || null,
         });
         const status = String(result?.status || '').trim();
-        if (status !== 'executed' && status !== 'redirected' && result?.ok !== true) {
+        if (status !== 'executed' && status !== 'redirected' && result?.ok !== true && !result?.cancelled) {
           session.pushNotification({
             kind: 'error',
             category: 'editor',
@@ -7517,7 +7528,7 @@ function renderEditorShell(session) {
             target: 'question_prompt',
             language,
           });
-          if (!result?.ok && result?.status !== 'executed' && result?.status !== 'redirected') {
+          if (!result?.ok && !result?.cancelled && result?.status !== 'executed' && result?.status !== 'redirected') {
             session.setMediaFeedback(result?.reason === 'generation-failed' ? getApiErrorMessage(result, result.source === 'repository-api' ? 'session' : 'audio', result.source || 'bridge') : (result?.error?.message || editorNotification('audioGeneration.failed')));
           }
         } finally {
@@ -8012,7 +8023,7 @@ function renderEditorShell(session) {
                 target: 'option',
                 language,
               });
-              if (!result?.ok && result?.status !== 'executed' && result?.status !== 'redirected') {
+              if (!result?.ok && !result?.cancelled && result?.status !== 'executed' && result?.status !== 'redirected') {
                 session.setMediaFeedback(result?.reason === 'generation-failed' ? getApiErrorMessage(result, result.source === 'repository-api' ? 'session' : 'audio', result.source || 'bridge') : (result?.error?.message || editorNotification('audioGeneration.failed')));
               }
             } finally {
@@ -8125,11 +8136,6 @@ function renderEditorShell(session) {
         questionOptionsList.appendChild(row);
       });
       rightPanel.append(questionOptionsList, questionOptionWarning, addOptionBtn, questionOptions);
-      const optionPreview = document.createElement('button'); optionPreview.type = 'button'; optionPreview.className = 'media-action-btn';
-      setMediaActionButtonContent(optionPreview, 'eye', t('optionImages.preview'));
-      optionPreview.onclick = () => showOptionPreview(session.findBlock(selectedBlock.blockId), session);
-      const optionFooter = document.createElement('div'); optionFooter.className = 'editor-option-footer';
-      optionFooter.append(addOptionBtn, optionPreview); rightPanel.append(optionFooter);
 
       if (Number.isInteger(activeOptionInputIndex)) {
         const replacementOptionInput = questionOptionsList.querySelector(`input[data-option-input="1"][data-option-index="${activeOptionInputIndex}"]`);
@@ -8536,6 +8542,11 @@ function renderEditorShell(session) {
 
   session.resumeReadIntent = async intent => {
     if (intent.kind === 'mutation') {
+      if (intent.operation === 'generateAudio') {
+        session.setRecoveryMessage(t('apiErrors.audioRetryRequired'));
+        session.notifyStateChange();
+        return;
+      }
       session._returnedMutation = intent;
       session.pushNotification({ kind: 'info', category: 'server', source: 'session.mutation', text: t('mutationAuth.returned') });
       session.notifyStateChange();
