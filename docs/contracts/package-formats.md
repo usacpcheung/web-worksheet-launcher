@@ -97,3 +97,26 @@ Deploy the updated API parser together with editor/viewer assets and restart the
 No database migration is required. RolePlayScene package formats are unchanged.
 
 Editor preview uses the existing same-tab whole-worksheet viewer. There is no MC-only question preview dialog.
+
+
+## Image-package integrity and local import ownership
+
+Worksheet v4 and attempt v3 validate asset manifests before import: media-relative
+paths, unique asset IDs and paths, nonempty files, optional byte-length/CRC32
+metadata, and option-image MIME/size limits. Invalid manifests are rejected before
+local or server persistence. Existing legacy envelope readers retain their
+compatibility policy; no new package version or database migration is introduced.
+
+Attempt export/upload requires every referenced question/option image and audio
+asset to exist and contain bytes. Preparation fails without downloading a partial
+ZIP or sending an upload when required media is missing. Local answers are kept;
+English/Traditional Chinese messages distinguish missing local media from a
+network failure. Newly built attempt packages pass validation before leaving the
+builder.
+
+Viewer local-file and server imports allocate fresh local asset IDs and remap
+worksheet references. Editor imports do the same for the editable draft and the
+saved imported-worksheet record. Import rollback only removes staged records and
+new assets, including a write that completes before reporting failure; it must
+not overwrite or remove media owned by existing drafts/attempts. Editor cancelled
+imports discard staged records before exposing an incoming draft.

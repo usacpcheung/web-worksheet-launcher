@@ -2573,7 +2573,8 @@ test('startImportedWorksheetFromPackageFile persists packaged assets into localA
   clearTimeout(session.autosaveTimer);
 
   assert.equal(persistedAssets.length, 1);
-  assert.equal(persistedAssets[0].localId, 'asset_audio_1');
+  assert.notEqual(persistedAssets[0].localId, 'asset_audio_1');
+  assert.equal(persistedAssets[0].localId, session.state.viewerPayload.blocks[0].prompt.mediaRefs[0].assetId);
   assert.deepEqual(Array.from(persistedAssets[0].binary), [1, 2, 3]);
   assert.equal(persistedAssets[0].metadata.origin, 'imported_package_asset');
   assert.equal(persistedAssets[0].metadata.mimeType, 'audio/mpeg');
@@ -6097,7 +6098,9 @@ test('importAttemptPackageFromFile cleans up worksheet and assets when attempt p
     /failed/
   );
   assert.equal(attemptPutCalls, 1);
-  assert.deepEqual(removedAssets, ['asset_cleanup']);
+  assert.equal(removedAssets.length, 1);
+  assert.match(removedAssets[0], /^asset_import_/);
+  assert.notEqual(removedAssets[0], 'asset_cleanup');
   assert.equal(removedWorksheets.length, 1);
 });
 
@@ -7119,8 +7122,8 @@ for (const kind of ['publication', 'attempt']) for (const pauseAt of ['validatio
   });
 }
 
-test('server import isolates reused media IDs and keeps all worksheet references consistent', async () => {
-  for (const kind of ['publication', 'attempt']) {
+test('local and server imports isolate reused media IDs and preserve worksheet references', async () => {
+  for (const kind of ['publication', 'attempt']) for (const options of [{}, { isCurrent: () => true }]) {
     const mod = await loadViewerModule();
     const model = { worksheet: { title: 'Incoming', blocks: [{ blockId: 'q', kind: 'question', prompt: { text: 'Q', mediaRefs: [{ assetId: 'shared', usage: 'question_image' }] }, responseConfig: { inputType: 'text' } }] },
       assets: [{ assetId: 'shared', binary: new Uint8Array([1]) }], attempt: { status: 'in_progress', answers: {} } };
@@ -7129,8 +7132,8 @@ test('server import isolates reused media IDs and keeps all worksheet references
     const session = new mod.ViewerAttemptSession({ importedWorksheets: { put: async value => value }, attempts: { put: async value => value },
       localAssets: { put: async value => { assets.set(value.localId, value); return value; } }, resumeFlags: { set() {}, get() {} } });
     session.validateViewerPayload = async () => {};
-    if (kind === 'publication') await session.startImportedWorksheetFromPackageModel(model, { isCurrent: () => true });
-    else await session.restoreAttemptPackageAsLocalAttempt(model, { isCurrent: () => true });
+    if (kind === 'publication') await session.startImportedWorksheetFromPackageModel(model, options);
+    else await session.restoreAttemptPackageAsLocalAttempt(model, options);
     const id = session.state.viewerPayload.blocks[0].prompt.mediaRefs[0].assetId;
     assert.notEqual(id, 'shared'); assert.deepEqual(assets.get(id).binary, new Uint8Array([1]));
     assert.equal(assets.get('shared'), original); assert.equal(model.worksheet.blocks[0].prompt.mediaRefs[0].assetId, 'shared');
@@ -7194,4 +7197,59 @@ test('legacy rewrite login return restores explicit retry without sending or rep
   session.state.voiceRecovery.q.text = 'Edited recovery';
   assert.equal((await session.replayProtectedAction(intent)).status, 'recovery_pending');
   assert.equal(session.state.voiceRecovery.q.text, 'Edited recovery');
+});
+
+for (const kind of ['worksheet', 'attempt']) for (const failureAt of ['asset', 'attempt']) {
+  if (kind === 'worksheet' && failureAt === 'attempt') continue;
+  test(`failed local ${kind} import at ${failureAt} preserves existing media`, async () => {
+    const mod = await loadViewerModule();
+    const original = { localId: 'shared', binary: new Uint8Array([9]) };
+    const assets = new Map([['shared', original]]), worksheets = new Map(), attempts = new Map();
+    const store = (records, stage) => ({ put: async value => {
+      records.set(value.localId, value);
+      if (stage === failureAt) throw Error('storage failed after write');
+      return value;
+    }, remove: async id => records.delete(id) });
+    const session = new mod.ViewerAttemptSession({ importedWorksheets: store(worksheets, 'worksheet'),
+      attempts: store(attempts, 'attempt'), localAssets: store(assets, 'asset'), resumeFlags: { get() {}, set() {} } });
+    session.validateViewerPayload = async () => {};
+    session.state.localAttemptId = 'existing';
+    const model = { worksheet: { title: 'Incoming', blocks: [{ blockId: 'q', kind: 'question', prompt: { text: 'Q' },
+      responseConfig: { inputType: 'multiple_choice', options: [{ value: 'a', label: '', mediaRefs: [{ usage: 'option_image', assetId: 'shared' }] }] } }] },
+      assets: [{ assetId: 'shared', binary: new Uint8Array([1]) }], attempt: { status: 'in_progress', answers: { q: { value: 'a' } } } };
+    await assert.rejects(kind === 'worksheet' ? session.startImportedWorksheetFromPackageModel(model) : session.restoreAttemptPackageAsLocalAttempt(model));
+    assert.equal(assets.size, 1); assert.equal(assets.get('shared'), original);
+    assert.equal(worksheets.size, 0); assert.equal(attempts.size, 0);
+    assert.equal(session.state.localAttemptId, 'existing'); clearTimeout(session.autosaveTimer);
+  });
+}
+
+for (const usage of ['option_image', 'question_image', 'option_audio', 'question_audio', 'audio_track']) {
+  for (const binary of [null, new Uint8Array()]) test(`attempt packaging rejects ${usage} missing/empty media without changing answers (${binary === null ? 'missing' : 'empty'})`, async () => {
+    const mod = await loadViewerModule();
+    const session = new mod.ViewerAttemptSession({ localAssets: { get: async () => binary && ({ binary }) } });
+    const ref = { usage, assetId: 'required' };
+    const prompt = { text: 'Question' }, option = { value: 'a', label: 'A' };
+    if (usage === 'audio_track') prompt.audioTracks = [{ language: 'english', assetId: 'required', sourceTextHash: 'hash' }];
+    else if (usage.startsWith('question')) prompt.mediaRefs = [ref];
+    else option.mediaRefs = [ref];
+    session.state.viewerPayload = { title: 'Test', blocks: [{ blockId: 'q', kind: 'question', prompt, responseConfig: { inputType: 'multiple_choice', options: [option] } }] };
+    session.state.answers = { q: { value: 'a' } };
+    await assert.rejects(session.buildUploadedAttemptPackage(), { code: 'MISSING_PACKAGE_MEDIA' });
+    assert.deepEqual(session.state.answers, { q: { value: 'a' } });
+  });
+}
+
+test('attempt upload reports missing local media without sending a request or blaming the network', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({});
+  session.state.localAttemptId = 'attempt'; session.state.viewerPayload = { title: 'Test', blocks: [] };
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => { throw Object.assign(Error('Required image missing'), { code: 'MISSING_PACKAGE_MEDIA' }); };
+  session.apiClient.uploadAttemptPackage = () => assert.fail('Invalid local package must not be uploaded');
+  const result = await session.uploadCurrentAttemptPackage();
+  assert.equal(result.status, 'invalid_local_package');
+  assert.equal(result.error.code, 'MISSING_PACKAGE_MEDIA');
+  assert.equal(session.state.serverActionMessage, 'Required image missing');
+  assert.equal(session.state.isUploadingAttemptPackage, false);
 });

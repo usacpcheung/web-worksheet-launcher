@@ -6557,3 +6557,43 @@ for (const target of ['question_image', 'question_audio', 'option_audio', 'optio
     } finally { clearTimeout(session.autosaveTimer); }
   });
 }
+
+for (const outcome of ['success', 'asset', 'worksheet', 'draft', 'cancel']) test(`editor package import stages isolated option images: ${outcome}`, async () => {
+  const mod = await loadEditorModule();
+  const original = { localId: 'shared', binary: new Uint8Array([9]) };
+  const assets = new Map([['shared', original]]), worksheets = new Map(), drafts = new Map();
+  let current = true;
+  const store = (records, stage) => ({ get: async id => records.get(id), put: async record => {
+    records.set(record.localId, record);
+    if (outcome === stage) throw Error('simulated write failure');
+    if (outcome === 'cancel' && stage === 'asset') current = false;
+    return record;
+  }, remove: async id => records.delete(id) });
+  const storage = createSessionForTests();
+  Object.assign(storage, { localAssets: store(assets, 'asset'), importedWorksheets: store(worksheets, 'worksheet'), drafts: store(drafts, 'draft') });
+  const session = new mod.EditorDraftSession(storage);
+  session.state.draft = mod.createDraftRecord({ localId: 'outgoing', title: 'Keep' });
+  session.saveBeforeWorksheetReplacement = async () => {};
+  const asset = { assetId: 'shared', path: 'media/shared.png', kind: 'image', usage: 'option_image', mimeType: 'image/png' };
+  globalThis.__testParsedWorksheetPackage = { manifest: { assets: [asset] }, worksheet: { title: 'Incoming', blocks: [{ blockId: 'q', kind: 'question', prompt: { text: 'Choose' }, responseConfig: { inputType: 'multiple_choice', options: [{ id: 'o', value: 'o', label: '', mediaRefs: [{ assetId: 'shared', usage: 'option_image' }] }] } }] }, assets: [{ ...asset, binary: new Uint8Array([1]) }] };
+  try {
+    const pending = session.importWorksheetPackageFile({ arrayBuffer: async () => new ArrayBuffer() }, { convertToEditableDraft: true, isCurrent: () => current });
+    if (['asset', 'worksheet', 'draft'].includes(outcome)) await assert.rejects(pending, /simulated write failure/);
+    else {
+      const result = await pending;
+      if (outcome === 'cancel') assert.equal(result.canceled, true);
+      else {
+        const id = result.draftRecord.blocks[0].responseConfig.options[0].mediaRefs[0].assetId;
+        assert.notEqual(id, 'shared'); assert.deepEqual(assets.get(id).binary, new Uint8Array([1]));
+        assert.equal(result.importedRecord.worksheet.blocks[0].responseConfig.options[0].mediaRefs[0].assetId, id);
+        assert.equal(result.importedRecord.assets[0].assetId, id);
+        assert.equal(result.importedRecord.packageManifest.assets[0].assetId, id);
+      }
+    }
+    assert.equal(assets.get('shared'), original);
+    if (outcome !== 'success') {
+      assert.equal(assets.size, 1); assert.equal(worksheets.size, 0); assert.equal(drafts.size, 0);
+      assert.equal(session.state.draft.localId, 'outgoing');
+    }
+  } finally { delete globalThis.__testParsedWorksheetPackage; clearTimeout(session.autosaveTimer); }
+});

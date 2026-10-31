@@ -19,5 +19,33 @@ test('image packages reject missing/invalid assets, duplicate identities, oversi
 });
 test('attempts explicitly version image options and validate their asset references',()=>{
  const d=draft();const m={format:'worksheet-attempt-package',packageVersion:3,schemaVersion:1,assets:d.assets};const a={schemaVersion:1,kind:'worksheet-attempt',status:'in_progress',answers:{q:{value:'o1'}}};
- assert.doesNotThrow(()=>assertAttemptPackage(m,d,a));assert.throws(()=>assertAttemptPackage(m,d,a,{files:new Map()}),/Missing option image file/);assert.doesNotThrow(()=>assertAttemptPackage(m,d,a,{files:new Map([['media/img.png',new Uint8Array([1,2,3])]])}));assert.throws(()=>assertAttemptPackage({...m,packageVersion:2},d,a),/version 3/);assert.throws(()=>assertAttemptPackage({...m,assets:[]},d,a),/Missing or invalid/);
+ assert.doesNotThrow(()=>assertAttemptPackage(m,d,a));assert.throws(()=>assertAttemptPackage(m,d,a,{files:new Map()}),/Missing or empty package asset file/);assert.doesNotThrow(()=>assertAttemptPackage(m,d,a,{files:new Map([['media/img.png',new Uint8Array([1,2,3])]])}));assert.throws(()=>assertAttemptPackage({...m,packageVersion:2},d,a),/version 3/);assert.throws(()=>assertAttemptPackage({...m,assets:[]},d,a),/Missing or invalid/);
+});
+
+test('worksheet creation and both readers reject empty option image files', () => {
+  assert.throws(() => createWorksheetPackageFromDraft(draft(), new Map([['img', { binary: new Uint8Array() }]])), /empty|byteLength/);
+  const pkg = createWorksheetPackageFromDraft(draft(), binaries);
+  const files = parseStoredZip(pkg.bytes);
+  const manifest = JSON.parse(decodeUtf8(files.get('manifest.json')));
+  delete manifest.assets[0].byteLength; delete manifest.assets[0].crc32;
+  files.set('media/img.png', new Uint8Array()); files.set('manifest.json', JSON.stringify(manifest));
+  assert.throws(() => parseWorksheetPackage(createStoredZip([...files].map(([path, data]) => ({ path, data })))), /empty/);
+  assert.throws(() => assertAttemptPackage({ ...manifest, format: 'worksheet-attempt-package', packageVersion: 3, schemaVersion: 1 }, pkg.worksheet, {}, { allowLegacyEnvelope: true, files }), /empty/);
+});
+
+test('worksheet and attempt readers reject ambiguous or non-media manifests before import', () => {
+  for (const mutate of [
+    assets => { assets[0].path = 'pictures/image.png'; },
+    assets => { assets.push({ ...assets[0], path: 'media/other.png' }); },
+    assets => { assets.push({ ...assets[0], assetId: 'other' }); },
+  ]) {
+    const pkg = createWorksheetPackageFromDraft(draft(), binaries);
+    const files = parseStoredZip(pkg.bytes), manifest = structuredClone(pkg.manifest);
+    mutate(manifest.assets);
+    for (const asset of manifest.assets) files.set(asset.path, new Uint8Array([1,2,3]));
+    files.set('manifest.json', JSON.stringify(manifest));
+    assert.throws(() => parseWorksheetPackage(createStoredZip([...files].map(([path,data]) => ({path,data})))), /path|assetId/);
+    const attemptManifest = { ...manifest, format: 'worksheet-attempt-package', packageVersion: 3, schemaVersion: 1 };
+    for (const allowLegacyEnvelope of [true, false]) assert.throws(() => assertAttemptPackage(attemptManifest, pkg.worksheet, {}, { files, allowLegacyEnvelope }), /path|assetId/);
+  }
 });

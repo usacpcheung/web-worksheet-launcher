@@ -3481,6 +3481,8 @@ class EditorDraftSession {
       // Give the status a rendering opportunity before synchronous ZIP parsing.
       await new Promise(resolve => setTimeout(resolve, 0));
     };
+    const stagedAssetIds = [];
+    let stagedImportedId = null, stagedDraftId = null, committed = false;
     try {
       if (!file || typeof file.arrayBuffer !== 'function') {
         throw new Error(editorNotification('import.zipRequired'));
@@ -3529,19 +3531,13 @@ class EditorDraftSession {
       },
     };
 
-      await this.storage.importedWorksheets.put(importedRecord);
-
       const assetIdRemap = new Map();
       for (const asset of parsedPackage.assets) {
-      let targetId = asset.assetId;
-      if (this.storage.localAssets?.get) {
-        const existing = await this.storage.localAssets.get(targetId);
-        if (existing) {
-          targetId = createLocalId('asset_import');
-        }
-      }
+      if (options.isCurrent && !options.isCurrent()) return { canceled: true };
+      const targetId = createLocalId('asset_import');
       assetIdRemap.set(asset.assetId, targetId);
       if (!this.storage.localAssets?.put) continue;
+      stagedAssetIds.push(targetId);
       await this.storage.localAssets.put({
         localId: targetId,
         binary: asset.binary,
@@ -3585,10 +3581,25 @@ class EditorDraftSession {
       };
     });
 
+      importedRecord.worksheet = { ...parsedPackage.worksheet, blocks: remappedBlocks };
+      importedRecord.assets = importedRecord.assets.map(asset => ({ ...asset,
+        assetId: assetIdRemap.get(asset.assetId) || asset.assetId,
+      }));
+      importedRecord.packageManifest = { ...parsedPackage.manifest,
+        assets: (parsedPackage.manifest?.assets || []).map(asset => ({ ...asset,
+          assetId: assetIdRemap.get(asset.assetId) || asset.assetId,
+        })),
+      };
+      if (options.isCurrent && !options.isCurrent()) return { canceled: true };
+      stagedImportedId = importedRecord.localId;
+      await this.storage.importedWorksheets.put(importedRecord);
+      if (options.isCurrent && !options.isCurrent()) return { canceled: true };
+
       if (!options.convertToEditableDraft) {
         const successMessage = editorNotification('import.importedPackageZip');
         this.pushNotification({ kind: 'success', category: 'editor', source: 'import.package_zip', text: successMessage });
         this.notifyStateChange();
+        committed = true;
         return { importedRecord, draftRecord: null };
       }
 
@@ -3622,6 +3633,7 @@ class EditorDraftSession {
       const normalizedDraft = this.normalizeDraftForContracts(draft);
       const { validateDraftSchema } = await loadContracts();
       const contractValidation = validateDraftSchema(normalizedDraft);
+      stagedDraftId = draft.localId;
       const persisted = await this.storage.drafts.put(cloneDraftForPersistence({
         ...draft,
         contractDraft: normalizedDraft,
@@ -3636,6 +3648,7 @@ class EditorDraftSession {
       this.autosaveTimer = null;
       this._audioDraftGeneration += 1;
       this.state.draft = persisted;
+      committed = true;
       this.state.selectedBlockId = persisted.blocks[0]?.blockId || null;
       this.state.draftRevision += 1;
       this.state.lastSavedRevision = this.state.draftRevision;
@@ -3665,6 +3678,12 @@ class EditorDraftSession {
       this.notifyStateChange();
       throw error;
     } finally {
+      if (!committed) {
+        const cleanup = async (store, id) => { if (id) { try { await store?.remove?.(id); } catch { /* Keep the original import error. */ } } };
+        await Promise.all(stagedAssetIds.map(id => cleanup(this.storage.localAssets, id)));
+        await cleanup(this.storage.importedWorksheets, stagedImportedId);
+        await cleanup(this.storage.drafts, stagedDraftId);
+      }
       if (!options.loadToken) this.packageLoad.finish(loadToken);
     }
   }

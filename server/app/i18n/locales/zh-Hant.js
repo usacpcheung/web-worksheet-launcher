@@ -894,6 +894,7 @@ export default {
         "staleTarget": "作答記錄上載目標已過期。請從目前作答記錄再試一次。"
       },
       "localAttemptExport": {
+        "missingMedia": "工作紙所需的媒體遺失或為空白，已停止匯出／上傳。本機答案未有變更。請還原原有工作紙媒體後再試。",
         "noActiveAttempt": "沒有可匯出的本機作答記錄。",
         "exported": "已匯出作答套件。",
         "failed": "無法匯出作答套件。你的本機作答記錄仍然安全。"

@@ -31,6 +31,7 @@ export function assertOptionImages(blocks, assets) {
         const asset = assets.get(ref.assetId);
         if (!asset || asset.kind !== 'image' || asset.usage !== 'option_image') throw new Error('Missing or invalid option image asset.');
         if (!['image/png', 'image/jpeg', 'image/jpg', 'image/webp'].includes(asset.mimeType)) throw new Error('Unsupported option image format.');
+        if (asset.byteLength != null && (!Number.isSafeInteger(asset.byteLength) || asset.byteLength <= 0)) throw new Error('Option image must not be empty.');
         if (asset.byteLength > 8 * 1024 * 1024) throw new Error('Option image exceeds 8 MB.');
       }
     }

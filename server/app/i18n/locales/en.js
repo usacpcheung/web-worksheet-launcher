@@ -894,6 +894,7 @@ export default {
         "staleTarget": "Attempt upload target is stale. Please retry from the current attempt."
       },
       "localAttemptExport": {
+        "missingMedia": "Required worksheet media is missing or empty. Export/upload was stopped. Your local answers are unchanged. Restore the original worksheet media and try again.",
         "noActiveAttempt": "No active local attempt is available for export.",
         "exported": "Attempt package exported.",
         "failed": "Unable to export attempt package. Your local attempt is still safe."
