@@ -12,18 +12,28 @@ export function mountOptionImageEditor({ row, option, blockId, session, icon, co
   button.classList.toggle('is-attached', Boolean(ref));
   const choose = () => {
     const draftId = session.state.draft?.localId, generation = session._audioDraftGeneration;
-    const existed = session.findBlock(blockId)?.responseConfig?.options?.some(item => item.id === option.id);
+    let persisted = session.findBlock(blockId)?.responseConfig?.options?.some(item => item.id === option.id);
     const input = document.createElement('input'); input.type = 'file'; input.accept = 'image/png,image/jpeg,image/webp';
     input.addEventListener('change', () => run(async () => {
       const file = input.files?.[0]; if (!file) return;
-      const current = () => session.state.draft?.localId === draftId && session._audioDraftGeneration === generation && row.isConnected && (!existed || session.findBlock(blockId)?.responseConfig?.options?.some(item => item.id === option.id && optionImageRef(item)?.assetId === ref?.assetId));
+      const current = () => {
+        if (session.state.draft?.localId !== draftId || session._audioDraftGeneration !== generation) return false;
+        const block = session.findBlock(blockId);
+        if (block?.kind !== 'question' || block.responseConfig?.inputType !== 'multiple_choice') return false;
+        const target = block.responseConfig.options?.find(item => item.id === option.id);
+        // DOM rows are replaced by normal state updates. Once persisted, the
+        // option identity and image reference own this operation, not its row.
+        return target ? optionImageRef(target)?.assetId === ref?.assetId : !persisted && row.isConnected;
+      };
       if (!current()) return;
       if (ref && !await confirm(t('optionImages.replace'))) return;
       if (!current()) return;
       // The initially displayed empty row may not yet have a persisted option.
       if (!session.findBlock(blockId)?.responseConfig?.options?.some(item => item.id === option.id)) {
-        session.updateQuestionOptionAtIndex(blockId, Number(row.querySelector('input').dataset.optionIndex), '', { optionId: option.id });
+        session.updateQuestionOptionAtIndex(blockId, Number(row.querySelector('[data-option-input]').dataset.optionIndex), '', { optionId: option.id });
       }
+      persisted = true;
+      if (!current()) return;
       await session.attachOptionImage(blockId, option.id, file, { confirmReplace: true, isCurrent: current }); refresh();
     })); input.click();
   };
@@ -36,8 +46,11 @@ export function mountOptionImageEditor({ row, option, blockId, session, icon, co
   const view = action(t('editor.media.actions.view'), () => showImageDialog({ src: thumb.src, alt: thumb.alt, title: t('optionImages.imageAlt', { option: '' }), opener: view })); view.disabled = true;
   action(t('editor.media.actions.replace'), choose);
   action(t('editor.media.actions.remove'), () => run(async () => {
-    const draft = session.state.draft;
-    if (!await confirm(t('optionImages.remove')) || draft !== session.state.draft) return;
+    const draftId = session.state.draft?.localId, generation = session._audioDraftGeneration;
+    if (!await confirm(t('optionImages.remove'))) return;
+    const target = session.findBlock(blockId)?.responseConfig?.options?.find(item => item.id === option.id);
+    if (session.state.draft?.localId !== draftId || session._audioDraftGeneration !== generation
+      || optionImageRef(target)?.assetId !== ref.assetId) return;
     await session.removeOptionImage(blockId, option.id, { confirmRemove: true }); refresh();
   }));
   const field = document.createElement('div'); field.className = 'editor-option-image-description';
@@ -59,5 +72,5 @@ export function mountOptionImageEditor({ row, option, blockId, session, icon, co
     const reader = new FileReader();
     reader.onload = () => { if (strip.isConnected) { thumb.src = reader.result; view.disabled = false; } };
     reader.readAsDataURL(new Blob([asset.binary], { type: asset.metadata?.mimeType || 'image/png' }));
-  });
+  }).catch(() => { view.disabled = true; });
 }

@@ -6521,3 +6521,42 @@ test('late option image read cannot attach after the target is deleted', async (
   assert.equal((await pending).reason, 'stale-target'); assert.equal(session.state.draft.assets.length, 0); assert.equal(removedIds.length, 1);
   clearTimeout(session.autosaveTimer);
 });
+
+for (const target of ['question_image', 'question_audio', 'option_audio', 'option_image', 'audio_track']) {
+  test(`${target} replacement/removal preserves an asset still used by another option or question`, async () => {
+    const mod = await loadEditorModule();
+    const { session, assetStore, removedIds } = createSessionWithQuestion(mod, { inputType: 'multiple_choice', options: [
+      { id: 'o1', value: 'A', label: 'A' }, { id: 'o2', value: 'B', label: 'B' },
+    ] });
+    const file = () => createFakeFile({ name: target.includes('image') ? 'one.png' : 'one.mp3', type: target.includes('image') ? 'image/png' : 'audio/mpeg' });
+    const attach = () => target.startsWith('question_') ? session.attachQuestionMedia('q1', target, file(), { confirmReplace: true })
+      : target === 'audio_track' ? session.attachAudioTrack('q1', 'option', 'english', file(), { optionId: 'o1', confirmReplace: true })
+      : session[target === 'option_image' ? 'attachOptionImage' : 'attachOptionAudio']('q1', 'o1', file(), { confirmReplace: true });
+    const remove = () => target.startsWith('question_') ? session.removeQuestionMedia('q1', target, { confirmRemove: true })
+      : target === 'audio_track' ? session.removeAudioTrack('q1', 'option', 'english', { optionId: 'o1', confirmRemove: true })
+      : session[target === 'option_image' ? 'removeOptionImage' : 'removeOptionAudio']('q1', 'o1', { confirmRemove: true });
+    const share = id => {
+      const block = session.findBlock('q1');
+      if (target.startsWith('question_')) {
+        session.state.draft.blocks = [block, { ...structuredClone(block), blockId: 'q2' }];
+      } else if (target === 'audio_track') {
+        block.responseConfig.options[1].audioTracks = structuredClone(block.responseConfig.options[0].audioTracks);
+      } else block.responseConfig.options[1].mediaRefs = [{ usage: target, assetId: id }];
+    };
+    try {
+      const first = await attach(); assert.equal(first.ok, true); share(first.assetId);
+      const second = await attach(); assert.equal(second.ok, true); await new Promise(resolve => setImmediate(resolve));
+      assert(assetStore.has(first.assetId), 'shared binary survives replacement');
+      assert(session.state.draft.assets.some(asset => asset.assetId === first.assetId), 'shared manifest entry survives replacement');
+      share(second.assetId); await remove(); await new Promise(resolve => setImmediate(resolve));
+      assert(assetStore.has(second.assetId), 'shared binary survives removal');
+      assert(session.state.draft.assets.some(asset => asset.assetId === second.assetId), 'shared manifest entry survives removal');
+      assert(!removedIds.includes(first.assetId)); assert(!removedIds.includes(second.assetId));
+      if (target.startsWith('question_')) session.deleteBlock('q2');
+      else session.removeQuestionOption('q1', 1);
+      await new Promise(resolve => setImmediate(resolve));
+      assert(!assetStore.has(second.assetId), 'last reference removal cleans the binary');
+      assert(!session.state.draft.assets.some(asset => asset.assetId === second.assetId), 'last reference removal cleans the manifest');
+    } finally { clearTimeout(session.autosaveTimer); }
+  });
+}

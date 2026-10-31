@@ -2042,7 +2042,8 @@ class EditorDraftSession {
 
     const replacedSet = new Set(replacedAssetIds);
     const existingAssets = normalizeDraftAssets(this.state.draft.assets);
-    const filtered = existingAssets.filter((asset) => !replacedSet.has(asset.assetId));
+    const referenced = collectDraftQuestionAssetIds(this.state.draft);
+    const filtered = existingAssets.filter((asset) => !replacedSet.has(asset.assetId) || referenced.has(asset.assetId));
     filtered.push(newAsset);
     this.state.draft.assets = filtered;
 
@@ -2058,8 +2059,12 @@ class EditorDraftSession {
   cleanupReplacedMedia(assetIds) {
     const assets = this.storage.localAssets;
     if (!assets?.remove) return;
+    const referenced = collectDraftQuestionAssetIds(this.state.draft);
     for (const id of assetIds) {
-      Promise.resolve().then(() => assets.remove(id)).catch(() => {
+      if (referenced.has(id)) continue;
+      Promise.resolve().then(() => {
+        if (!collectDraftQuestionAssetIds(this.state.draft).has(id)) return assets.remove(id);
+      }).catch(() => {
         console.warn('Unable to remove replaced local media.');
       });
     }
@@ -2094,7 +2099,9 @@ class EditorDraftSession {
     });
 
     const removedSet = new Set(removedAssetIds);
-    this.state.draft.assets = normalizeDraftAssets(this.state.draft.assets).filter((asset) => !removedSet.has(asset.assetId));
+    const referenced = collectDraftQuestionAssetIds(this.state.draft);
+    this.state.draft.assets = normalizeDraftAssets(this.state.draft.assets)
+      .filter((asset) => !removedSet.has(asset.assetId) || referenced.has(asset.assetId));
 
     this.clearMediaFeedback();
     this.touchDraft();
@@ -2159,7 +2166,8 @@ class EditorDraftSession {
 
     const replacedSet = new Set(replacedAssetIds);
     const existingAssets = normalizeDraftAssets(this.state.draft.assets);
-    const filtered = existingAssets.filter((asset) => !replacedSet.has(asset.assetId));
+    const referenced = collectDraftQuestionAssetIds(this.state.draft);
+    const filtered = existingAssets.filter((asset) => !replacedSet.has(asset.assetId) || referenced.has(asset.assetId));
     filtered.push(newAsset);
     this.state.draft.assets = filtered;
 
@@ -2210,8 +2218,9 @@ class EditorDraftSession {
     });
 
     const removedSet = new Set(removedAssetIds);
+    const referenced = collectDraftQuestionAssetIds(this.state.draft);
     this.state.draft.assets = normalizeDraftAssets(this.state.draft.assets)
-      .filter((asset) => !removedSet.has(asset.assetId));
+      .filter((asset) => !removedSet.has(asset.assetId) || referenced.has(asset.assetId));
 
     this.clearMediaFeedback();
     this.touchDraft();
@@ -2331,8 +2340,9 @@ class EditorDraftSession {
     });
 
     const removedSet = new Set(removedAssetIds);
+    const referenced = collectDraftQuestionAssetIds(this.state.draft);
     this.state.draft.assets = normalizeDraftAssets(this.state.draft.assets)
-      .filter((asset) => !removedSet.has(asset.assetId) || collectDraftQuestionAssetIds(this.state.draft).has(asset.assetId));
+      .filter((asset) => !removedSet.has(asset.assetId) || referenced.has(asset.assetId));
 
     this.clearMediaFeedback();
     this.touchDraft();

@@ -18,13 +18,13 @@ try {
    const block = s.createBlock('question'); const id = s.state.selectedBlockId;
    s.updateQuestionInputType(id, 'multiple_choice');
    s.findBlock(id).prompt.text = 'Choose 圖片';
-   s.updateQuestionOptionAtIndex(id, 0, ''); s.updateQuestionOptionAtIndex(id, 1, 'Text');
    s.notifyStateChange();
   });
   const chooser = page.waitForEvent('filechooser');
   await page.locator('.editor-option-image-button').first().click();
   await (await chooser).setFiles({ name: 'square.png', mimeType: 'image/png', buffer: png });
-  await page.locator('.editor-option-image-description textarea').waitFor();
+  await page.locator('.editor-option-image-description textarea').waitFor({ timeout: 5000 });
+  await page.evaluate(() => { const s = window.editorSession; s.updateQuestionOptionAtIndex(s.state.selectedBlockId, 1, 'Text'); });
   await page.locator('.editor-option-image-description textarea').fill('圖片描述');
   await page.locator('.option-correct-toggle').first().click();
   const data = await page.evaluate(async () => {
