@@ -1885,7 +1885,7 @@ async function buildWorksheetPrintReportModel({
           selected: coerceAnswerValueByInputType('boolean', learnerValue) === value }))
         : [];
     const questionImage = await resolvePrintQuestionImage(getQuestionImageRefForPrint(block), storage);
-    const longChoices = choices.length > 8 || choices.some(choice => choice.label.length > 500)
+    const flowChoices = choices.some(choice => choice.image) || choices.length > 8 || choices.some(choice => choice.label.length > 500)
       || choices.reduce((length, choice) => length + choice.label.length, 0) > 850;
     const question = {
       kind: 'question',
@@ -1919,10 +1919,10 @@ async function buildWorksheetPrintReportModel({
       : null;
     return {
       ...question,
-      layoutMode: longChoices ? 'flow' : classifyPrintQuestionLayout(question),
+      layoutMode: flowChoices ? 'flow' : classifyPrintQuestionLayout(question),
       sectionBreakModes: {
         prompt: promptSectionMode,
-        answer: longChoices ? 'flow' : answerSectionMode,
+        answer: flowChoices ? 'flow' : answerSectionMode,
         checkedAnswer: checkedAnswerSectionMode,
       },
     };
@@ -2013,10 +2013,10 @@ function buildWorksheetPrintReportHtml(reportModel) {
     const choicesHtml = question.choices?.length ? `
       <div class="print-choices${question.inputType === 'boolean' ? ' print-choices--boolean' : ''}">
         ${question.choices.map(choice => `
-          <div class="print-choice${choice.selected ? ' is-selected' : ''}"${choice.booleanValue ? ` data-boolean-value="${escapeHtml(choice.booleanValue)}"` : ''}>
+          <div class="print-choice${choice.image ? ' print-choice--image' : ''}${choice.selected ? ' is-selected' : ''}"${choice.booleanValue ? ` data-boolean-value="${escapeHtml(choice.booleanValue)}"` : ''}>
             ${choice.prefix ? `<span class="print-choice-prefix">${escapeHtml(choice.prefix)}</span>` : ''}
             <span class="print-choice-label">${escapeHtml(choice.label)}</span>
-            ${choice.image?.status === 'ready' ? `<img class="print-option-image" src="${escapeHtml(choice.image.src)}" alt="${escapeHtml(choice.imageAlt)}">` : choice.image ? `<span>${escapeHtml(t('optionImages.unavailable'))}</span>` : ''}
+            ${choice.image?.status === 'ready' ? `<img class="print-option-image" src="${escapeHtml(choice.image.src)}" alt="${escapeHtml(choice.imageAlt)}">` : choice.image ? `<span class="print-option-image-unavailable">${escapeHtml(t('optionImages.unavailable'))}</span>` : ''}
             <span class="print-choice-mark" aria-hidden="true">${choice.selected ? '✓' : ''}</span>
           </div>`).join('')}
       </div>` : '';

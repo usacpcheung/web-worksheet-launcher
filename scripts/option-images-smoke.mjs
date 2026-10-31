@@ -48,6 +48,7 @@ try {
   await card.locator('.viewer-option-enlarge').first().waitFor({state:'visible'});
   await page.waitForFunction(()=>!!document.querySelector('.viewer-option-enlarge:not(:disabled)'));
   assert.equal(await card.locator('.viewer-option-image img').getAttribute('alt'),'圖片描述');
+  assert.equal(await card.locator('.viewer-option-image').first().evaluate(n => getComputedStyle(n).backgroundColor), 'rgba(0, 0, 0, 0)');
   await card.locator('[data-choice-value]').first().focus(); await page.keyboard.press('ArrowRight');
   assert.equal(await card.locator('[data-choice-value]').nth(1).evaluate(n => document.activeElement === n), true);
   await card.locator('[data-choice-value]').first().click();
