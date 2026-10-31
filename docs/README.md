@@ -35,7 +35,8 @@ Contributor instructions, discoverable UI skills, colocated module/font notes an
 - [Audio voice choices](worksheet/editor-voice-choice.md)
 - [Learner voice, rewrite, recovery and Undo](worksheet/viewer-voice-workflow.md)
 - [Published loading feedback](worksheet/viewer-package-load-progress.md)
-- [Viewer UI target design and staged implementation plan (not implemented)](worksheet/viewer-ui-refactor-plan.md)
+- [Viewer UI target design and staged implementation plan](worksheet/viewer-ui-refactor-plan.md)
+- [Version C layout and chooser validation (unmerged stack)](worksheet/viewer-version-c-validation.md)
 
 ## RolePlayScene
 

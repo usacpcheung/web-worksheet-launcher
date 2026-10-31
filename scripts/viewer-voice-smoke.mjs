@@ -1,3 +1,4 @@
+import { clickViewerAction } from './viewer-navigation-test-helpers.mjs';
 // Isolated browser context; all API responses and microphone capture are synthetic.
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
@@ -39,13 +40,19 @@ await page.goto(base + '/server/viewer/index.html?localAttemptId=voice-smoke');
 await current.getByRole('button',{name:'Add by voice',exact:true}).click();
 await page.getByRole('button',{name:'Stop',exact:true}).waitFor();
 await shot('voice-recording-desktop.png');
+// Enlarged desktop actions must remain above the fixed operation panel.
+await page.evaluate(()=>{document.documentElement.style.fontSize='32px';});
+await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+assert(await page.locator('.viewer-action-panel').evaluate(node=>node.getBoundingClientRect().bottom<=document.querySelector('.viewer-operation-panel').getBoundingClientRect().top));
+await page.evaluate(()=>{document.documentElement.style.fontSize='';});
 
-assert.equal(await current.locator('.question-card > textarea:not(.question-card__review-status)').evaluate(e=>e.readOnly),true);
+
+assert.equal(await current.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').evaluate(e=>e.readOnly),true);
 assert.equal(await page.getByRole('button',{name:'Submit',exact:true}).isDisabled(),true);
-await page.getByRole('button',{name:'Go to next block',exact:true}).click();
+await clickViewerAction(page, 'Next section');
 await page.waitForFunction(()=>window.viewerSession.voice.active?.state==='transcribing');
-assert.equal(await current.locator('.question-card > textarea:not(.question-card__review-status)').evaluate(e=>e.readOnly),false);
-await current.locator('.question-card > textarea:not(.question-card__review-status)').fill('Question two typing');
+assert.equal(await current.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').evaluate(e=>e.readOnly),false);
+await current.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').fill('Question two typing');
 assert.equal(await current.getByRole('button',{name:'Add by voice',exact:true}).isDisabled(),true);
 assert.equal(await current.getByRole('button',{name:'Rewrite',exact:true}).isDisabled(),true);
 await page.setViewportSize({width:390,height:844});
@@ -53,19 +60,19 @@ await page.locator('.viewer-voice-status:visible').evaluate(e=>e.scrollIntoView(
 await shot('voice-other-question-mobile.png');
 finishTranscription();hold=false;
 await page.waitForFunction(()=>!window.viewerSession.voice.active);
-assert.equal(await current.locator('.question-card > textarea:not(.question-card__review-status)').inputValue(),'Question two typing');
-assert.equal(await current.locator('.question-card > textarea:not(.question-card__review-status)').evaluate(e=>e===document.activeElement),true);
+assert.equal(await current.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').inputValue(),'Question two typing');
+assert.equal(await current.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').evaluate(e=>e===document.activeElement),true);
 assert.equal(await page.evaluate(()=>window.viewerSession.state.answers.q1.value),'Earlier answer New segment');
-await page.getByRole('button',{name:'Go to previous block',exact:true}).click();
+await clickViewerAction(page, 'Previous section');
 await current.getByRole('button',{name:'Undo',exact:true}).click();
-assert.equal(await current.locator('.question-card > textarea:not(.question-card__review-status)').inputValue(),'Earlier answer');
-await current.locator('.question-card > textarea:not(.question-card__review-status)').click();
-await current.locator('.question-card > textarea:not(.question-card__review-status)').evaluate(e=>{e.setSelectionRange(0,7);e.dispatchEvent(new Event('select'));});
+assert.equal(await current.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').inputValue(),'Earlier answer');
+await current.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').click();
+await current.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').evaluate(e=>{e.setSelectionRange(0,7);e.dispatchEvent(new Event('select'));});
 await current.getByRole('button',{name:'Add by voice',exact:true}).click();
 await page.getByRole('button',{name:'Stop',exact:true}).click();
 await page.waitForFunction(()=>!window.viewerSession.voice.active);
-assert.equal(await current.locator('.question-card > textarea:not(.question-card__review-status)').inputValue(),'Earlier New segment answer');
-assert.equal(await current.locator('.question-card > textarea:not(.question-card__review-status)').evaluate(e=>e.readOnly),false);
+assert.equal(await current.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').inputValue(),'Earlier New segment answer');
+assert.equal(await current.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').evaluate(e=>e.readOnly),false);
 await shot('voice-ready-mobile.png');
 
 assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth <= innerWidth), true);
@@ -99,11 +106,11 @@ failRewrite=false;
 await current.getByRole('button',{name:'Retry rewrite',exact:true}).click();
 await page.waitForFunction(()=>!window.viewerSession.voice.active);
 assert.equal(transcriptions,count);
-assert.equal(await current.locator('.question-card > textarea:not(.question-card__review-status)').inputValue(),'Earlier New segment answer New segment');
-await current.locator('.question-card > textarea:not(.question-card__review-status)').fill('Edited after voice');
-await page.getByRole('button',{name:'Go to next block',exact:true}).click();
-await page.getByRole('button',{name:'Go to previous block',exact:true}).click();
-assert.equal(await current.locator('.question-card > textarea:not(.question-card__review-status)').inputValue(),'Edited after voice');
+assert.equal(await current.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').inputValue(),'Earlier New segment answer New segment');
+await current.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').fill('Edited after voice');
+await clickViewerAction(page, 'Next section');
+await clickViewerAction(page, 'Previous section');
+assert.equal(await current.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').inputValue(),'Edited after voice');
 failRewrite=true;
 await current.getByRole('button',{name:'Add by voice',exact:true}).click();
 await page.getByRole('button',{name:'Stop',exact:true}).click();

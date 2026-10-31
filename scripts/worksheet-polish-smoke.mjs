@@ -1,3 +1,4 @@
+import { clickViewerAction } from './viewer-navigation-test-helpers.mjs';
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
@@ -52,8 +53,8 @@ try {
     const openLabel = await page.evaluate(async () => (await import('/server/app/i18n/index.js')).t('editor.actions.openViewer'));
     await page.getByRole('button', { name: openLabel, exact: true }).click();
     await page.locator('.viewer-back-to-editor').waitFor();
-    const next = await page.evaluate(async () => (await import('/server/app/i18n/index.js')).t('viewer.actions.nextBlock'));
-    await page.getByRole('button', { name: next, exact: true }).click();
+    const next = await page.evaluate(async () => (await import('/server/app/i18n/index.js')).t('viewer.navigation.nextSection'));
+    await clickViewerAction(page, next);
     await page.locator('.question-card__prompt-label').waitFor();
     await page.locator('.question-card').evaluate(async el => { await Promise.all(el.getAnimations().map(a => a.finished)); });
     await page.evaluate(() => document.fonts.ready);
@@ -78,7 +79,7 @@ try {
     await page.reload();
     await page.locator('.viewer-back-to-editor').waitFor();
     const answer = page.locator('.question-card textarea').first();
-    if (!await answer.isVisible()) await page.getByRole('button', { name: next, exact: true }).click();
+    if (!await answer.isVisible()) await clickViewerAction(page, next);
     await answer.waitFor();
     await page.evaluate(() => {
       window.originalFlush = window.viewerSession.flushLocalStateForAuthRedirect.bind(window.viewerSession);

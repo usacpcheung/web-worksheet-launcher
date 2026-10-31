@@ -1,8 +1,8 @@
 # Viewer UI refactor — implementation plan draft
 
-Status: continuous-rendering implementation authorized, 2026-10-30 (Asia/Hong_Kong).
-PR #332 remains open. The next runtime PR is stacked on its branch. The user
-approved D1–D6 and the operation-panel placement below; D7/D8 remain pending
+Status: Version C layout/chooser implementation authorized, 2026-10-30 (Asia/Hong_Kong).
+PRs #332 and #333 remain open. Stage 3 is stacked on #333. The user
+approved D1–D6 and the operation-panel placement below; D7 is accepted in section 11; D8 remains pending
 for later stages. Deployment and merging the stack require separate authorization.
 
 Companion: [worksheet UI skill](../../.agents/skills/worksheet-ui-design-language/SKILL.md).
@@ -55,7 +55,7 @@ new business behavior or adding demo-only functions.
 | Reference layout | Desktop side action area; mobile launcher/drawer. Verify exact placement against the full production action inventory. |
 | Latest trial values | Reading line at 40% viewport height; reveal settles at approximately 55% when entering from below. These are tuning values, not a package/API contract. |
 | Pending final visual acceptance | Revised C mockup's motion timing, hover appearance, spacing and small-screen usability. |
-| Accepted behavior rules | D1–D6 and the operation-panel placement in section 4, agreed 2026-10-30. D7/D8 remain pending. |
+| Accepted behavior rules | D1–D6 and the operation-panel placement in section 4, agreed 2026-10-30. D7 is accepted in section 11; D8 remains pending. |
 
 Keep production fonts and existing localization. Do not import the HTML's embedded
 font/audio data, fixtures, hardcoded translations, simulated functions, diagnostic
@@ -110,8 +110,8 @@ mockup controls must not disappear from the product.
 The ordinary rule is a stable section crossing the reading line. The following
 rules cover exceptions that the single-block UI did not need to resolve. D1–D6
 are accepted for the first implementation. Their small numeric tolerances are
-implementation details to verify, not additional product decisions. D7/D8 remain
-proposals for later stages.
+implementation details to verify, not additional product decisions. D7 is accepted in section 11; D8 remains
+a proposal for the motion stage.
 
 | ID | Case | Recommended rule | Why it needs review |
 | --- | --- | --- | --- |
@@ -209,7 +209,7 @@ review/fix/review loop has no remaining issue requiring a fix.
 - Keep chooser DOM stable during answer/status updates. Support focus/selection
   restoration, keyboard navigation and responsive pagination, including zoom.
 - Gate: both locales, desktop/mobile/short viewports, all action states and long
-  labels work without clipped/unreachable content or hover flicker. Resolve D7.
+  labels work without clipped/unreachable content or hover flicker. Apply the D7 agreement in section 11.
 
 ### PR 4 — Presentation motion and integrated release acceptance
 
@@ -279,7 +279,7 @@ solely because the standalone mockup passed visual checks.
 1. Review this draft and the companion skill: scope, selected design, preserved behavior.
 2. Confirm final C visual baseline and the five-PR sequence (documentation plus four runtime PRs).
 3. Review D1–D6 and D9 before PR 2; D2, D5 and operation-status ownership deserve special attention.
-4. Review D7/D8 before their dependent implementation; record approvals in this plan.
+4. D7 is recorded in section 11. Review D8 before motion implementation.
 5. Review documentation PR 0 on its fetched main baseline; merge only when authorized. Documentation acceptance does not approve unresolved runtime behavior or authorize runtime implementation.
 
 ## 9. Rendering-preparation inventory and implementation boundary
@@ -380,3 +380,34 @@ See [continuous-viewer validation](viewer-continuous-validation.md) for local
 coverage, review findings, synthetic scale measurements and the live acceptance
 boundary. This stage retains the old navigation presentation; the final chooser,
 ring and Version C appearance remain subsequent PRs.
+
+## 11. Stage 3 — Version C layout and chooser (2026-10-30)
+
+The user approved stacking this stage on #333 after its automation/review gate.
+D7's recommended behavior is accepted for implementation: opening the chooser
+keeps current section identity; mobile closes the action drawer first; cancel
+returns to the visible opener (mobile launcher), selection uses the existing
+section-navigation path. Resize retains the focused row and adjusts pagination.
+
+This stage replaces the horizontal stepper and fixed bottom action presentation
+with the reference's right-side desktop actions and a mobile/short-screen drawer.
+All original action handlers and enabled conditions remain in place. Question
+numbers exclude reading sections; the progress arc and answered marks use the
+existing completion predicate (including zero and False). Reading sections have
+separate labels and book icons. Prompt/answer columns collapse on narrow screens.
+Single/multiple-track controls and MC answer widths align without altering audio,
+option identities, shuffling or answer selection.
+
+Chooser rows stay mounted. Pagination measures real row height with the current
+font and locale and uses a consistent capacity across pages, down to one row.
+Full names and answered/current states are accessible independently of visual
+excerpts. Desktop and mobile/short-screen dialogs use native modal focus handling.
+No scrolling list, grouping tabs, moving hover treatment or new storage contract
+is introduced. Existing synthetic fixtures now exercise the responsive controls
+instead of the removed horizontal stepper.
+
+D8 (motion/replay) remains for the next stage. This stage does not add blur or
+sliding animations. Keep the stack open; integrated VPS/real-device acceptance
+still belongs to the complete Version C candidate before merging.
+
+Stage 3 evidence: [Version C validation](viewer-version-c-validation.md).

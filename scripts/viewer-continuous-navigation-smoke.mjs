@@ -1,3 +1,4 @@
+import { chooseViewerSection } from './viewer-navigation-test-helpers.mjs';
 // Synthetic media/provider fixtures only. No production resources are created.
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
@@ -51,7 +52,7 @@ try {
   const section = id => page.locator(`.viewer-block-section[data-block-id="${id}"]`);
   const current = async () => page.evaluate(() => window.viewerSession.state.lastActiveBlockId);
   const jump = async index => {
-   await page.locator('.block-stepper__node').nth(index).click();
+   await chooseViewerSection(page, index);
    await page.waitForFunction(index => window.viewerSession.state.lastActiveIndex === index, index);
   };
   await section('q1').waitFor();
@@ -157,10 +158,10 @@ try {
   await section('end').waitFor();
   assert.equal(await current(), 'end');
   await page.keyboard.press('Tab');
-  const keyboardPosition = await page.evaluate(() => scrollY);
+  await page.evaluate(() => { window.scrollCalls = []; const scroll = window.scrollTo.bind(window); window.scrollTo = (...args) => { window.scrollCalls.push(args); return scroll(...args); }; });
   await section('intro').evaluate(node => { node.style.paddingBottom = '200px'; });
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  assert.equal(await page.evaluate(() => scrollY), keyboardPosition, 'late layout cannot resume-jump after keyboard interaction');
+  assert.equal(await page.evaluate(() => window.scrollCalls.length), 0, 'late layout cannot resume-jump after keyboard interaction (native anchoring remains allowed)');
   await page.keyboard.press('Home');
   await page.waitForFunction(() => window.viewerSession.state.lastActiveBlockId === 'intro');
   await page.keyboard.press('End');

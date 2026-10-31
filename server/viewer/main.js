@@ -17,6 +17,7 @@ import { createVoiceWorkflow, normalizeVoiceRecovery, REWRITE_INPUT_LIMIT, unico
 import { createVoiceControls, createVoiceStatus } from './answer-voice-ui.js';
 import { createWorksheetViewHost, createBlockViewScope } from './block-view-host.js';
 import { createSectionNavigation } from './section-navigation.js';
+import { createWorksheetNavigation, describeSections, isAnsweredValue } from './worksheet-navigation.js';
 import { viewerStorage } from './storage/index.js';
 import { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';
 import { validateViewerPayloadSchema } from '../app/contracts/validators.js';
@@ -1651,17 +1652,6 @@ function getCheckRevealMessage({ status, learnerAnswerText, correctAnswerText })
 
 function computeAnswerSummary(viewerPayload, answers) {
   const questions = (viewerPayload?.blocks || []).filter((block) => block.kind === 'question');
-
-  function isAnsweredValue(value) {
-    if (value === null || value === undefined) return false;
-    if (typeof value === 'string') {
-      return value.trim() !== '';
-    }
-    if (Array.isArray(value)) {
-      return value.length > 0;
-    }
-    return true;
-  }
 
   const answered = questions.filter((block) => {
     const value = answers?.[block.blockId]?.value;
@@ -5842,34 +5832,24 @@ function renderViewerShell(session) {
   blockHeading.className = 'viewer-section-accessible-heading';
   const blockList = document.createElement('div');
   blockList.id = 'viewer-answer-form';
-  const stepper = document.createElement('div');
-  stepper.className = 'block-stepper';
-  stepper.setAttribute('role', 'list');
-  stepper.setAttribute('aria-label', t('viewer.shell.blockProgressAriaLabel'));
-
-  const navActions = document.createElement('div');
-  navActions.className = 'viewer-bottom-bar__zone viewer-bottom-bar__zone--center';
   const prevBtn = document.createElement('button');
   prevBtn.type = 'button';
   prevBtn.className = 'icon-nav-btn';
-  prevBtn.textContent = t('viewer.actions.back');
-  prevBtn.setAttribute('aria-label', t('viewer.actions.previousBlock'));
-  prevBtn.title = t('viewer.actions.previousBlockTitle');
+  prevBtn.textContent = t('viewer.navigation.previousSection');
+  prevBtn.setAttribute('aria-label', t('viewer.navigation.previousSection'));
+  prevBtn.title = t('viewer.navigation.previousSection');
   const nextBtn = document.createElement('button');
   nextBtn.type = 'button';
   nextBtn.className = 'icon-nav-btn';
-  nextBtn.textContent = t('viewer.actions.next');
-  nextBtn.setAttribute('aria-label', t('viewer.actions.nextBlock'));
-  nextBtn.title = t('viewer.actions.nextBlockTitle');
-  navActions.append(prevBtn, nextBtn);
+  nextBtn.textContent = t('viewer.navigation.nextSection');
+  nextBtn.setAttribute('aria-label', t('viewer.navigation.nextSection'));
+  nextBtn.title = t('viewer.navigation.nextSection');
   const crossQuestionStatus = createVoiceStatus({ session, t,
     view: blockId => navigateToBlockIndex(getOrderedBlocks().findIndex(block => block.blockId === blockId)),
   });
   crossQuestionStatus.root.id = 'viewer-operation-status';
   crossQuestionStatus.root.classList.add('viewer-operation-panel');
   let sectionNavigation;
-  let stepperOrderSignature = null;
-  let lastStepperActiveIndex = -1;
   const numberInputErrors = new Map();
   const localInputCache = new Map();
   let currentBlockIndex = 0;
@@ -6020,38 +6000,14 @@ function renderViewerShell(session) {
   detailsContent.append(detailsTitle, learnerNameForm, printSettingsForm, detailsList, detailsCloseBtn);
   detailsModal.append(detailsContent);
 
-  const bottomBar = document.createElement('div');
-  bottomBar.className = 'viewer-bottom-bar';
-  const bottomBarInner = document.createElement('div');
-  bottomBarInner.className = 'viewer-bottom-bar__inner';
-  const leftZone = document.createElement('div');
-  leftZone.className = 'viewer-bottom-bar__zone viewer-bottom-bar__zone--left';
-  const rightZone = document.createElement('div');
-  rightZone.className = 'viewer-bottom-bar__zone viewer-bottom-bar__zone--right';
-
-  const showBottomButtonClickFeedback = (button) => {
-    if (!button) return;
-    button.classList.remove('is-click-feedback');
-    // Force restart of animation for repeated clicks.
-    void button.offsetWidth;
-    button.classList.add('is-click-feedback');
-  };
-
   completeBtn.addEventListener('click', async () => {
-    showBottomButtonClickFeedback(completeBtn);
     await session.completeLocalAttempt();
     renderUI();
   });
   checkBtn.addEventListener('click', () => {
-    showBottomButtonClickFeedback(checkBtn);
     session.checkAnswers();
     renderUI();
   });
-  leftZone.append(saveBtn);
-  rightZone.append(completeBtn, checkBtn);
-  bottomBarInner.append(leftZone, navActions, rightZone);
-  bottomBar.append(bottomBarInner);
-
   const getOrderedBlocks = () => (
     [...(session.state.viewerPayload?.blocks || [])].sort((a, b) => a.position - b.position)
   );
@@ -6205,184 +6161,6 @@ function renderViewerShell(session) {
     }
   });
 
-  const getStepperLabel = (block, counters) => {
-    if (block.kind === 'content') {
-      counters.content += 1;
-      return counters.content === 1
-        ? t('viewer.stepper.instruction')
-        : t('viewer.stepper.instructionNumber', { number: counters.content });
-    }
-    counters.question += 1;
-    return t('viewer.stepper.questionNumber', { number: counters.question });
-  };
-
-  const getStepperOrderSignature = (orderedBlocks) => (
-    orderedBlocks.map((block) => `${block.blockId}:${block.position}:${block.kind}`).join('|')
-  );
-
-  const scrollStepperToActive = (activeNode, activeIndex, totalItems) => {
-    if (!activeNode || !stepper) return;
-
-    const ensureActiveNodeVisible = () => {
-      const containerRect = stepper.getBoundingClientRect();
-      const nodeRect = activeNode.getBoundingClientRect();
-      const leftInset = 6;
-      const rightInset = 6;
-
-      if (nodeRect.left < containerRect.left + leftInset) {
-        const delta = (containerRect.left + leftInset) - nodeRect.left;
-        const nextLeft = Math.max(0, stepper.scrollLeft - delta);
-        stepper.scrollLeft = nextLeft;
-        return;
-      }
-
-      if (nodeRect.right > containerRect.right - rightInset) {
-        const delta = nodeRect.right - (containerRect.right - rightInset);
-        const maxScrollLeft = Math.max(0, stepper.scrollWidth - stepper.clientWidth);
-        const nextLeft = Math.min(maxScrollLeft, stepper.scrollLeft + delta);
-        stepper.scrollLeft = nextLeft;
-      }
-    };
-
-    const shouldReduceMotion = typeof window !== 'undefined'
-      && typeof window.matchMedia === 'function'
-      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const scheduleEnsureActiveNodeVisible = () => {
-      if (typeof requestAnimationFrame === 'function') {
-        requestAnimationFrame(() => {
-          ensureActiveNodeVisible();
-        });
-        return;
-      }
-      ensureActiveNodeVisible();
-    };
-
-    const maxScrollLeft = Math.max(0, stepper.scrollWidth - stepper.clientWidth);
-    if (maxScrollLeft === 0) {
-      stepper.scrollLeft = 0;
-      scheduleEnsureActiveNodeVisible();
-      return;
-    }
-
-    if (activeIndex <= 0) {
-      stepper.scrollLeft = 0;
-      if (typeof requestAnimationFrame === 'function') {
-        requestAnimationFrame(() => {
-          stepper.scrollLeft = 0;
-          ensureActiveNodeVisible();
-        });
-      }
-      return;
-    }
-
-    if (activeIndex >= totalItems - 1) {
-      stepper.scrollLeft = maxScrollLeft;
-      if (typeof requestAnimationFrame === 'function') {
-        requestAnimationFrame(() => {
-          stepper.scrollLeft = maxScrollLeft;
-          ensureActiveNodeVisible();
-        });
-      }
-      return;
-    }
-
-    const nodeLeft = activeNode.offsetLeft;
-    const targetLeft = nodeLeft - ((stepper.clientWidth - activeNode.offsetWidth) / 2);
-    const clampedLeft = Math.min(Math.max(targetLeft, 0), maxScrollLeft);
-    const behavior = shouldReduceMotion ? 'auto' : 'smooth';
-    stepper.scrollTo({ left: clampedLeft, behavior });
-    scheduleEnsureActiveNodeVisible();
-  };
-
-  const updateStepperFitState = () => {
-    const fitsContainer = stepper.scrollWidth <= stepper.clientWidth;
-    stepper.dataset.fit = fitsContainer ? 'true' : 'false';
-  };
-
-  const renderStepper = (orderedBlocks, activeIndex, { shouldScrollToActive = false } = {}) => {
-    stepper.innerHTML = '';
-    const counters = { content: 0, question: 0 };
-
-    orderedBlocks.forEach((block, index) => {
-      const item = document.createElement('div');
-      item.className = 'block-stepper__item';
-      item.setAttribute('role', 'listitem');
-
-      const isCompleted = index < activeIndex;
-      const isCurrent = index === activeIndex;
-      const stateClass = isCompleted ? 'is-completed' : isCurrent ? 'is-current' : 'is-upcoming';
-      item.classList.add(stateClass);
-
-      const node = document.createElement('button');
-      node.type = 'button';
-      node.className = 'block-stepper__node';
-      node.textContent = `${index + 1}`;
-      node.title = `Go to block ${index + 1}`;
-      if (isCurrent) {
-        node.setAttribute('aria-label', `Block ${index + 1} of ${orderedBlocks.length}`);
-        node.setAttribute('aria-current', 'step');
-      } else {
-        node.setAttribute('aria-label', `Block ${index + 1} of ${orderedBlocks.length}`);
-      }
-      node.addEventListener('click', () => {
-        navigateToBlockIndex(index, { orderedBlocks });
-      });
-
-      const label = document.createElement('p');
-      label.className = 'block-stepper__label';
-      label.textContent = getStepperLabel(block, counters);
-
-      item.append(node, label);
-      if (index < orderedBlocks.length - 1) {
-        const connector = document.createElement('span');
-        connector.className = `block-stepper__connector ${isCompleted ? 'is-completed' : 'is-upcoming'}`;
-        item.append(connector);
-      }
-      stepper.appendChild(item);
-    });
-
-    updateStepperFitState();
-
-    const activeNode = stepper.querySelector('.block-stepper__item.is-current');
-    if (shouldScrollToActive && activeNode) {
-      scrollStepperToActive(activeNode, activeIndex, orderedBlocks.length);
-    }
-  };
-
-  const updateStepperActiveState = (orderedBlocks, activeIndex, { shouldScrollToActive = false } = {}) => {
-    const stepperItems = stepper.querySelectorAll('.block-stepper__item');
-    stepperItems.forEach((item, index) => {
-      const node = item.querySelector('.block-stepper__node');
-      const connector = item.querySelector('.block-stepper__connector');
-      const isCompleted = index < activeIndex;
-      const isCurrent = index === activeIndex;
-
-      item.classList.remove('is-completed', 'is-current', 'is-upcoming');
-      item.classList.add(isCompleted ? 'is-completed' : isCurrent ? 'is-current' : 'is-upcoming');
-
-      if (node) {
-        node.setAttribute('aria-label', `Block ${index + 1} of ${orderedBlocks.length}`);
-        if (isCurrent) {
-          node.setAttribute('aria-current', 'step');
-        } else {
-          node.removeAttribute('aria-current');
-        }
-      }
-
-      if (connector) {
-        connector.classList.remove('is-completed', 'is-upcoming');
-        connector.classList.add(isCompleted ? 'is-completed' : 'is-upcoming');
-      }
-    });
-
-    if (shouldScrollToActive) {
-      const activeNode = stepper.querySelector('.block-stepper__item.is-current');
-      if (activeNode) {
-        scrollStepperToActive(activeNode, activeIndex, orderedBlocks.length);
-      }
-    }
-  };
-
   const cacheRawControlValue = (blockId, value) => {
     localInputCache.set(blockId, value);
   };
@@ -6431,6 +6209,7 @@ function renderViewerShell(session) {
     };
   };
 
+  let sectionLabels = new Map();
   const getBlockPresentation = (currentBlock) => {
     const currentBlockCheckStatus = currentBlock?.blockId
       ? session.state.checkResult?.statusByBlockId?.[currentBlock.blockId]
@@ -6444,6 +6223,7 @@ function renderViewerShell(session) {
 
     const nextSignature = JSON.stringify({
       blockId: currentBlockId,
+      sectionLabel: sectionLabels.get(currentBlockId),
       prompt: currentBlock?.prompt?.text || '',
       promptFormat: currentBlock?.prompt?.format || 'plain_text',
       content: currentBlock?.content?.text || '',
@@ -6474,12 +6254,21 @@ function renderViewerShell(session) {
     if (currentBlock.kind === 'content') {
       const card = document.createElement('article');
       card.className = 'content-card viewer-card-transition';
-      setWorksheetText(card, currentBlock.content);
+      const heading = document.createElement('h3');
+      heading.className = 'viewer-section-label';
+      heading.textContent = sectionLabels.get(block.blockId);
+      const body = document.createElement('div');
+      setWorksheetText(body, currentBlock.content);
+      card.append(heading, body);
       return { element: card, update() {}, dispose: scope.dispose };
     }
 
     const card = document.createElement('article');
     card.className = 'question-card viewer-card-transition';
+    const sectionLabel = document.createElement('h3');
+    sectionLabel.className = 'viewer-section-label';
+    sectionLabel.textContent = sectionLabels.get(block.blockId);
+    card.append(sectionLabel);
     const label = document.createElement('div');
     label.className = 'question-card__prompt-label';
     const inputType = block.responseConfig?.inputType || 'text';
@@ -6891,6 +6680,13 @@ function renderViewerShell(session) {
         card.append(helper, control, mediaFeedback, inputError);
       }
 
+    const answerArea = document.createElement('div');
+    answerArea.className = 'viewer-answer-area';
+    for (const child of [...card.children]) {
+      if (child !== sectionLabel && child !== promptRow && !child.classList.contains('viewer-question-image-wrap')) answerArea.append(child);
+    }
+    card.append(answerArea);
+
     let lastControlState;
     const update = () => {
       if (scope.signal.aborted) return;
@@ -7074,23 +6870,12 @@ function renderViewerShell(session) {
     session.state.lastActiveBlockId = currentBlock.blockId;
     crossQuestionStatus.update(currentBlock.blockId);
     crossQuestionStatus.root.hidden = !session.voice.active;
-    const stepperSignature = getStepperOrderSignature(orderedBlocks);
-    const activeIndexChanged = currentBlockIndex !== lastStepperActiveIndex;
-    const orderChanged = stepperSignature !== stepperOrderSignature;
-
-    blockHeading.textContent = currentBlock.kind === 'content'
-      ? t('viewer.stepper.content')
-      : t('viewer.stepper.question');
-    if (orderChanged) {
-      renderStepper(orderedBlocks, currentBlockIndex, { shouldScrollToActive: activeIndexChanged || orderChanged });
-    } else if (activeIndexChanged) {
-      updateStepperActiveState(orderedBlocks, currentBlockIndex, { shouldScrollToActive: true });
-    }
-    stepperOrderSignature = stepperSignature;
-    lastStepperActiveIndex = currentBlockIndex;
+    blockHeading.textContent = t('viewer.navigation.browse');
+    sectionLabels = new Map(describeSections(orderedBlocks, t).map(item => [item.id, item.label]));
     blockViewHost.update(orderedBlocks, currentBlock.blockId);
 
     const summary = computeAnswerSummary(session.state.viewerPayload, session.state.answers);
+    navigation.update(orderedBlocks, currentBlockIndex, session.state.answers, summary);
     status.textContent = session.state.isFinalizing
       ? t('viewer.status.finalizing')
       : session.state.lastFinalizeError
@@ -7144,7 +6929,6 @@ function renderViewerShell(session) {
   });
 
   saveBtn.addEventListener('click', async () => {
-    showBottomButtonClickFeedback(saveBtn);
     await session.saveNow();
     renderUI();
   });
@@ -7220,12 +7004,6 @@ function renderViewerShell(session) {
     }
     renderUI();
   });
-  window.addEventListener('resize', () => {
-    updateStepperFitState();
-    if (currentBlockIndex === 0) {
-      stepper.scrollLeft = 0;
-    }
-  }, { signal });
   prevBtn.addEventListener('click', goPrev);
   nextBtn.addEventListener('click', goNext);
 
@@ -7277,21 +7055,24 @@ function renderViewerShell(session) {
     header.append(back, returnError);
   }
   header.append(headerTop, answerSummary, resumeWarning);
-  blockSection.append(blockHeading, stepper, blockList, crossQuestionStatus.root);
+  blockSection.append(blockHeading, blockList, crossQuestionStatus.root);
   shell.append(header, createViewerAuthFeedback(), blockSection);
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';
   app.append(shell, detailsModal);
-  bottomBarRoot.append(bottomBar);
+  const navigation = createWorksheetNavigation({ t, signal, operationPanel: crossQuestionStatus.root,
+    actions: { previous: prevBtn, next: nextBtn, save: saveBtn, submit: completeBtn, check: checkBtn },
+    navigate: index => navigateToBlockIndex(index),
+  });
+  shell.prepend(navigation.root);
   renderUI();
   sectionNavigation = createSectionNavigation({
     container: blockList, signal, getCurrentIndex: () => currentBlockIndex,
-    layoutElements: [header, bottomBar, crossQuestionStatus.root],
+    layoutElements: [header, crossQuestionStatus.root],
     activate: index => navigateToBlockIndex(index, { source: 'scroll' }),
     getBottomInset: () => {
-      const bar = bottomBar.getBoundingClientRect();
       const panelTop = crossQuestionStatus.root.hidden ? window.innerHeight : crossQuestionStatus.root.getBoundingClientRect().top;
-      return Math.max(0, window.innerHeight - Math.min(bar.top, panelTop));
+      return Math.max(0, window.innerHeight - panelTop);
     },
   });
   const activateControl = event => {

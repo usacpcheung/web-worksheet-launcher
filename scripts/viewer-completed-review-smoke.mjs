@@ -1,3 +1,4 @@
+import { clickViewerAction } from './viewer-navigation-test-helpers.mjs';
 // Isolated browser context; all API responses and microphone capture are synthetic.
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
@@ -40,7 +41,7 @@ await page.evaluate(async()=>{
 errors.length=0;
 await page.goto(base + '/server/viewer/index.html?localAttemptId=voice-smoke');
 
-const field=()=>current.locator('.question-card > textarea:not(.question-card__review-status)');
+const field=()=>current.locator('.viewer-answer-area > textarea:not(.question-card__review-status)');
 // Live editable -> temporarily locked -> completed transition, with real viewer rendering.
 // Navigation can finish before IndexedDB-backed attempt loading renders the controls.
 await current.getByRole('button',{name:'Add by voice',exact:true}).waitFor({state:'visible'});
@@ -103,7 +104,7 @@ for(const locale of ['en','zh-Hant']) {
   // Text questions are not automatically graded by the existing viewer.
   assert.equal(await current.locator('.viewer-check-banner').count(),0);
   // Navigate through the existing accessible next-block control.
-  await page.getByRole('button',{name:locale==='en'?'Go to next block':'前往下一個區塊',exact:true}).click();
+  await clickViewerAction(page, locale==='en'?'Next section':'下一節');
   await current.locator('.question-card__review-status').waitFor();
   assert.equal(await current.locator('.question-card__review-status').inputValue(),locale==='en'?'Not answered':'未作答');
   assert.equal(await field().isVisible(),false);
@@ -113,10 +114,10 @@ for(const locale of ['en','zh-Hant']) {
   assert.ok(reviewSize.height>=170);
   assert.equal(await current.locator('.question-card__text-footer').isVisible(),false);
   await current.locator('.question-card__review-status').evaluate(e=>e.scrollIntoView({block:'center'}));
-  assert.equal(await current.locator('.question-card__review-status').evaluate(e=>e.getBoundingClientRect().bottom<=document.querySelector('.viewer-bottom-bar').getBoundingClientRect().top),true);
+  assert.equal(await current.locator('.question-card__review-status').evaluate(e=>e.getBoundingClientRect().bottom<=innerHeight),true);
   await shot('review-'+locale+'-'+width+'-unanswered.png');
-  await page.getByRole('button',{name:locale==='en'?'Go to next block':'前往下一個區塊',exact:true}).click();
-  const number=current.locator('.question-card > input');
+  await clickViewerAction(page, locale==='en'?'Next section':'下一節');
+  const number=current.locator('.viewer-answer-area > input');
   assert.equal(await number.inputValue(),'7');
   assert.equal(await number.isDisabled(),true);
   assert.equal(await current.locator('.question-card__review-status').count(),0);

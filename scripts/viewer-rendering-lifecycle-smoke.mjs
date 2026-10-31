@@ -1,3 +1,4 @@
+import { chooseViewerSection } from './viewer-navigation-test-helpers.mjs';
 // Isolated local attempts; microphone, audio playback and API responses are synthetic.
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
@@ -56,7 +57,7 @@ try {
     const url = base + '/server/viewer/index.html?localAttemptId=rendering-fixture';
     await page.goto(url);
     const go = async index => {
-      await page.locator('.block-stepper__node').nth(index).click();
+      await chooseViewerSection(page, index);
       assert.equal(await page.locator('#viewer-answer-form > section > article').count(), 6);
       await page.waitForFunction(index => window.viewerSession.state.lastActiveIndex === index, index);
     };

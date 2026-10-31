@@ -1,3 +1,4 @@
+import { clickViewerAction } from './viewer-navigation-test-helpers.mjs';
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
@@ -118,9 +119,9 @@ try {
     await assertVisibleHeading(page.locator('.content-card h2'));
     assert.equal(await page.locator('.viewer-section-accessible-heading').evaluate(el => getComputedStyle(el).clipPath), 'inset(50%)');
     if (shots) await page.screenshot({ path: `${shots}/markdown-content-heading-${locale}-${width}.png`, fullPage: true });
-    assert.equal(await page.locator('.content-card').innerHTML(), previewHtml, 'Viewer and editor share exact renderer output');
-    const nextLabel = await page.evaluate(async () => (await import('/server/app/i18n/index.js')).t('viewer.actions.nextBlock'));
-    await page.getByRole('button', { name: nextLabel, exact: true }).click();
+    assert.equal(await page.locator('.content-card > .worksheet-text').innerHTML(), previewHtml, 'Viewer and editor share exact renderer output');
+    const nextLabel = await page.evaluate(async () => (await import('/server/app/i18n/index.js')).t('viewer.navigation.nextSection'));
+    await clickViewerAction(page, nextLabel);
     await page.locator('.question-card__prompt-label h3').waitFor();
     await assertVisibleHeading(page.locator('.question-card__prompt-label h3'));
     await assertVisibleHeading(page.locator('.question-card__prompt-label h2'));
@@ -137,7 +138,7 @@ try {
     assert.deepEqual(typography.plain, typography.markdown, 'Legacy and Markdown prompts share typography');
     assert.equal(typography.markdown[2], '500');
     assert.equal(typography.bold, '700'); assert.equal(typography.heading, '700');
-    await page.locator('.question-card > textarea:not(.question-card__review-status)').fill('**Literal learner answer**');
+    await page.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').fill('**Literal learner answer**');
     await page.evaluate(() => window.viewerSession.completeLocalAttempt());
     // Session completion notifies state; the prompt stays formatted and the answer stays literal.
     await page.waitForFunction(() => window.viewerSession.state.status === 'completed');

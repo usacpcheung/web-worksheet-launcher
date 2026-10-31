@@ -656,6 +656,22 @@ export default {
     }
   },
   "viewer": {
+    navigation: {
+      "actions": "Worksheet actions",
+      "browse": "Browse worksheet",
+      "previousSection": "Previous section",
+      "nextSection": "Next section",
+      "previousPage": "Previous page",
+      "nextPage": "Next page",
+      "page": "{page} / {total}",
+      "question": "Question {number}",
+      "reading": "Reading {number}",
+      "currentQuestion": "Question",
+      "currentReading": "Reading",
+      "location": "Current: {section}",
+      "answered": "Answered",
+      "unanswered": "Not answered"
+},
     "packageLoad": {
       "checking": "Checking sign-in…",
       "downloading": "Downloading…",
