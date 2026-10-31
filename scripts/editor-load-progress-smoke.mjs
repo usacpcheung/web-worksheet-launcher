@@ -20,6 +20,8 @@ const server = createServer(async (req, res) => {
   const path = new URL(req.url, 'http://localhost').pathname;
   const json = data => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ ok: true, data })); };
   if (path.endsWith('/session')) {
+    // Exercise cached list rows while a fresh session preflight is still pending.
+    await new Promise(resolve => setTimeout(resolve, 200));
     if (mode === 'session-stalled') { pendingSession = res; return; }
     return json({ user: { sub: 'fixture' } });
   }
@@ -70,7 +72,17 @@ try {
       assert.match(await page.title(), /editor/i);
       const openList = async () => {
         if (!(await page.locator('.editor-more-actions').evaluate(element => element.open))) await page.locator('.editor-more-actions > summary').click();
-        await page.getByRole('button', { name: labels[source === 'published' ? 'editor.published.browse' : 'editor.uploadedDraft.manage'], exact: true }).click();
+        // Cached rows can appear before the opening refresh completes. Finish that
+        // request before changing fixture mode to stall the package's session check.
+        const listPath = source === 'published' ? '/published' : '/drafts';
+        const [response] = await Promise.all([
+          page.waitForResponse(response => new URL(response.url()).pathname.endsWith(listPath) && response.request().method() === 'GET'),
+          page.getByRole('button', { name: labels[source === 'published' ? 'editor.published.browse' : 'editor.uploadedDraft.manage'], exact: true }).click(),
+        ]);
+        assert.equal(response.status(), 200);
+        assert.equal(await response.finished(), null);
+        if (source === 'uploaded') await page.waitForFunction(() => !window.editorSession.state.isLoadingUploadedDrafts);
+        await page.locator(`[data-editor-package-load="${source}:one"]`).waitFor();
       };
       await openList();
       await page.locator(`[data-editor-package-load="${source}:one"]`).waitFor();
