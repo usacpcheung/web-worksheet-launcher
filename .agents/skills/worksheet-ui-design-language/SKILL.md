@@ -154,7 +154,7 @@ for an inline question grid also no longer define the selected chooser.
 
 ### Motion and interaction stability
 
-- Preserve the chosen blur-to-clear treatment together with prompt/media slides
+- Keep entering content sharp (no blur), together with prompt/media slides
   and staggered answer/option movement. They are separate presentation effects.
 - Begin entry effects while content enters the viewport and settle before the
   reading line. Reveal lower elements of long questions when those elements enter.
