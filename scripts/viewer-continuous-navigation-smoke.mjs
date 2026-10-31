@@ -138,7 +138,50 @@ try {
   await jump(1);
   await section('q1').locator('.question-card__voice-btn').click();
   await page.waitForFunction(() => window.viewerSession.voice.active?.state === 'recording');
+  // Acceptance investigation: opening the operation panel and elapsed-time updates
+  // must not select the leading reading or stop capture without user navigation.
+  await page.waitForTimeout(1800);
+  assert.equal(await current(), 'q1', 'idle recording retains its originating section');
+  assert.equal(await page.evaluate(() => window.viewerSession.voice.active?.state), 'recording');
+  // The recording panel must not move the reading line into the previous section.
+  // A real small wheel gesture exposes the deferred geometry transition that idle
+  // and large-departure checks cannot catch.
+  await page.mouse.move(width / 2, 100);
+  const beforeSmallWheel = await page.evaluate(() => scrollY);
+  await page.mouse.wheel(0, 8);
+  await page.waitForFunction(y => scrollY > y + 1, beforeSmallWheel);
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const recordingGeometry = await page.evaluate(() => ({
+   current: window.viewerSession.state.lastActiveBlockId,
+   state: window.viewerSession.voice.active?.state,
+   questionTop: document.querySelector('[data-block-id="q1"]').getBoundingClientRect().top,
+   panelTop: document.querySelector('.viewer-operation-panel').getBoundingClientRect().top,
+   height: innerHeight,
+  }));
+  assert.equal(await current(), 'q1', 'small downward scroll must not reverse to preceding reading: ' + JSON.stringify(recordingGeometry));
+  assert.equal(await page.evaluate(() => window.viewerSession.voice.active?.state), 'recording');
+  // Growing the panel and explicitly realigning Q1 must use the same reading
+  // geometry. Small reverse movement within Q1 must also retain capture.
+  await page.locator('.viewer-operation-panel').evaluate(node => { node.style.minHeight = '260px'; });
+  await jump(1);
+  await page.mouse.move(width / 2, 100);
+  const realignedY = await page.evaluate(() => scrollY);
+  await page.mouse.wheel(0, 8);
+  await page.waitForFunction(y => scrollY > y + 1, realignedY);
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await current(), 'q1', 'panel resize and explicit alignment preserve the reading line');
+  assert.equal(await page.evaluate(() => window.viewerSession.voice.active?.state), 'recording');
+  const forwardY = await page.evaluate(() => scrollY);
+  await page.mouse.wheel(0, -4);
+  await page.waitForFunction(y => scrollY < y - 1, forwardY);
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await current(), 'q1', 'small reverse movement remains inside Q1');
+  assert.equal(await page.evaluate(() => window.viewerSession.voice.active?.state), 'recording');
+  await page.locator('.viewer-operation-panel').evaluate(node => { node.style.minHeight = ''; });
+  await section('intro').evaluate(node => { node.style.paddingBottom = '150px'; });
   await page.setViewportSize({ width, height: 780 });
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await current(), 'q1', 'layout and viewport changes do not navigate during recording');
   assert.equal(await page.evaluate(() => window.viewerSession.voice.active?.state), 'recording');
   await page.mouse.move(width / 2, 100);
   await page.mouse.wheel(0, await section('reading').evaluate(el => el.getBoundingClientRect().top - 100));
@@ -148,6 +191,27 @@ try {
   await page.locator('.viewer-operation-panel button').last().click();
   releaseRewrite();
   await page.waitForFunction(() => !window.viewerSession.voice.active);
+  // A genuine reverse boundary crossing still stops recording; successful late
+  // processing remains with Q1 and must not pull the student back from reading.
+  // Resolve the previous canceled operation through its real recovery UI first.
+  await jump(1);
+  await section('q1').locator('.viewer-voice-recovery-actions button').last().click();
+  await page.locator('#answer-q1').fill('');
+  ready = new Promise(resolve => { requestStarted = resolve; });
+  await jump(1);
+  await section('q1').locator('.question-card__voice-btn').click();
+  await page.waitForFunction(() => window.viewerSession.voice.active?.state === 'recording');
+  await page.mouse.move(width / 2, 100);
+  await page.mouse.wheel(0, -100);
+  await page.waitForFunction(() => window.viewerSession.state.lastActiveBlockId === 'intro');
+  await ready;
+  const beforeReverseCompletion = await page.evaluate(() => ({ y: scrollY, focus: document.activeElement.id }));
+  releaseRewrite();
+  await page.waitForFunction(() => !window.viewerSession.voice.active);
+  assert.equal(await current(), 'intro');
+  assert.equal(await page.locator('#answer-q1').inputValue(), 'Rewritten original answer');
+  assert.equal(await page.locator('#answer-q2').inputValue(), 'Typing in second answer');
+  assert.deepEqual(await page.evaluate(() => ({ y: scrollY, focus: document.activeElement.id })), beforeReverseCompletion);
   // Short final section remains reachable; resume restores identity and position.
   await jump(3);
   await page.mouse.move(width / 2, 100);

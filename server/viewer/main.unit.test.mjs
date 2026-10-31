@@ -309,7 +309,7 @@ async function loadViewerModule(overrides = {}) {
   globalThis.document = globalThis[bagName].document;
   globalThis.window = globalThis[bagName].window;
 
-  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource.replace(/from '(\.\/(?:answer-(?:voice-workflow|voice-ui)|package-load-progress|block-view-host|section-navigation|worksheet-navigation)\.js)'/g, (_, path) => 'from ' + JSON.stringify(new NodeURL(path, import.meta.url).href)))}`;
+  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource.replace(/from '(\.\/(?:answer-(?:voice-workflow|voice-ui)|package-load-progress|block-view-host|section-navigation|worksheet-navigation|entry-motion)\.js)'/g, (_, path) => 'from ' + JSON.stringify(new NodeURL(path, import.meta.url).href)))}`;
   return import(dataUrl);
 }
 
@@ -1632,9 +1632,26 @@ test('single-track viewer audio control plays directly and exposes a neutral Sto
   assert.equal(control.classList.contains('is-playing'), false);
 });
 
-test('multi-track viewer audio menus order languages, close predictably, and play the selected track', async () => {
+test('multi-track viewer audio menus order languages, close predictably, and play the selected track', async (context) => {
   const document = createMockDocument();
-  const mod = await loadViewerModule({ document });
+  // Browser geometry is exercised by the Chromium fixture; supply the DOM APIs
+  // needed to retain this independent playback, dismissal and focus contract test.
+  document.documentElement = { clientWidth: 1280 };
+  const createElement = document.createElement;
+  document.createElement = tag => Object.assign(createElement(tag), {
+    style: {}, scrollHeight: 120, offsetHeight: 120, clientHeight: 120,
+    getBoundingClientRect: () => ({ top: 100, bottom: 144, left: 100, right: 284, width: 184, height: 120 }),
+  });
+  for (const [name, value] of Object.entries({
+    innerWidth: 1280, innerHeight: 900,
+    ResizeObserver: class { observe() {} disconnect() {} },
+    cancelAnimationFrame() {},
+  })) {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
+    Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
+    context.after(() => { if (descriptor) Object.defineProperty(globalThis, name, descriptor); else delete globalThis[name]; });
+  }
+  const mod = await loadViewerModule({ document, window: new EventTarget() });
   const played = [];
   const session = {
     playAssetAudio: async (assetId, hooks) => {

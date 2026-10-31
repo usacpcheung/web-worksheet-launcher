@@ -1284,6 +1284,9 @@ body {
 }
 
 .viewer-audio-control__menu {
+  box-sizing: border-box;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
@@ -3005,4 +3008,11 @@ html:has(.viewer-navigation dialog[open]) {
 .viewer-shell--continuous .viewer-audio-control--question .viewer-audio-control__menu {
   left: 0;
   right: auto;
+}
+
+@media print, (prefers-reduced-motion: reduce) {
+  .viewer-shell--continuous #viewer-answer-form [data-viewer-entry] {
+    filter: none !important;
+    transform: none !important;
+  }
 }
