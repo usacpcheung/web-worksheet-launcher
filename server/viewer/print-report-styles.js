@@ -169,6 +169,28 @@ export const PRINT_REPORT_CSS = `
       break-inside: avoid;
     }
 
+    /* Keep captions and images on separate rows. Images must never consume
+       the flex space reserved for text in the legacy text-only choices. */
+    .print-choice--image {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) 3mm;
+      align-items: start;
+    }
+    .print-choice--image .print-choice-prefix { grid-column: 1; grid-row: 1; }
+    .print-choice--image .print-choice-label { grid-column: 2; grid-row: 1; }
+    .print-choice--image .print-choice-mark { grid-column: 3; grid-row: 1; }
+    .print-option-image, .print-option-image-unavailable { grid-column: 2; grid-row: 2; }
+    .print-option-image {
+      display: block;
+      max-width: 100%;
+      max-height: 35mm;
+      width: auto;
+      height: auto;
+      object-fit: contain;
+      justify-self: start;
+    }
+    .print-option-image-unavailable { overflow-wrap: anywhere; }
+
     .print-choice-label {
       flex: 1;
       min-width: 0;

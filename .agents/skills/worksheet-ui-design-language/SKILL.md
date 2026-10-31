@@ -141,6 +141,12 @@ for an inline question grid also no longer define the selected chooser.
 - Keep MC answer surfaces equal in width, including options without audio. Keep
   option letters plain and consistent. Reserve a consistent audio-control column;
   single-track and multi-track triggers have the same outer dimensions.
+- MC options may contain text, an image, or both. Image questions use full-width
+  answer areas, two equal columns on desktop and one on mobile, with contained
+  96px image areas. Clicking the image selects; a separate magnifier enlarges
+  without selecting. Keep audio separate and restore focus when closing zoom.
+  Optional image descriptions are alternative text, not captions or T2A sources.
+  Editor attachment strips retain the existing option row and answer controls.
 - Preserve deterministic option shuffling, stable option values and their media
   associations. Display letters are presentation, never answer identities.
 - Keep True/False controls equal in width, with their existing pale green/red

@@ -328,7 +328,7 @@ test('uploadAttempt validator accepts checking block ids from worksheet.blockId 
   assert.equal(result.statusCode, 201);
 });
 test('unsupported text formats and disguised Markdown attempts reject before database or artifact writes', async () => {
-  for (const [packageVersion, format] of [[1, 'limited-markdown-v1'], [2, 'future'], [3, 'plain_text']]) {
+  for (const [packageVersion, format] of [[1, 'limited-markdown-v1'], [2, 'future'], [4, 'plain_text']]) {
     let writes = 0;
     const service = createService({ db: { connect: async () => { writes += 1; throw new Error('Unexpected database access'); } },
       artifactStore: { storeArtifact: async () => { writes += 1; } } });

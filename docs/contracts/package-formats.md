@@ -6,10 +6,12 @@ Reviewed against main `7bb19de` on 2026-10-06. Code authorities: `server/editor/
 
 | Content | Manifest `format` | Current export version / schema | Accepted compatibility |
 | --- | --- | --- | --- |
-| Plain worksheet with audio tracks | `worksheet-package` | 2 / 2 | Worksheet versions 1, 2 and 3 are read; legacy JSON remains a separate import adapter. |
+| Plain worksheet with audio tracks | `worksheet-package` | 2 / 2 | Worksheet versions 1, 2, 3 and 4 are read; legacy JSON remains a separate import adapter. |
 | Worksheet containing limited Markdown | `worksheet-package` | 3 / 3 | Markdown in version 1/2 envelopes is rejected. |
-| Plain worksheet attempt | `worksheet-attempt-package` | 1 / 1 | Attempt version 1 and 2 are read. |
+| Plain worksheet attempt | `worksheet-attempt-package` | 1 / 1 | Attempt versions 1, 2 and 3 are read. |
 | Attempt containing limited Markdown | `worksheet-attempt-package` | 2 / 1 | Markdown in version 1 attempt envelopes is rejected. |
+| Worksheet containing option images | `worksheet-package` | 4 / 4 | Also supports limited Markdown; older readers reject this envelope. |
+| Attempt containing option images | `worksheet-attempt-package` | 3 / 1 | Also supports limited Markdown; older readers reject this envelope. |
 | RolePlayScene | `roleplayscene-package` | 1 | Browser imports also accept plain project JSON and legacy root `project.json` ZIPs; server draft upload requires the current package envelope. |
 
 Worksheet/attempt ZIP helpers support stored (uncompressed) entries and validate entry sizes, CRCs and duplicate names. RolePlayScene uses bundled `fflate` archive reading and has separate API decompression resource limits; do not generalize its compression support to worksheet ZIP import.
@@ -68,3 +70,28 @@ See [scene identity/names](../roleplayscene/roleplayscene-scene-names.md), [voic
 ## Publication metadata and immutability
 
 API upload/publish requests send ZIP bytes or an uploaded-draft UUID. Publish-time listing title/subject/description overrides do not rewrite embedded ZIP content. Ordinary upload metadata can also differ from embedded content, but draft conflict-copy recovery is an exception: a generated copy title is rewritten into the newly stored worksheet or RolePlayScene ZIP. Attempt conflict-copy recovery changes its listing title without rewriting the ZIP. These operations leave the conflicting original artifact intact. Artifacts receive separate server SHA-256 and size metadata; that hash is distinct from per-entry CRCs and viewer content fingerprints. New publication IDs do not mutate existing artifacts. Deleting a source draft preserves its publication; reopening a publication for authoring creates a local editable copy.
+
+## Multiple-choice option images
+
+An option may contain text, one image, or both. Audio alone is insufficient. Images use
+`options[].mediaRefs: [{ usage: "option_image", assetId }]`, backed by a manifest image
+asset with usage `option_image`. Supported files are PNG, JPEG and WebP, up to 8 MB.
+Optional `imageDescription` is plain alternative text limited to 200 Unicode code points;
+it is not a visible caption or an audio-generation source. Empty `label` explicitly means
+image-only. Stable nonempty `value` identifies the answer; captions must not replace that
+identity when editing an image option. Correct answers, shuffle and attempt answers use
+that same value.
+
+The editor preserves incomplete local drafts but requires text or an image for every
+option before packaging. Replacement clears the old image description. Removing an image
+preserves the option's text and audio; an empty result requires repair. Package assets
+survive publication, editor import, attempt export/resume and printing. Existing packages
+without option images keep their previous envelope versions.
+
+When any option has an image, the viewer uses two columns on desktop and one on mobile,
+with equal cards and 96px contained image areas. Clicking the card/image selects an answer;
+the separate magnifier opens an accessible modal without changing the answer. Audio remains
+a separate control. Completed-review enlargement and printed images are supported.
+
+Deploy the updated API parser together with editor/viewer assets and restart the API.
+No database migration is required. RolePlayScene package formats are unchanged.

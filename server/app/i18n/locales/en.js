@@ -1,6 +1,7 @@
 import roleplayscene from './roleplayscene/en.js';
 
 export default {
+  optionImages: {"imageAlt": "Option {option} image", "enlarge": "Enlarge option {option} image", "unavailable": "Image unavailable", "manage": "Add or manage option image", "description": "Image description (optional)", "descriptionHelp": "For screen readers or unavailable images. Not a visible caption or audio source. Recommended for image-only options.", "count": "{count} / 200 characters", "placeholder": "Option text — optional with an image", "required": "Each option needs text or an image.", "replace": "Replace this option image? Its description will be cleared.", "remove": "Remove this option image? Text and audio will be kept.", "preview": "Preview this question"},
   mutationAuth: {
     upload: 'Upload',
     publish: 'Publish',
