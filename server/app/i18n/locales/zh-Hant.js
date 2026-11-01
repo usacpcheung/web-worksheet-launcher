@@ -1,6 +1,7 @@
 import roleplayscene from './roleplayscene/zh-Hant.js';
 
 export default {
+  optionImages: {"imageAlt": "選項 {option} 圖片", "enlarge": "放大選項 {option} 圖片", "unavailable": "圖片無法顯示", "manage": "加入或管理選項圖片", "description": "圖片描述（選填）", "descriptionHelp": "供螢幕閱讀器或圖片無法顯示時使用。不會顯示為選項文字或自動產生音訊。只有圖片的選項，建議填寫。", "count": "{count} / 200 字", "placeholder": "選項文字 — 附有圖片時可留空", "required": "每個選項需要文字或圖片。", "replace": "更換此選項圖片？原有圖片描述將會清除。", "remove": "移除此選項圖片？文字及音訊將會保留。", "preview": "預覽這一題"},
   mutationAuth: {
     upload: '上傳',
     publish: '發佈',

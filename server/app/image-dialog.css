@@ -1,0 +1,7 @@
+.worksheet-image-dialog{box-sizing:border-box;width:min(900px,calc(100vw - 24px));max-width:none;max-height:calc(100dvh - 24px);padding:20px;border:1px solid #d2e0f1;border-radius:14px;background:#fff;color:#253c59;box-shadow:0 20px 70px #132c4733;overflow:auto}
+.worksheet-image-dialog::backdrop{background:#152d4d99}
+.worksheet-image-dialog header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:16px}
+.worksheet-image-dialog h2{font:600 18px/1.5 'Worksheet Chinese',system-ui,sans-serif;margin:0}
+.worksheet-image-dialog img{display:block;max-width:100%;max-height:70dvh;width:auto;height:auto;object-fit:contain;margin:auto}
+.worksheet-image-close{flex:none;width:44px;height:44px;border:1px solid #d2dfef;border-radius:50%;background:#fff;color:#48678e;font-size:26px;cursor:pointer}
+@media print{.worksheet-image-dialog{display:none!important}}

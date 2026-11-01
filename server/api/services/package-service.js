@@ -48,7 +48,7 @@ function validateUploadedAttemptPackage(zipBytes) {
     const manifestJson = JSON.parse(decodeUtf8(manifest));
     const worksheetJson = JSON.parse(decodeUtf8(worksheet));
     const attemptJson = JSON.parse(decodeUtf8(attempt));
-    assertAttemptPackage(manifestJson, worksheetJson, attemptJson);
+    assertAttemptPackage(manifestJson, worksheetJson, attemptJson, { files });
     return { ok: true, attempt: attemptJson };
   } catch (error) {
     return { ok: false, error: { code: 'INVALID_ATTEMPT_PACKAGE', message: 'Uploaded attempt package is invalid or corrupted.', details: { reason: error?.message || 'validation failed' } } };

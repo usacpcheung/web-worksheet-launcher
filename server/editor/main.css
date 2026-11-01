@@ -1,3 +1,4 @@
+@import url('../app/image-dialog.css');
 @import url('../app/fonts/worksheet-chinese.css');
 
 :root {
@@ -2006,3 +2007,16 @@ textarea.control {
 
 /* Flex button styling must not override the pending-action visibility flag. */
 .media-action-btn[hidden] { display: none; }
+.option-row{grid-template-columns:38px minmax(220px,1fr) 38px auto 38px}
+.editor-option-image-button.is-attached{color:#1d4ed8;border-color:#93c5fd;background:#eff6ff}
+.editor-option-image-attachment{grid-column:2/-1;display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:10px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px;min-width:0}
+.editor-option-image-attachment>img{width:72px;height:54px;object-fit:contain;background:white;border-radius:4px}
+.editor-option-image-description{flex:0 0 100%;min-width:0;display:grid;grid-template-columns:1fr auto;gap:6px;border-top:1px solid #e0e7f0;padding-top:10px}
+.editor-option-image-description label,.editor-option-image-description textarea,.editor-option-image-description p{grid-column:1/-1}
+.option-row .editor-option-image-description textarea.control{width:100%;min-width:0;box-sizing:border-box;resize:vertical}
+.editor-option-image-description span{text-align:right;grid-column:2}
+.editor-option-image-description p{margin:0}
+@media(max-width:640px){.option-row{grid-template-columns:38px minmax(0,1fr) 38px auto 38px}}
+.editor-option-footer{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
+.editor-option-preview-dialog{width:min(960px,calc(100vw - 24px));max-width:none;max-height:calc(100dvh - 24px);overflow:auto;border:1px solid #cbd5e1;border-radius:12px;padding:18px;background:white}
+.editor-option-preview-dialog::backdrop{background:#152d4d99}
