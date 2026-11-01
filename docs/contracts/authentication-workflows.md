@@ -221,3 +221,16 @@ never opens login or repeats generation automatically. Draft identity, target,
 source text, language-track identity and cancellation remain guarded throughout.
 Same-tab fallback preserves local work and returns a retry message; it does not
 replay generation. Viewer and RolePlayScene provider workflows are unchanged.
+
+
+### Slow popup sign-in and opener isolation
+
+The shared popup flow retains the existing 60-second hard deadline and 1-second
+poll interval. Its initial 15-second window is not the end of sign-in: pending
+authentication and bounded probe timeouts continue with fresh session probes until
+that deadline, even if COOP severs the popup handle or no callback arrives.
+Origin, source-window and flow-token checks on callbacks remain unchanged. A
+fresh authenticated session response is required; neither a popup message nor a
+closed-window signal authenticates the user. Cancellation/deadline cleanup stops
+probes and ignores late callbacks. Product-specific post-login continuation stays
+unchanged, including explicit editor Generate audio/Cancel and no provider replay.

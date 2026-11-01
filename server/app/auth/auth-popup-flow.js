@@ -213,6 +213,7 @@ function startAuthPopupFlow(options = {}) {
   };
 
   const normalizedHardDeadlineMs = Math.max(0, Number(hardDeadlineMs) || 0);
+  const deadlineAt = normalizedHardDeadlineMs > 0 ? Date.now() + normalizedHardDeadlineMs : null;
   if (normalizedHardDeadlineMs > 0) {
     hardDeadlineTimer = setTimeout(() => {
       if (completed || cancelled) return;
@@ -236,52 +237,49 @@ function startAuthPopupFlow(options = {}) {
     }, normalizedHardDeadlineMs);
   }
 
-  const pollingPromise = waitForSessionReady({
-    apiClient,
-    intervalMs: pollIntervalMs,
-    timeoutMs: pollTimeoutMs,
-    signal: probeController.signal,
-    shouldContinue: sharedShouldContinue,
-  });
-
-  pollingPromise
-    .then(async (result) => {
+  // Poll in bounded windows until the existing hard deadline. OIDC/COOP may
+  // sever the opener handle and suppress postMessage; neither popup.closed nor
+  // a missing callback proves that the user's sign-in has failed.
+  const pollingPromise = (async () => {
+    let waitingReported = false;
+    while (!completed && !cancelled) {
+      const remainingMs = deadlineAt === null ? probeTimeoutMs : deadlineAt - Date.now();
+      if (remainingMs <= 0) return; // The hard-deadline timer owns finalization.
+      const result = await waitForSessionReady({
+        apiClient,
+        intervalMs: pollIntervalMs,
+        timeoutMs: Math.min(probeTimeoutMs, remainingMs),
+        signal: probeController.signal,
+        shouldContinue: sharedShouldContinue,
+      });
       if (completed || cancelled) return;
-
       if (result.ok && result.status === 'ready') {
         await finalize(result);
         return;
       }
-
-      if (result.cancelled || cancelled) {
-        await finalize({
-          ...result,
-          waitingForCallback: false,
-          final: true,
-        });
+      if (result.cancelled) {
+        await finalize({ ...result, waitingForCallback: false, final: true });
         return;
       }
-
-      const popupOpen = authPopupWindow && authPopupWindow.closed !== true;
-      const canWaitForCallback = Boolean(popupOpen);
-
-      const isTimedOutAuthNotReady = result.timedOut && result.status === 'not_ready';
-      if (isTimedOutAuthNotReady && canWaitForCallback) {
+      const canKeepWaiting = result.timedOut && (result.status === 'not_ready'
+        || result.error?.code === 'SESSION_PROBE_TIMEOUT');
+      if (!canKeepWaiting) {
+        await finalize({ ...result, waitingForCallback: false, final: true });
+        return;
+      }
+      if (!waitingReported) {
+        waitingReported = true;
         onStatusMessage(t('apiErrors.popupWaiting'), 'waiting');
-        await invokeCallbackSafely(
-          onSessionNotReady,
-          { ...result, waitingForCallback: true, final: false },
-          'onSessionNotReady'
-        );
-        return;
+        await invokeCallbackSafely(onSessionNotReady,
+          { ...result, waitingForCallback: true, final: false }, 'onSessionNotReady');
       }
+      // Explicitly disabled deadlines retain callback-only waiting rather than
+      // introducing an unbounded background polling loop.
+      if (deadlineAt === null) return;
+    }
+  })();
 
-      await finalize({
-        ...result,
-        waitingForCallback: false,
-        final: true,
-      });
-    })
+  pollingPromise
     .catch((error) => {
       if (completed || cancelled) return;
       void finalize({
