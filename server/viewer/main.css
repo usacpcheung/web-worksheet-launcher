@@ -3184,6 +3184,16 @@ body:has(.viewer-shell--continuous) #app {
   transform:none;
 }
 
+/* On narrow/short viewports the utility controls move to the header's left.
+   Open toward the worksheet instead of retaining the right-anchored menu. */
+.viewer-shell--continuous .viewer-header .language-selector__menu {
+  left:0;
+  right:auto;
+  box-sizing:border-box;
+  min-width:min(176px, calc(100vw - 64px));
+  max-width:calc(100vw - 64px);
+}
+
 .viewer-action-panel .language-selector__menu {
   left:0;
   right:auto;

@@ -59,6 +59,24 @@ try {
     await page.locator('.question-card').evaluate(async el => { await Promise.all(el.getAnimations().map(a => a.finished)); });
     await page.evaluate(() => document.fonts.ready);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, 'Viewer header fits narrow screens');
+    // The language trigger moves between the desktop panel and mobile header.
+    // Check an already-open menu while crossing both width and height breakpoints.
+    const language = page.locator('.language-selector--icon');
+    await language.locator('summary').click();
+    for (const viewport of [{ width:320, height:900 }, { width:768, height:900 }, { width:1280, height:600 }, { width:1280, height:900 }]) {
+      await page.setViewportSize(viewport);
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await language.scrollIntoViewIfNeeded();
+      const bounds = await language.locator('.language-selector__menu').boundingBox();
+      assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= viewport.width,
+        `Language menu stays inside ${viewport.width}x${viewport.height} viewport`);
+      assert.equal(await language.locator('.language-selector__option').count(), 2);
+      assert.equal(await language.locator('[aria-pressed="true"]').count(), 1);
+    }
+    await language.locator('[aria-pressed="true"]').click();
+    assert.equal(await language.getAttribute('open'), null, 'Selecting the current language closes the menu');
+    await page.setViewportSize({ width, height:900 });
+
     await page.evaluate(() => {
       const sample = document.createElement('span'); sample.id = 'font-test'; sample.textContent = '香港文字'; document.body.append(sample);
     });
