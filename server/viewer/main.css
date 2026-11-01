@@ -3339,3 +3339,54 @@ html:has(.viewer-navigation dialog[open]) {
 @media print {
   .viewer-shell--continuous .content-card::before { display:none; }
 }
+
+/* Keep the answer, actions and guidance together without reserving empty rows. */
+.viewer-shell--continuous .viewer-answer-area:has(> textarea) { gap:8px; }
+.viewer-shell--continuous .viewer-answer-area > :is(.viewer-media-feedback, .input-error):empty { display:none; }
+.viewer-shell--continuous .question-card__text-footer { margin-top:-2px; gap:8px; }
+.viewer-shell--continuous .question-card__text-actions-row { width:100%; gap:8px; }
+.viewer-shell--continuous .question-card__text-actions-row > .text-counter { width:100%; text-align:right; }
+.viewer-shell--continuous .question-card__rewrite-row { width:100%; gap:8px; flex-wrap:wrap; }
+.viewer-shell--continuous .question-card__rewrite-row .icon-nav-btn {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+  min-height:44px;
+  box-sizing:border-box;
+  padding:9px 12px;
+  line-height:1.5;
+  background:#f8fafc;
+  color:#415873;
+  border-color:#d8e2ee;
+}
+.viewer-shell--continuous .question-card__rewrite-row .viewer-icon { width:17px; height:17px; flex:none; }
+.viewer-shell--continuous .question-card__rewrite-row .question-card__voice-btn {
+  background:#edf5ff;
+  border-color:#c9dcf6;
+  color:#2560a5;
+}
+.viewer-shell--continuous .question-card__rewrite-row .icon-nav-btn:disabled {
+  background:#f5f7fa;
+  border-color:#e3e9f0;
+  color:#8493a5;
+  cursor:default;
+}
+.viewer-shell--continuous .question-card__rewrite-messages { gap:4px; }
+.viewer-shell--continuous .question-card__rewrite-messages:not(:has(> :not(:empty))),
+.viewer-shell--continuous .question-card__rewrite-messages > :empty { display:none; }
+.viewer-shell--continuous .question-card__rewrite-hint { color:#64748b; }
+.viewer-shell--continuous .question-card__rewrite-hint.is-warning { color:#8a4b14; }
+.viewer-shell--continuous .question-card__text-footer .viewer-voice { margin:0; }
+.viewer-shell--continuous .question-card__text-footer .viewer-voice-hint { margin:0; line-height:1.65; }
+@media (hover:hover) {
+  .viewer-shell--continuous .question-card__rewrite-row .icon-nav-btn:hover:not(:disabled) {
+    background:#e7f0fc;
+    border-color:#afc9eb;
+    transform:none;
+  }
+}
+.viewer-shell--continuous .question-card__rewrite-row .icon-nav-btn:focus-visible {
+  outline:2px solid #256ac4;
+  outline-offset:3px;
+}

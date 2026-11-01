@@ -339,6 +339,9 @@ function normalizeUploadedAttemptRows(list) {
 function createViewerIcon(name) {
   const svgAttrs = 'class="viewer-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"';
   const icons = {
+    voice: `<svg ${svgAttrs}><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"></path></svg>`,
+    rewrite: `<svg ${svgAttrs}><path d="m14 4 6 6M4 20l4-1L21 6a2 2 0 0 0-3-3L5 16l-1 4Z"></path></svg>`,
+    undo: `<svg ${svgAttrs}><path d="M9 5 4 10l5 5M4 10h10a6 6 0 0 1 0 12"></path></svg>`,
     back: `<svg ${svgAttrs}><path d="m12 19-7-7 7-7"></path><path d="M5 12h14"></path></svg>`,
     info: `<svg ${svgAttrs}><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>`,
     upload: `<svg ${svgAttrs}><path d="M12 15V3"></path><path d="m7 8 5-5 5 5"></path><path d="M5 21h14"></path></svg>`,
@@ -6636,6 +6639,13 @@ function renderViewerShell(session) {
         rewriteHint.className = 'question-card__rewrite-hint';
         const rewriteError = document.createElement('p');
         rewriteError.className = 'question-card__rewrite-error';
+        for (const [button, icon] of [[voiceUi.add, 'voice'], [rewriteButton, 'rewrite'], [undoButton, 'undo']]) {
+          const caption = document.createElement('span');
+          caption.className = 'viewer-action-label';
+          caption.textContent = button.textContent;
+          button.replaceChildren(caption);
+          button.insertAdjacentHTML('afterbegin', createViewerIcon(icon));
+        }
         rewriteRow.append(voiceUi.add, rewriteButton, undoButton);
         rewriteMessages.append(textStatus, rewriteHint, rewriteError);
         textActionsRow.append(textCounter, rewriteRow);
@@ -6739,13 +6749,14 @@ function renderViewerShell(session) {
         const canRewrite = !isAttemptCompleted && !session.voice.active && !hasPendingRecovery(getVoiceRecovery(session.state.voiceRecovery, block.blockId)) && canRewriteByLength;
 
         if (rewriteButton) {
-          rewriteButton.textContent = isRewriteInFlight ? t('viewer.rewrite.inProgress') : t('viewer.rewrite.action');
+          rewriteButton.querySelector('.viewer-action-label').textContent = isRewriteInFlight ? t('viewer.rewrite.inProgress') : t('viewer.rewrite.action');
           rewriteButton.disabled = !canRewrite;
         }
         if (undoButton) {
           undoButton.disabled = isAttemptCompleted || Boolean(session.voice.active) || !hasUndoEntry;
         }
         if (rewriteHint) {
+          rewriteHint.classList.toggle('is-warning', trimmedAnswerLength > REWRITE_INPUT_LIMIT);
           if (trimmedAnswerLength === 0) {
             rewriteHint.textContent = t('viewer.rewrite.hintEnterText');
           } else if (trimmedAnswerLength > REWRITE_INPUT_LIMIT) {
