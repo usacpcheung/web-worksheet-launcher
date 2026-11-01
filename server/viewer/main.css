@@ -3255,3 +3255,77 @@ html:has(.viewer-navigation dialog[open]) {
 
 .viewer-shell--continuous .question-card:has(.choice-button-group--images){grid-template-columns:minmax(0,1fr)}
 .viewer-shell--continuous .question-card:has(.choice-button-group--images) .viewer-answer-area{grid-column:1;grid-row:auto}
+
+/* Content sections share the question-number gutter, without becoming questions. */
+.viewer-shell--continuous {
+  --viewer-card-inset:70px;
+  --viewer-marker-gap:36px;
+  --viewer-marker-size:36px;
+  --viewer-book-size:40px;
+  --viewer-marker-top:-9px;
+  --viewer-content-tint-top:28px;
+}
+.viewer-shell--continuous .viewer-header { padding-bottom:16px; }
+.viewer-shell--continuous .viewer-block-section:first-child > :is(.content-card, .question-card) {
+  padding-top:24px;
+  --viewer-content-tint-top:8px;
+}
+.viewer-shell--continuous .content-card { position:relative; isolation:isolate; }
+.viewer-shell--continuous .content-card > .worksheet-text > :first-child { margin-top:0; }
+.viewer-shell--continuous .content-card::before {
+  content:"";
+  position:absolute;
+  z-index:-1;
+  pointer-events:none;
+  /* Use the same tabular numeral metrics as the two-digit ordinal. */
+  font-size:var(--viewer-marker-size);
+  font-weight:500;
+  font-variant-numeric:tabular-nums;
+  top:var(--viewer-content-tint-top);
+  bottom:22px;
+  left:calc(var(--viewer-card-inset) - var(--viewer-marker-gap) - 2ch - 10px);
+  right:-12px;
+  border-radius:12px;
+  background:linear-gradient(145deg,#edf5ff 0%,#f7fbff 90px,#fff 240px);
+}
+.viewer-content-heading {
+  position:relative;
+  height:0;
+  font-size:var(--viewer-marker-size);
+  font-weight:500;
+  font-variant-numeric:tabular-nums;
+}
+.viewer-content-heading > .viewer-book-icon {
+  position:absolute;
+  top:var(--viewer-marker-top);
+  left:calc(0px - var(--viewer-marker-gap) - 2ch);
+  width:var(--viewer-book-size);
+  height:var(--viewer-book-size);
+  /* Align the visible stroke, not the SVG viewBox's empty left margin. */
+  transform:translateX(-4.8%);
+  color:var(--viewer-blue);
+}
+@media (max-width:900px), (max-height:650px) {
+  .viewer-shell--continuous {
+    --viewer-card-inset:36px;
+    --viewer-marker-gap:12px;
+    --viewer-marker-size:30px;
+    --viewer-book-size:34px;
+    --viewer-marker-top:-5px;
+    --viewer-content-tint-top:18px;
+  }
+  .viewer-shell--continuous .viewer-block-section { margin-inline:38px 28px; }
+  .viewer-shell--continuous .viewer-block-section:first-child > :is(.content-card, .question-card) { padding-top:20px; }
+}
+@media (max-width:600px) {
+  .viewer-shell--continuous {
+    --viewer-card-inset:18px;
+    --viewer-marker-gap:8px;
+    --viewer-marker-size:24px;
+    --viewer-book-size:28px;
+  }
+  .viewer-shell--continuous .viewer-block-section { margin-inline:43px 28px; }
+}
+@media print {
+  .viewer-shell--continuous .content-card::before { display:none; }
+}

@@ -20,7 +20,7 @@ import { createVoiceControls, createVoiceStatus } from './answer-voice-ui.js';
 import { createWorksheetViewHost, createBlockViewScope } from './block-view-host.js';
 import { createEntryMotion } from './entry-motion.js';
 import { createSectionNavigation } from './section-navigation.js';
-import { createWorksheetNavigation, describeSections, isAnsweredValue } from './worksheet-navigation.js';
+import { bookIcon, createWorksheetNavigation, describeSections, isAnsweredValue } from './worksheet-navigation.js';
 import { viewerStorage } from './storage/index.js';
 import { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';
 import { validateViewerPayloadSchema } from '../app/contracts/validators.js';
@@ -1980,6 +1980,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
   const sectionsHtml = (reportModel.sections || reportModel.questions || []).map((question) => {
     if (question.kind === 'content') return `
       <article class="print-content" data-block-id="${escapeHtml(question.blockId)}" aria-label="${escapeHtml(question.label)}">
+        <span class="print-content-icon" aria-hidden="true">${bookIcon}</span>
         <div class="print-content-text worksheet-text">${renderWorksheetText(question.content)}</div>
       </article>`;
     const imageHtml = question.image?.status === 'ready' && question.image?.src
@@ -6233,7 +6234,11 @@ function renderViewerShell(session) {
       heading.textContent = sectionLabels.get(block.blockId);
       const body = document.createElement('div');
       setWorksheetText(body, currentBlock.content);
-      card.append(heading, body);
+      const marker = document.createElement('div');
+      marker.className = 'viewer-content-heading';
+      marker.setAttribute('aria-hidden', 'true');
+      marker.innerHTML = bookIcon;
+      card.append(heading, marker, body);
       return { element: card, update() {}, dispose: scope.dispose };
     }
 

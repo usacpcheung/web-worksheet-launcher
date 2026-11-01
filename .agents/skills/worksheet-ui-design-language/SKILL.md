@@ -133,6 +133,11 @@ for an inline question grid also no longer define the selected chooser.
 
 ### Visual language and controls
 
+- Give viewer content blocks the navigation book icon in the question-number
+  gutter and a very pale blue gradient that fades toward white. Keep the icon
+  decorative, preserve question numbering, and omit the gradient in print.
+  Leave breathing room around this gutter on narrow screens. The first content
+  block or question uses a smaller opening gap below the worksheet header.
 - Use Version C's cooler blue accent and pale blue canvas with white reading
   surfaces. Retain semantic success, warning, error and existing True/False
   colors; labels and state indicators must work without color alone.

@@ -134,6 +134,26 @@ export const PRINT_REPORT_CSS = `
       min-width: 0;
     }
 
+    .print-content-icon {
+      display:block;
+      position:relative;
+      height:0;
+      font-size:22pt;
+      font-weight:500;
+      font-variant-numeric:tabular-nums;
+      color:#256ac4;
+    }
+    .print-content-icon > .viewer-book-icon {
+      position:absolute;
+      left:calc(-3mm - 2ch);
+      top:-1.5mm;
+      width:24pt;
+      height:24pt;
+      transform:translateX(-4.8%);
+    }
+
+    .print-content-text > :first-child { margin-top:0; }
+
     .print-content-text {
       overflow-wrap: anywhere;
       line-height: 1.8;
