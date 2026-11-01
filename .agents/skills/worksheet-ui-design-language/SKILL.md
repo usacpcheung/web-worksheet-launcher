@@ -147,6 +147,7 @@ for an inline question grid also no longer define the selected chooser.
   without selecting. Keep audio separate and restore focus when closing zoom.
   Optional image descriptions are alternative text, not captions or T2A sources.
   Editor attachment strips retain the existing option row and answer controls.
+  Preview uses the existing same-tab whole-worksheet viewer, not an MC-only dialog.
 - Preserve deterministic option shuffling, stable option values and their media
   associations. Display letters are presentation, never answer identities.
 - Keep True/False controls equal in width, with their existing pale green/red
@@ -263,3 +264,5 @@ Before finishing UI work:
 - Evaluate representative large worksheets when continuous rendering is introduced,
   before adding motion. Record package sizes, media volume, load/scroll/input
   responsiveness and resource cleanup; repeat affected checks after animation.
+
+Prompt audio belongs at the top-right of the prompt text area, in a reserved column without overlap. Supported Markdown heading levels are H2–H4; H5/H6 syntax stays literal. Do not derive authored-content typography from interface locale.

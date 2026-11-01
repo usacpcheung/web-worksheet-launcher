@@ -68,7 +68,7 @@ function parse(source) {
     if (fenceStart) { flush(); fence = fenceStart[1]; nodes.push({ tag: 'p', children: [textNode(line)] }); continue; }
     if (!line.trim()) { flush(); nodes.push(line ? { tag: 'p', children: [textNode(line)] } : { tag: 'br' }); continue; }
     if (/^(?:[-*_][ \t]*){3,}$/.test(line)) { flush(); nodes.push({ tag: 'p', children: [textNode(line)] }); continue; }
-    const heading = line.match(/^(#{2,6})[ \t]+(.+)$/);
+    const heading = line.match(/^(#{2,4})[ \t]+(.+)$/);
     const quote = line.match(/^>[ \t]+(.*)$/);
     const bullet = line.match(/^- +(?!\[[ xX]\] )(.*)$/);
     const numbered = line.match(/^(\d{1,9})\. +(.*)$/);
@@ -89,7 +89,7 @@ function parse(source) {
 }
 
 const escapeHtml = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const TAGS = new Set(['p', 'br', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'blockquote', 'strong', 'em']);
+const TAGS = new Set(['p', 'br', 'h2', 'h3', 'h4', 'ul', 'ol', 'li', 'blockquote', 'strong', 'em']);
 // Strict output allowlist: only generated nodes reach serialization; input HTML is always text.
 function safeHtml(node) {
   if (node.tag === 'text') return escapeHtml(node.text);
@@ -125,9 +125,9 @@ export function setWorksheetText(element, field) {
 export const WORKSHEET_TEXT_CSS = `
 .worksheet-text { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
 .worksheet-text p { margin: 0; }
-.worksheet-text h2,.worksheet-text h3,.worksheet-text h4,.worksheet-text h5,.worksheet-text h6 { margin: .5em 0 .25em; line-height: 1.3; text-transform: none; letter-spacing: normal; color: inherit; }
-.worksheet-text h2 { font-size: 1.35em; } .worksheet-text h3 { font-size: 1.2em; }
-.worksheet-text h4,.worksheet-text h5,.worksheet-text h6 { font-size: 1em; }
+.worksheet-text h2,.worksheet-text h3,.worksheet-text h4 { margin: .5em 0 .25em; line-height: 1.3; text-transform: none; letter-spacing: normal; color: inherit; }
+.worksheet-text h2 { font-size: 1.55em; } .worksheet-text h3 { font-size: 1.35em; }
+.worksheet-text h4 { font-size: 1.15em; }
 .worksheet-text ul,.worksheet-text ol { margin: .35em 0; padding-inline-start: 1.6em; white-space: normal; }
 .worksheet-text li { white-space: pre-wrap; }
 .worksheet-text blockquote { margin: .35em 0; padding-inline-start: .8em; border-inline-start: 3px solid #cbd5e1; }

@@ -34,15 +34,11 @@ try {
    return { id: s.state.draft.localId, blockId: s.state.selectedBlockId, version: parsed.manifest.packageVersion, options: parsed.worksheet.blocks.find(b=>b.blockId===s.state.selectedBlockId).responseConfig.options };
   });
   assert.equal(data.version,4); assert.equal(data.options[0].label,''); assert.ok(data.options[0].value); assert.equal(data.options[0].imageDescription,'圖片描述');
-  await page.locator('.editor-option-footer button').last().click();
-  await page.locator('.editor-option-preview-dialog .viewer-option-image img').waitFor();
-  const previewChoices = page.locator('.editor-option-preview-dialog [data-choice-value]');
-  await previewChoices.first().focus(); await page.keyboard.press('ArrowRight');
-  assert.equal(await previewChoices.nth(1).evaluate(n => n.getRootNode().activeElement === n), true);
-  if (shots) await page.screenshot({path: `${shots}/preview-${locale}-${width}.png`});
-  await page.locator('.editor-option-preview-dialog > button').click();
+  assert.equal(await page.locator('.editor-option-preview-dialog, .editor-option-footer').count(), 0);
   if (shots) await page.screenshot({path: `${shots}/editor-${locale}-${width}.png`});
-  await page.goto(base + '/server/viewer/?preview=1&localDraftId=' + encodeURIComponent(data.id));
+  await page.getByRole('button', { name: locale === 'en' ? 'Open in Viewer (same tab)' : '在檢視器開啟（同一分頁）', exact: true }).click();
+  await page.waitForURL(url => url.pathname.endsWith('/viewer/') && url.searchParams.get('localDraftId') === data.id);
+  assert.equal(page.context().pages().length, 1);
   const card = page.locator('[data-block-id="'+data.blockId+'"]');
   await card.locator('.viewer-option-image img').waitFor({timeout:10000}).catch(async e=>{await page.locator('details').first().evaluate(n=>n.open=true).catch(()=>{});console.log('UI errors',errors,'body',(await page.locator('body').innerText()).slice(0,2500));throw e;});
   await card.locator('.viewer-option-enlarge').first().waitFor({state:'visible'});
@@ -74,5 +70,5 @@ try {
   assert.equal(attempt.version,3);assert.equal(attempt.assets,1);assert.equal(attempt.option.imageDescription,'圖片描述');
   assert.deepEqual(errors,[]);await page.close();
  }
- console.log('Option images: editor, preview, package roundtrip, viewer selection/enlargement and attempt assets passed in both locales and sizes');
+ console.log('Option images: editor, package roundtrip, viewer selection/enlargement and attempt assets passed in both locales and sizes');
 } finally { await browser.close(); }

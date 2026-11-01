@@ -109,7 +109,7 @@ test('audio saved after source edits or target deletion is discarded without rep
   }
 });
 
-test('prompt and option auth failures request login without persisting automatic replay', async () => {
+test('prompt and option provider auth failures never auto-login or replay', async () => {
   const mod = await loadEditorModule();
   for (const target of ['prompt', 'option']) {
     const session = new mod.EditorDraftSession(createSessionForTests(), { apiClient: { generateAudioFromText: async () => ({ ok: false, error: { code: 'AUTH_REQUIRED', status: 401 } }) } });
@@ -121,9 +121,9 @@ test('prompt and option auth failures request login without persisting automatic
     const intent = { actionId: target === 'prompt' ? 'editorPromptT2A' : 'editorOptionT2A', payload: { localDraftId: 'original', blockId: 'q1', target: target === 'prompt' ? 'question_prompt' : 'option', optionId: 'o1', language: 'english' } };
     const result = await session.triggerProtectedAction(intent.actionId, intent.payload);
     assert.equal(result.error.code, 'AUTH_REQUIRED');
-    assert.equal(signIns, 1);
+    assert.equal(signIns, 0);
     assert.equal((await session.restoreProtectedAction(intent)).status, 'explicit_retry_required');
-    assert.equal(signIns, 1);
+    assert.equal(signIns, 0);
     clearTimeout(session.autosaveTimer);
   }
 });
@@ -151,7 +151,7 @@ async function loadEditorModule() {
   const filePath = path.resolve('server/editor/main.js');
   const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/bridge/audio-generation.js'", JSON.stringify(new NodeURL('../app/bridge/audio-generation.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./text-preview.js'", JSON.stringify(new NodeURL('./text-preview.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
 
-  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'./option-preview.js'", JSON.stringify(new NodeURL('./option-preview.js', import.meta.url).href)).replaceAll("'../app/option-images.js'", JSON.stringify(new NodeURL('../app/option-images.js', import.meta.url).href)).replaceAll("'./option-image-editor.js'", JSON.stringify(new NodeURL('./option-image-editor.js', import.meta.url).href)).replaceAll("'../app/api/publication-flow.js'", JSON.stringify(new NodeURL('../app/api/publication-flow.js', import.meta.url).href)).replaceAll("'../app/auth/mutation-auth.js'", JSON.stringify(new NodeURL('../app/auth/mutation-auth.js', import.meta.url).href)).replaceAll("'../app/auth/session-state-adapter.js'", JSON.stringify(new NodeURL('../app/auth/session-state-adapter.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-return.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-return.js', import.meta.url).href)).replaceAll("'../app/auth/session-coordinator.js'", JSON.stringify(new NodeURL('../app/auth/session-coordinator.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-flow.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-flow.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-prompt.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-prompt.js', import.meta.url).href)).replaceAll("'../app/api/deletion-flow.js'", JSON.stringify(new NodeURL('../app/api/deletion-flow.js', import.meta.url).href)).replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-drag-reorder.js'", JSON.stringify(new NodeURL('./block-drag-reorder.js', import.meta.url).href)), [
+  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/option-images.js'", JSON.stringify(new NodeURL('../app/option-images.js', import.meta.url).href)).replaceAll("'./option-image-editor.js'", JSON.stringify(new NodeURL('./option-image-editor.js', import.meta.url).href)).replaceAll("'../app/api/publication-flow.js'", JSON.stringify(new NodeURL('../app/api/publication-flow.js', import.meta.url).href)).replaceAll("'../app/auth/mutation-auth.js'", JSON.stringify(new NodeURL('../app/auth/mutation-auth.js', import.meta.url).href)).replaceAll("'../app/auth/session-state-adapter.js'", JSON.stringify(new NodeURL('../app/auth/session-state-adapter.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-return.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-return.js', import.meta.url).href)).replaceAll("'../app/auth/session-coordinator.js'", JSON.stringify(new NodeURL('../app/auth/session-coordinator.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-flow.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-flow.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-prompt.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-prompt.js', import.meta.url).href)).replaceAll("'../app/api/deletion-flow.js'", JSON.stringify(new NodeURL('../app/api/deletion-flow.js', import.meta.url).href)).replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-drag-reorder.js'", JSON.stringify(new NodeURL('./block-drag-reorder.js', import.meta.url).href)), [
     {
       name: 'replace editor dependency imports with test doubles',
       pattern: /import\s*\{\s*editorStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];\s*import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*import\s*\{\s*createServerApiClient\s*\}\s*from\s*['"]\.\.\/app\/api\/server-api-client\.js['"];\s*import\s*\{\s*createWorksheetPackageFromDraft,\s*parseWorksheetPackage,\s*\}\s*from\s*['"]\.\/worksheet-package\.js['"];\s*/,
@@ -1854,11 +1854,8 @@ test('stage3: prompt row triggers replace confirmation before prompt bridge gene
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   const hasAudioConfirmIdx = source.indexOf("title: t('editor.media.confirm.regenerateQuestionAudioTitle')");
   const promptBridgeCallIdx = source.indexOf("await session.triggerProtectedAction('editorPromptT2A', {");
-  const sessionReadyIdx = source.indexOf("const sessionReady = await session.ensureServerSessionReady();");
   assert.equal(hasAudioConfirmIdx >= 0, true);
-  assert.equal(sessionReadyIdx >= 0, true);
   assert.equal(promptBridgeCallIdx >= 0, true);
-  assert.equal(sessionReadyIdx < promptBridgeCallIdx, true);
   assert.equal(hasAudioConfirmIdx < promptBridgeCallIdx, true);
 });
 
@@ -6560,3 +6557,43 @@ for (const target of ['question_image', 'question_audio', 'option_audio', 'optio
     } finally { clearTimeout(session.autosaveTimer); }
   });
 }
+
+for (const outcome of ['success', 'asset', 'worksheet', 'draft', 'cancel']) test(`editor package import stages isolated option images: ${outcome}`, async () => {
+  const mod = await loadEditorModule();
+  const original = { localId: 'shared', binary: new Uint8Array([9]) };
+  const assets = new Map([['shared', original]]), worksheets = new Map(), drafts = new Map();
+  let current = true;
+  const store = (records, stage) => ({ get: async id => records.get(id), put: async record => {
+    records.set(record.localId, record);
+    if (outcome === stage) throw Error('simulated write failure');
+    if (outcome === 'cancel' && stage === 'asset') current = false;
+    return record;
+  }, remove: async id => records.delete(id) });
+  const storage = createSessionForTests();
+  Object.assign(storage, { localAssets: store(assets, 'asset'), importedWorksheets: store(worksheets, 'worksheet'), drafts: store(drafts, 'draft') });
+  const session = new mod.EditorDraftSession(storage);
+  session.state.draft = mod.createDraftRecord({ localId: 'outgoing', title: 'Keep' });
+  session.saveBeforeWorksheetReplacement = async () => {};
+  const asset = { assetId: 'shared', path: 'media/shared.png', kind: 'image', usage: 'option_image', mimeType: 'image/png' };
+  globalThis.__testParsedWorksheetPackage = { manifest: { assets: [asset] }, worksheet: { title: 'Incoming', blocks: [{ blockId: 'q', kind: 'question', prompt: { text: 'Choose' }, responseConfig: { inputType: 'multiple_choice', options: [{ id: 'o', value: 'o', label: '', mediaRefs: [{ assetId: 'shared', usage: 'option_image' }] }] } }] }, assets: [{ ...asset, binary: new Uint8Array([1]) }] };
+  try {
+    const pending = session.importWorksheetPackageFile({ arrayBuffer: async () => new ArrayBuffer() }, { convertToEditableDraft: true, isCurrent: () => current });
+    if (['asset', 'worksheet', 'draft'].includes(outcome)) await assert.rejects(pending, /simulated write failure/);
+    else {
+      const result = await pending;
+      if (outcome === 'cancel') assert.equal(result.canceled, true);
+      else {
+        const id = result.draftRecord.blocks[0].responseConfig.options[0].mediaRefs[0].assetId;
+        assert.notEqual(id, 'shared'); assert.deepEqual(assets.get(id).binary, new Uint8Array([1]));
+        assert.equal(result.importedRecord.worksheet.blocks[0].responseConfig.options[0].mediaRefs[0].assetId, id);
+        assert.equal(result.importedRecord.assets[0].assetId, id);
+        assert.equal(result.importedRecord.packageManifest.assets[0].assetId, id);
+      }
+    }
+    assert.equal(assets.get('shared'), original);
+    if (outcome !== 'success') {
+      assert.equal(assets.size, 1); assert.equal(worksheets.size, 0); assert.equal(drafts.size, 0);
+      assert.equal(session.state.draft.localId, 'outgoing');
+    }
+  } finally { delete globalThis.__testParsedWorksheetPackage; clearTimeout(session.autosaveTimer); }
+});

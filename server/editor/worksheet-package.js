@@ -1,3 +1,4 @@
+import { assertPackageAssets } from '../app/contracts/package-assets.js';
 import { hasOptionImages, assertOptionImages } from '../app/option-images.js';
 import { createStoredZip, decodeUtf8, parseStoredZip, toUint8Array, crc32 } from './zip-utils.js';
 import { assertValidAudioTracks, normalizeAudioTracks } from './audio-tracks.js';
@@ -197,7 +198,7 @@ function createWorksheetPackageFromDraft(draft, assetRecordsById = new Map()) {
     entries.push({ path, data: bytes });
   });
 
-  if (manifest.packageVersion === 4) assertOptionImages(worksheet.blocks, new Map(manifest.assets.map(asset => [asset.assetId, asset])));
+  if (manifest.packageVersion === 4) assertOptionImages(worksheet.blocks, assertPackageAssets(manifest.assets, new Map(entries.map(entry => [entry.path, entry.data]))));
   entries[0] = { path: 'manifest.json', data: JSON.stringify(manifest, null, 2) };
   return { manifest, worksheet, bytes: createStoredZip(entries) };
 }
@@ -242,6 +243,7 @@ function parseWorksheetPackage(arrayBuffer) {
   assertWorksheetTextFormats(worksheet.blocks);
   if (hasMarkdown(worksheet.blocks) && manifest.packageVersion < 3) throw new Error('Markdown requires worksheet package version 3.');
 
+  if (manifest.packageVersion === 4) assertPackageAssets(manifest.assets, files);
   const assets = normalizeAssetManifestList(manifest.assets);
 
   const seenAssetIds = new Set();

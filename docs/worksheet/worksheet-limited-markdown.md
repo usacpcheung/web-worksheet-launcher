@@ -1,12 +1,12 @@
 # Worksheet limited Markdown
 
-> Current behavior reviewed against main `7bb19de` on 2026-10-06. Code evidence: [worksheet-text.js](../../server/app/worksheet-text.js), [worksheet-package.js](../../server/editor/worksheet-package.js), [package-service.js](../../server/api/services/package-service.js), [main.js](../../server/viewer/main.js). Test commands below are guidance, not a new test-run report.
+> Updated on 2026-10-31 for the agreed H2–H4 heading subset and prompt typography trial. Code evidence: [worksheet-text.js](../../server/app/worksheet-text.js), [worksheet-package.js](../../server/editor/worksheet-package.js), [package-service.js](../../server/api/services/package-service.js), [main.js](../../server/viewer/main.js). Test commands below are guidance, not a new test-run report.
 
 The implemented feature applies only to worksheet content text and question prompts. Authors edit plain source text, switch to Preview, and return to Edit with their selection restored. The adjacent formatting help is available in English and Traditional Chinese.
 
 ## Supported syntax
 
-- Headings `##` through `######`, followed by a space. `#` stays literal.
+- Headings `##` through `####`, followed by a space. `#`, `#####` and `######` stay literal.
 - Flat bullet lists (`- item`) and numbered lists (`1. item`). A numbered list retains its first number and numbers subsequent items sequentially.
 - One-level quotes (`> quote`).
 - Bold (`**text**`) and italic (`*text*`). Unmatched delimiters stay literal; combined triple-star syntax is not supported.
@@ -43,7 +43,7 @@ The newer ZIP versions make older application versions reject an unsupported pac
 
 ## Rendering and safety
 
-Editor preview, viewer cards (editable and submitted), and the existing question print/PDF report use one renderer. The parser creates an internal tree; the serializer permits only `p`, `br`, `h2`–`h6`, `ul`, `ol`, `li`, `blockquote`, `strong`, and `em`. It escapes every source text node. The only generated attribute is a validated integer `ol start`. It never accepts author HTML as markup, generates URLs, or fetches resources.
+Editor preview, viewer cards (editable and submitted), and the existing question print/PDF report use one renderer. The parser creates an internal tree; the serializer permits only `p`, `br`, `h2`–`h4`, `ul`, `ol`, `li`, `blockquote`, `strong`, and `em`. It escapes every source text node. The only generated attribute is a validated integer `ol start`. It never accepts author HTML as markup, generates URLs, or fetches resources.
 
 Prompt audio generation uses a plain-text projection of that same tree, so spoken text excludes formatting markers. Existing operation identity and source-change guards remain in effect. Audio providers, authentication, learner voice/rewrite processing, and RolePlayScene are unchanged.
 
@@ -83,3 +83,5 @@ then permits system fallback instead of indefinitely blocking printing.
 Run `node scripts/worksheet-polish-smoke.mjs` against the local static server
 for bilingual desktop/mobile coverage of help, toggles, sidebar escaping,
 return navigation after refresh, real browser font selection and overflow.
+
+The H2–H4 restriction is an approved product change. Existing H5/H6 source remains intact and now displays literally; the package format identifier is unchanged. Prompt typography uses a shared Chinese/English/mixed-content trial baseline (20px desktop, 18px mobile, line-height 1.6), with H2/H3/H4 ratios 1.55/1.35/1.15 and print-scaled equivalents. Authored blank lines remain preserved.

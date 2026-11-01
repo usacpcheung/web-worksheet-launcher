@@ -69,3 +69,12 @@ test('spoken text keeps displayed numbers, Unicode punctuation and escaped symbo
   assert.equal(promptTextState(md('𠮷'.repeat(501))).exceedsLimit, true);
   assert.equal(promptTextState({ text: '**原文**', format: 'plain_text' }).text, '**原文**');
 });
+
+test('only H2 through H4 are headings; H5 and H6 remain authored literal text', () => {
+ const source = '## Title\n### Section\n#### Detail\n##### Literal five\n###### Literal six';
+ const html = renderWorksheetText(md(source));
+ assert.match(html, /<h2>Title<\/h2><h3>Section<\/h3><h4>Detail<\/h4>/);
+ assert.doesNotMatch(html, /<h[56]>/);
+ assert.match(html, /##### Literal five\n###### Literal six/);
+ assert.match(worksheetTextToPlain(md(source)), /##### Literal five/);
+});

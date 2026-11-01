@@ -1,3 +1,4 @@
+import { assertPackageAssets } from './package-assets.js';
 import { hasOptionImages, assertOptionImages } from '../option-images.js';
 import { assertWorksheetTextFormats, hasMarkdown } from '../worksheet-text.js';
 
@@ -13,18 +14,12 @@ export function assertAttemptPackage(manifest, worksheet, attempt, { allowLegacy
   assertWorksheetTextFormats(worksheet.blocks);
   if (hasMarkdown(worksheet.blocks) && manifest.packageVersion < 2) throw new Error('Markdown requires attempt package version 2.');
   if (hasOptionImages(worksheet.blocks) && manifest.packageVersion !== 3) throw new Error('Option images require attempt package version 3.');
-  if (manifest.packageVersion === 3) assertOptionImages(worksheet.blocks, new Map((manifest.assets || []).map(asset => [asset.assetId, { ...asset, kind: 'image', usage: 'option_image' }])));
-  if (manifest.packageVersion === 3 && files) {
-    for (const block of worksheet.blocks) for (const option of block?.responseConfig?.options || []) {
-      for (const ref of option?.mediaRefs || []) {
-        if (ref.usage !== 'option_image') continue;
-        const asset = manifest.assets.find(asset => asset.assetId === ref.assetId);
-        const bytes = files.get(asset.path);
-        if (!bytes?.length) throw new Error('Missing option image file.');
-        if (bytes.length > 8 * 1024 * 1024) throw new Error('Option image exceeds 8 MB.');
-        if (asset.byteLength != null && bytes.length !== asset.byteLength) throw new Error('Option image byteLength mismatch.');
-      }
-    }
+  if (manifest.packageVersion === 3) {
+    const assets = assertPackageAssets(manifest.assets, files);
+    // Attempts historically omit kind/usage; option references establish those
+    // roles, while the actual MIME type and file bytes are still validated.
+    assertOptionImages(worksheet.blocks, new Map([...assets].map(([id, asset]) =>
+      [id, { ...asset, kind: 'image', usage: 'option_image' }])));
   }
   if (allowLegacyEnvelope) return;
 

@@ -48,12 +48,12 @@ test.beforeEach(() => {
 test('stalled sign-in probes abort and a subsequent flow starts a fresh request', async () => {
   for (const popupBlocked of [false, true]) {
     createWindowStub({ popupBlocked });
-    let calls = 0, signal;
+    let calls = 0, signal, ready = false;
     const apiClient = {
       getSessionSignInUrl: () => '/login',
       getSession: options => {
         calls++;
-        if (calls > 1) return Promise.resolve({ ok: true, data: { user: { sub: 'ready' } } });
+        if (ready) return Promise.resolve({ ok: true, data: { user: { sub: 'ready' } } });
         signal = options.signal;
         return new Promise(() => {});
       },
@@ -61,8 +61,10 @@ test('stalled sign-in probes abort and a subsequent flow starts a fresh request'
     const options = { apiClient, pollTimeoutMs: 10, hardDeadlineMs: 20 };
     assert.equal((await startAuthPopupFlow(options).promise).ok, false);
     assert.equal(signal.aborted, true);
+    ready = true;
+    const beforeRetry = calls;
     assert.equal((await startAuthPopupFlow(options).promise).ok, true);
-    assert.equal(calls, 2);
+    assert.equal(calls, beforeRetry + 1);
   }
 });
 
@@ -410,4 +412,56 @@ for (const locale of ['en', 'zh-Hant']) test(`popup status identifiers are indep
     flow?.cancel();
     setLocale('en', { persist: false });
   }
+});
+
+for (const closedState of ['true', 'throws']) test(`slow sign-in recovers without callback when popup.closed ${closedState}`, async () => {
+  const win = createWindowStub();
+  Object.defineProperty(win.popup, 'closed', { get() { if (closedState === 'throws') throw Error('COOP access blocked'); return true; } });
+  let ready = false, markWaiting;
+  const waiting = new Promise(resolve => { markWaiting = resolve; });
+  const flow = startAuthPopupFlow({ pollIntervalMs: 50, pollTimeoutMs: 30, hardDeadlineMs: 1000,
+    apiClient: { getSessionSignInUrl: () => '/login', getSession: async () => ready
+      ? { ok: true, data: { user: { sub: 'learner' } } }
+      : { ok: false, error: { code: 'AUTH_REQUIRED', status: 401 } } },
+    onSessionNotReady: result => { if (result.waitingForCallback) markWaiting(); },
+  });
+  try {
+    // The early flow must remain pending even without a usable popup handle.
+    const first = await Promise.race([waiting.then(() => 'waiting'), flow.promise.then(() => 'ended')]);
+    assert.equal(first, 'waiting'); ready = true;
+    const result = await flow.promise;
+    assert.equal(result.ok, true); assert.equal(result.user.sub, 'learner');
+  } finally { flow.cancel(); }
+});
+
+test('a stalled initial session probe can recover inside the existing hard deadline', async () => {
+  createWindowStub(); let calls = 0, signal;
+  const flow = startAuthPopupFlow({ pollIntervalMs: 50, pollTimeoutMs: 30, hardDeadlineMs: 1000,
+    apiClient: { getSessionSignInUrl: () => '/login', getSession: options => {
+      calls++; if (calls === 1) { signal = options.signal; return new Promise(() => {}); }
+      return Promise.resolve({ ok: true, data: { user: { sub: 'learner' } } });
+    } },
+  });
+  assert.equal((await flow.promise).ok, true); assert.equal(signal.aborted, true);
+});
+
+for (const stop of ['cancel', 'deadline']) test(`continued polling stops at ${stop} and ignores late readiness/callbacks`, async () => {
+  const win = createWindowStub(); let ready = false, calls = 0, becameWaiting;
+  const waiting = new Promise(resolve => { becameWaiting = resolve; });
+  const flow = startAuthPopupFlow({ pollIntervalMs: 50, pollTimeoutMs: 30, hardDeadlineMs: 180,
+    authFlowId: 'owned-flow',
+    apiClient: { getSessionSignInUrl: () => '/login', getSession: async () => {
+      calls++; return ready ? { ok: true, data: { user: { sub: 'late' } } }
+        : { ok: false, error: { code: 'AUTH_REQUIRED', status: 401 } };
+    } }, onSessionNotReady: result => { if (result.final === false) becameWaiting(); },
+  });
+  await waiting;
+  if (stop === 'cancel') flow.cancel();
+  const result = await flow.promise;
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, stop === 'cancel' ? 'AUTH_POPUP_FLOW_CANCELLED' : 'AUTH_POPUP_FLOW_HARD_DEADLINE');
+  ready = true; const before = calls;
+  await win.sendMessage({ origin: 'https://example.test', data: { type: AUTH_POPUP_FLOW_DEFAULTS.messageType, authFlowId: 'owned-flow' } });
+  await new Promise(resolve => setTimeout(resolve, 65));
+  assert.equal(calls, before, 'no probes after cancellation/deadline');
 });

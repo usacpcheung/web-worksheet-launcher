@@ -2017,6 +2017,3 @@ textarea.control {
 .editor-option-image-description span{text-align:right;grid-column:2}
 .editor-option-image-description p{margin:0}
 @media(max-width:640px){.option-row{grid-template-columns:38px minmax(0,1fr) 38px auto 38px}}
-.editor-option-footer{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
-.editor-option-preview-dialog{width:min(960px,calc(100vw - 24px));max-width:none;max-height:calc(100dvh - 24px);overflow:auto;border:1px solid #cbd5e1;border-radius:12px;padding:18px;background:white}
-.editor-option-preview-dialog::backdrop{background:#152d4d99}

@@ -2375,7 +2375,7 @@ function resolveImportedWorksheetPayload(importedRecord) {
   throw new Error('Imported worksheet payload format is not supported for viewer mode.');
 }
 
-// Server imports stage media under fresh local IDs. Abandoning an import must
+// All imports stage media under fresh local IDs. Abandoning an import must
 // never overwrite or delete media already referenced by another local attempt.
 function isolateReadPackageAssets(packageModel) {
   const assets = Array.isArray(packageModel?.assets) ? packageModel.assets : [];
@@ -3410,7 +3410,7 @@ class ViewerAttemptSession {
   }
 
   async startImportedWorksheetFromPackageModel(packageModel, options = {}) {
-    if (options.isCurrent) packageModel = isolateReadPackageAssets(packageModel);
+    packageModel = isolateReadPackageAssets(packageModel);
     const worksheet = packageModel?.worksheet;
     if (!worksheet || typeof worksheet !== 'object') {
       throw new Error('Imported worksheet package is missing worksheet content.');
@@ -3451,6 +3451,7 @@ class ViewerAttemptSession {
               continue;
             }
             assertReadImportCurrent(options);
+            persistedAssetIds.push(asset.assetId);
             await this.storage.localAssets.put({
               localId: asset.assetId,
               binary: asset.binary,
@@ -3464,7 +3465,6 @@ class ViewerAttemptSession {
                 path: asset.path || null,
               },
             });
-            persistedAssetIds.push(asset.assetId);
             assertReadImportCurrent(options);
           }
         } catch (error) {
@@ -3668,7 +3668,9 @@ class ViewerAttemptSession {
     for (const assetId of assetIds) {
       const assetRecord = await this.storage.localAssets?.get?.(assetId);
       const binary = ensureUint8Array(assetRecord?.binary);
-      if (!binary || binary.byteLength <= 0) continue;
+      if (!binary || binary.byteLength <= 0) {
+        throw Object.assign(new Error(t('viewer.notifications.localAttemptExport.missingMedia')), { code: 'MISSING_PACKAGE_MEDIA' });
+      }
       const assetPath = `media/${assetId}`;
       manifest.assets.push({
         assetId,
@@ -3680,6 +3682,11 @@ class ViewerAttemptSession {
         crc32: crc32(binary).toString(16).padStart(8, '0'),
       });
       entries.push({ path: assetPath, data: binary });
+    }
+    try {
+      assertAttemptPackage(manifest, worksheet, attempt, { files: new Map(entries.map(entry => [entry.path, entry.data])) });
+    } catch (error) {
+      throw Object.assign(new Error(t('apiErrors.invalidPackage')), { code: 'INVALID_ATTEMPT_PACKAGE', cause: error });
     }
     entries[0] = { path: 'manifest.json', data: JSON.stringify(manifest, null, 2) };
     return {
@@ -3718,7 +3725,7 @@ class ViewerAttemptSession {
       this.notifyStateChange();
       return { ok: true };
     } catch (error) {
-      const message = t('viewer.notifications.localAttemptExport.failed');
+      const message = error?.code === 'MISSING_PACKAGE_MEDIA' ? error.message : t('viewer.notifications.localAttemptExport.failed');
       this.state.utilityMessage = message;
       this.pushNotification({ kind: 'error', text: message, ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS });
       this.notifyStateChange();
@@ -3908,16 +3915,17 @@ class ViewerAttemptSession {
       return uploadResult;
     } catch (error) {
       if (!operation.canPublish()) return staleUploadResult();
-      console.error('[viewer] Attempt package upload failed unexpectedly.', error);
+      const localPackageFailure = ['MISSING_PACKAGE_MEDIA', 'INVALID_ATTEMPT_PACKAGE'].includes(error?.code);
+      if (!localPackageFailure) console.error('[viewer] Attempt package upload failed unexpectedly.', error);
       this.clearNotificationsBySource(VIEWER_NOTIFICATION_UPLOAD_SOURCE);
-      this.state.serverActionMessage = t('viewer.notifications.uploadAttempt.networkFailure');
+      this.state.serverActionMessage = localPackageFailure ? error.message : t('viewer.notifications.uploadAttempt.networkFailure');
       this.pushNotification({
         kind: 'error',
         text: this.state.serverActionMessage,
         ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
       });
       this.notifyStateChange();
-      return { ok: false, status: 'upload_failed_unexpected', error: { code: 'NETWORK_ERROR', message: this.state.serverActionMessage } };
+      return { ok: false, status: localPackageFailure ? 'invalid_local_package' : 'upload_failed_unexpected', error: { code: localPackageFailure ? error.code : 'NETWORK_ERROR', message: this.state.serverActionMessage } };
     } finally {
       if (operation.finish()) {
         this.uploadController = null;
@@ -4121,7 +4129,7 @@ class ViewerAttemptSession {
   }
 
   async restoreAttemptPackageAsLocalAttempt(packageModel, options = {}) {
-    if (options.isCurrent) packageModel = isolateReadPackageAssets(packageModel);
+    packageModel = isolateReadPackageAssets(packageModel);
     if (options.isCurrent && !options.isCurrent()) return skippedReadImport();
     const importedAt = nowIso();
     const rawAttempt = packageModel?.attempt && typeof packageModel.attempt === 'object' ? packageModel.attempt : {};
@@ -4198,12 +4206,13 @@ class ViewerAttemptSession {
     let didAttemptPersistAttempt = false;
     try {
       assertReadImportCurrent(options);
-      await this.storage.importedWorksheets.put(importedRecord);
       didPersistImportedWorksheet = true;
+      await this.storage.importedWorksheets.put(importedRecord);
       assertReadImportCurrent(options);
       for (const asset of Array.isArray(packageModel.assets) ? packageModel.assets : []) {
         if (!asset?.assetId || !(asset.binary instanceof Uint8Array)) continue;
         assertReadImportCurrent(options);
+        persistedAssetIds.push(asset.assetId);
         await this.storage.localAssets.put({
           localId: asset.assetId,
           binary: asset.binary,
@@ -4217,7 +4226,6 @@ class ViewerAttemptSession {
             path: asset.path || null,
           },
         });
-        persistedAssetIds.push(asset.assetId);
         assertReadImportCurrent(options);
       }
       assertReadImportCurrent(options);

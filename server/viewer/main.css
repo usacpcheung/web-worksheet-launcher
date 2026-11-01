@@ -1441,7 +1441,7 @@ body {
   font-weight: 500;
 }
 
-.question-card__prompt-label :is(strong, h2, h3, h4, h5, h6) {
+.question-card__prompt-label :is(strong, h2, h3, h4) {
   font-weight: 700;
 }
 
@@ -2479,29 +2479,29 @@ body:has(.viewer-shell--continuous) #app {
   grid-column:1;
   grid-row:1;
   display:flex;
-  flex-direction:column;
+  flex-direction:row;
   align-items:flex-start;
-  gap:16px;
+  gap:12px;
   margin:0;
 }
+.viewer-shell--continuous .question-card__prompt-row > .viewer-audio-control { flex:none; margin-inline-start:auto; }
 
 .viewer-shell--continuous .question-card__prompt-label {
   color:#20344d;
-  font-size:1.375rem;
+  font-size:1.25rem;
   font-weight:450;
-  line-height:1.65;
+  line-height:1.6;
 }
 
 /* Authored prompt hierarchy; shared renderer and content-block styles stay intact. */
-.viewer-shell--continuous .question-card__prompt-label :is(h2, h3, h4, h5, h6) {
+.viewer-shell--continuous .question-card__prompt-label :is(h2, h3, h4) {
   font-weight:600;
   line-height:1.3;
-  margin:.9em 0 .3em;
+  margin:.65em 0 .3em;
 }
-.viewer-shell--continuous .question-card__prompt-label h2 { font-size:1.35em; }
-.viewer-shell--continuous .question-card__prompt-label h3 { font-size:1.18em; }
-.viewer-shell--continuous .question-card__prompt-label h4 { font-size:1.08em; }
-.viewer-shell--continuous .question-card__prompt-label :is(h5, h6) { font-size:1em; }
+.viewer-shell--continuous .question-card__prompt-label h2 { font-size:1.55em; }
+.viewer-shell--continuous .question-card__prompt-label h3 { font-size:1.35em; }
+.viewer-shell--continuous .question-card__prompt-label h4 { font-size:1.15em; }
 .viewer-shell--continuous .question-card__prompt-label strong { font-weight:700; }
 .viewer-shell--continuous .question-card__prompt-label :is(ul, ol) { margin:.55em 0; padding-inline-start:1.5em; }
 .viewer-shell--continuous .question-card__prompt-label li + li { margin-top:.25em; }
@@ -3072,7 +3072,7 @@ body:has(.viewer-shell--continuous) #app {
 }
 
   .viewer-shell--continuous .question-card__prompt-label {
-  font-size:1.25rem;
+  font-size:1.125rem;
 }
 
   .viewer-shell--continuous .choice-button-group__row {
@@ -3225,10 +3225,10 @@ html:has(.viewer-navigation dialog[open]) {
   overflow: hidden;
 }
 
-/* Prompt audio sits under the left-hand text; option menus remain right-aligned. */
+/* Menus open inward from the prompt’s top-right audio control. */
 .viewer-shell--continuous .viewer-audio-control--question .viewer-audio-control__menu {
-  left: 0;
-  right: auto;
+  left: auto;
+  right: 0;
 }
 
 @media print, (prefers-reduced-motion: reduce) {
