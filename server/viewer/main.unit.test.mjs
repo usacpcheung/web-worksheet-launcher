@@ -6574,7 +6574,7 @@ test('text control sync prefers focused edit cache and falls back to canonical s
 test('in-flight rewrite state renders loading label while preserving always-visible controls', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes('const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;'), true);
-  assert.equal(source.includes("rewriteButton.textContent = isRewriteInFlight ? t('viewer.rewrite.inProgress') : t('viewer.rewrite.action');"), true);
+  assert.equal(source.includes("rewriteButton.querySelector('.viewer-action-label').textContent = isRewriteInFlight ? t('viewer.rewrite.inProgress') : t('viewer.rewrite.action');"), true);
   assert.equal(source.includes('rewriteButton.disabled = !canRewrite;'), true);
   assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || Boolean(session.voice.active) || !hasUndoEntry;'), true);
   assert.equal(source.includes('Object.hasOwn(session.state.rewriteMessageByBlock || {}, block.blockId)'), true);

@@ -63,6 +63,8 @@ await page.waitForFunction(()=>window.viewerSession.voice.active?.state==='rewri
 for(const selector of ['.question-card__voice-btn','.question-card__rewrite-btn','.question-card__undo-btn']) {
  assert.equal(await current.locator(selector).isVisible(),true);
  assert.equal(await current.locator(selector).isDisabled(),true);
+ assert.equal(await current.locator(selector + ' .viewer-icon').isVisible(),true, 'Action icon survives processing updates');
+ assert.ok((await current.locator(selector + ' .viewer-action-label').innerText()).trim(), 'Action keeps its readable label');
 }
 assert.match(await page.locator('.viewer-voice-status:visible').innerText(),/Rewriting/);
 await rewriteReady;

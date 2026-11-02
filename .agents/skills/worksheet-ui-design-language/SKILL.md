@@ -133,6 +133,11 @@ for an inline question grid also no longer define the selected chooser.
 
 ### Visual language and controls
 
+- Give viewer content blocks the navigation book icon in the question-number
+  gutter and a very pale blue gradient that fades toward white. Keep the icon
+  decorative, preserve question numbering, and omit the gradient in print.
+  Leave breathing room around this gutter on narrow screens. The first content
+  block or question uses a smaller opening gap below the worksheet header.
 - Use Version C's cooler blue accent and pale blue canvas with white reading
   surfaces. Retain semantic success, warning, error and existing True/False
   colors; labels and state indicators must work without color alone.
@@ -150,6 +155,11 @@ for an inline question grid also no longer define the selected chooser.
   Preview uses the existing same-tab whole-worksheet viewer, not an MC-only dialog.
 - Preserve deterministic option shuffling, stable option values and their media
   associations. Display letters are presentation, never answer identities.
+- Keep text-answer footers compact: right-aligned character counter, 8px action
+  gaps, icon-and-text buttons with 44px minimum height and natural wrapping.
+  Use pale blue for Add by voice and neutral Rewrite/Undo controls. Collapse
+  empty feedback rows; retain visible errors, recovery controls and warning
+  colors for actual limits. The empty-answer instruction is a neutral hint.
 - Keep True/False controls equal in width, with their existing pale green/red
   hover and selected semantics. Preserve validation and answer-selection rules.
 - Keep question audio associated with its prompt and option audio with its

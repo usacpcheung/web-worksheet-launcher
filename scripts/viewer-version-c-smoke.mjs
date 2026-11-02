@@ -66,8 +66,8 @@ try {
   const bool=await page.locator('[data-block-id="b3"] .boolean-segmented-control__button').evaluateAll(nodes=>nodes.map(n=>n.getBoundingClientRect().width));
   assert(Math.abs(bool[0]-bool[1])<1);
   if(shots)await page.screenshot({path:`${shots}/layout-${locale}.png`});
-  for (const width of [1280,320]) {
-   await page.setViewportSize({width,height:900});
+  for (const [width,height] of [[1280,900],[320,900],[390,900],[600,900],[900,900],[740,360],[1024,650]]) {
+   await page.setViewportSize({width,height});
    await chooseViewerSection(page,1);
    const geometry=await page.locator('[data-block-id="b1"]').evaluate(section=>{
     const bounds=selector=>section.querySelector(selector).getBoundingClientRect();
@@ -75,9 +75,9 @@ try {
     return {numberLeft:number.left,numberRight:number.right,headingLeft:heading.left,headingBottom:heading.bottom,promptTop:prompt.top,overflow:document.documentElement.scrollWidth-innerWidth};
    });
    assert(geometry.numberLeft>=0&&geometry.numberRight<=geometry.headingLeft&&geometry.headingBottom<=geometry.promptTop&&geometry.overflow<=0,JSON.stringify(geometry));
-   if(width===320) assert(await page.evaluate(()=>{
+   if(width<=900||height<=650) assert(await page.evaluate(()=>{
     const edge=document.querySelector('.viewer-actions-launcher').getBoundingClientRect().left;
-    return [...document.querySelectorAll('.viewer-answer-area > input, .viewer-answer-area > textarea, .choice-button-group__item, .boolean-segmented-control')]
+    return [...document.querySelectorAll('.viewer-answer-area > input, .viewer-answer-area > textarea, .choice-button-group__item, .boolean-segmented-control, .viewer-answer-area button')]
      .filter(node=>!node.hidden).every(node=>node.getBoundingClientRect().right<=edge-4);
    }),'answer controls retain clearance from the floating launcher throughout scrolling');
    const prompt=page.locator('[data-block-id="b1"] .viewer-audio-control--question');
@@ -155,10 +155,20 @@ try {
      &&Math.abs((b.top+b.bottom)-(icon.top+icon.bottom))<1;
    }),'chooser SVG close icon is centered in its circular button');
    const backgroundScroll = await page.evaluate(()=>scrollY);
+   // Simulate late font/media reflow above the current viewport. Overflow
+   // locking alone blocks wheels but still permits browser scroll anchoring.
+   const headerPadding = await page.locator('.viewer-header').evaluate(node=>{
+    const previous=node.style.paddingBottom;
+    node.style.paddingBottom=(parseFloat(getComputedStyle(node).paddingBottom)+18)+'px';
+    return previous;
+   });
    await page.mouse.move(1,1);
    await page.mouse.wheel(0,1200);
    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
    assert.equal(await page.evaluate(()=>scrollY),backgroundScroll,'modal backdrop cannot move the worksheet');
+   await page.locator('.viewer-header').evaluate((node,previous)=>{node.style.paddingBottom=previous;},headerPadding);
+   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+   assert.equal(await page.evaluate(()=>scrollY),backgroundScroll,'restoring background layout also preserves modal scroll lock');
    assert.equal(await page.evaluate(()=>window.viewerSession.state.lastActiveBlockId),current);
    // Traverse every section exactly once, including short and 200/400% equivalent CSS viewports.
    const seen=[];
@@ -188,6 +198,7 @@ try {
    if(shots)await page.screenshot({path:`${shots}/chooser-${locale}-${viewport.width}-${viewport.height}.png`});
    await page.locator('.viewer-chooser__close').click();
    assert.equal(await page.locator('dialog[open]').count(),0);
+   assert.equal(await page.evaluate(()=>getComputedStyle(document.documentElement).overflowAnchor),'auto','normal scroll anchoring returns after closing');
    assert(await page.evaluate(()=>document.activeElement.matches('.viewer-browse,.viewer-actions-launcher')));
   }
   // Enlarged text uses measured row heights; resize keeps the focused item.

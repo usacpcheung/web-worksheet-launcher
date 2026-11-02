@@ -3184,6 +3184,16 @@ body:has(.viewer-shell--continuous) #app {
   transform:none;
 }
 
+/* On narrow/short viewports the utility controls move to the header's left.
+   Open toward the worksheet instead of retaining the right-anchored menu. */
+.viewer-shell--continuous .viewer-header .language-selector__menu {
+  left:0;
+  right:auto;
+  box-sizing:border-box;
+  min-width:min(176px, calc(100vw - 64px));
+  max-width:calc(100vw - 64px);
+}
+
 .viewer-action-panel .language-selector__menu {
   left:0;
   right:auto;
@@ -3223,6 +3233,8 @@ html:has(.viewer-shell--continuous) {
 }
 html:has(.viewer-navigation dialog[open]) {
   overflow: hidden;
+  /* Late font/media reflow must not scroll the inert worksheet either. */
+  overflow-anchor: none;
 }
 
 /* Menus open inward from the prompt’s top-right audio control. */
@@ -3255,3 +3267,129 @@ html:has(.viewer-navigation dialog[open]) {
 
 .viewer-shell--continuous .question-card:has(.choice-button-group--images){grid-template-columns:minmax(0,1fr)}
 .viewer-shell--continuous .question-card:has(.choice-button-group--images) .viewer-answer-area{grid-column:1;grid-row:auto}
+
+/* Content sections share the question-number gutter, without becoming questions. */
+.viewer-shell--continuous {
+  --viewer-card-inset:70px;
+  --viewer-marker-gap:36px;
+  --viewer-marker-size:36px;
+  --viewer-book-size:40px;
+  --viewer-marker-top:-9px;
+  --viewer-content-tint-top:28px;
+}
+.viewer-shell--continuous .viewer-header { padding-bottom:16px; }
+.viewer-shell--continuous .viewer-block-section:first-child > :is(.content-card, .question-card) {
+  padding-top:24px;
+  --viewer-content-tint-top:8px;
+}
+.viewer-shell--continuous .content-card { position:relative; isolation:isolate; }
+.viewer-shell--continuous .content-card > .worksheet-text > :first-child { margin-top:0; }
+.viewer-shell--continuous .content-card::before {
+  content:"";
+  position:absolute;
+  z-index:-1;
+  pointer-events:none;
+  /* Use the same tabular numeral metrics as the two-digit ordinal. */
+  font-size:var(--viewer-marker-size);
+  font-weight:500;
+  font-variant-numeric:tabular-nums;
+  top:var(--viewer-content-tint-top);
+  bottom:22px;
+  left:calc(var(--viewer-card-inset) - var(--viewer-marker-gap) - 2ch - 10px);
+  right:-12px;
+  border-radius:12px;
+  background:linear-gradient(145deg,#edf5ff 0%,#f7fbff 90px,#fff 240px);
+}
+.viewer-content-heading {
+  position:relative;
+  height:0;
+  font-size:var(--viewer-marker-size);
+  font-weight:500;
+  font-variant-numeric:tabular-nums;
+}
+.viewer-content-heading > .viewer-book-icon {
+  position:absolute;
+  top:var(--viewer-marker-top);
+  left:calc(0px - var(--viewer-marker-gap) - 2ch);
+  width:var(--viewer-book-size);
+  height:var(--viewer-book-size);
+  /* Align the visible stroke, not the SVG viewBox's empty left margin. */
+  transform:translateX(-4.8%);
+  color:var(--viewer-blue);
+}
+@media (max-width:900px), (max-height:650px) {
+  .viewer-shell--continuous {
+    --viewer-card-inset:36px;
+    --viewer-marker-gap:12px;
+    --viewer-marker-size:30px;
+    --viewer-book-size:34px;
+    --viewer-marker-top:-5px;
+    --viewer-content-tint-top:18px;
+  }
+  .viewer-shell--continuous .viewer-block-section { margin-inline:38px 28px; }
+  .viewer-shell--continuous .viewer-block-section:first-child > :is(.content-card, .question-card) { padding-top:20px; }
+}
+@media (max-width:600px) {
+  .viewer-shell--continuous {
+    --viewer-card-inset:18px;
+    --viewer-marker-gap:8px;
+    --viewer-marker-size:24px;
+    --viewer-book-size:28px;
+  }
+  /* Reserve the fixed launcher width plus clearance throughout scrolling. */
+  .viewer-shell--continuous .viewer-block-section { margin-inline:43px 44px; }
+}
+@media print {
+  .viewer-shell--continuous .content-card::before { display:none; }
+}
+
+/* Keep the answer, actions and guidance together without reserving empty rows. */
+.viewer-shell--continuous .viewer-answer-area:has(> textarea) { gap:8px; }
+.viewer-shell--continuous .viewer-answer-area > :is(.viewer-media-feedback, .input-error):empty { display:none; }
+.viewer-shell--continuous .question-card__text-footer { margin-top:-2px; gap:8px; }
+.viewer-shell--continuous .question-card__text-actions-row { width:100%; gap:8px; }
+.viewer-shell--continuous .question-card__text-actions-row > .text-counter { width:100%; text-align:right; }
+.viewer-shell--continuous .question-card__rewrite-row { width:100%; gap:8px; flex-wrap:wrap; }
+.viewer-shell--continuous .question-card__rewrite-row .icon-nav-btn {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+  min-height:44px;
+  box-sizing:border-box;
+  padding:9px 12px;
+  line-height:1.5;
+  background:#f8fafc;
+  color:#415873;
+  border-color:#d8e2ee;
+}
+.viewer-shell--continuous .question-card__rewrite-row .viewer-icon { width:17px; height:17px; flex:none; }
+.viewer-shell--continuous .question-card__rewrite-row .question-card__voice-btn {
+  background:#edf5ff;
+  border-color:#c9dcf6;
+  color:#2560a5;
+}
+.viewer-shell--continuous .question-card__rewrite-row .icon-nav-btn:disabled {
+  background:#f5f7fa;
+  border-color:#e3e9f0;
+  color:#8493a5;
+  cursor:default;
+}
+.viewer-shell--continuous .question-card__rewrite-messages { gap:4px; }
+.viewer-shell--continuous .question-card__rewrite-messages:not(:has(> :not(:empty))),
+.viewer-shell--continuous .question-card__rewrite-messages > :empty { display:none; }
+.viewer-shell--continuous .question-card__rewrite-hint { color:#64748b; }
+.viewer-shell--continuous .question-card__rewrite-hint.is-warning { color:#8a4b14; }
+.viewer-shell--continuous .question-card__text-footer .viewer-voice { margin:0; }
+.viewer-shell--continuous .question-card__text-footer .viewer-voice-hint { margin:0; line-height:1.65; }
+@media (hover:hover) {
+  .viewer-shell--continuous .question-card__rewrite-row .icon-nav-btn:hover:not(:disabled) {
+    background:#e7f0fc;
+    border-color:#afc9eb;
+    transform:none;
+  }
+}
+.viewer-shell--continuous .question-card__rewrite-row .icon-nav-btn:focus-visible {
+  outline:2px solid #256ac4;
+  outline-offset:3px;
+}

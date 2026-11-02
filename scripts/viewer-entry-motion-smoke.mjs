@@ -19,6 +19,9 @@ try {
   });
   await page.goto(base+'/server/viewer/?localAttemptId=motion');
   await page.locator('#answer-q0').waitFor();await page.evaluate(()=>document.fonts.ready);
+  // End initial resume alignment through a real interaction before controlled
+  // scrolling. Font/layout callbacks can otherwise restore q0 after scrollTo.
+  await page.locator('.viewer-header h1').click();
   await page.mouse.move(1,1);
   await page.evaluate(()=>{const node=document.querySelector('[data-block-id="q3"] .question-card__prompt-row');window.scrollTo(0,scrollY+node.getBoundingClientRect().top-innerHeight*.75);});
   await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
@@ -39,8 +42,14 @@ try {
   assert.equal(await prompt.evaluate(n=>n.style.filter),'');
   assert.equal(await prompt.evaluate(n=>n.getAnimations().length),0);
   await page.mouse.move(1,1);
+  // Rearming starts on a rendered frame, not at scrollTo. A fixed wall-clock
+  // sleep raced that frame on busy CI runners. Synchronize rendering on both
+  // sides of the existing 190ms delay; still require real replay below.
   await page.evaluate(()=>window.scrollTo(0,0));
-  await page.waitForTimeout(250); // The reference deliberately delays off-screen rearming.
+  assert(await page.locator('[data-block-id="q3"]').evaluate(n=>n.getBoundingClientRect().top>innerHeight+140),'whole section leaves the rearm buffer');
+  await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
+  await page.waitForTimeout(250);
+  await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
   await page.evaluate(()=>{const node=document.querySelector('[data-block-id="q3"] .question-card__prompt-row');window.scrollTo(0,scrollY+node.getBoundingClientRect().top-innerHeight*.75);});
   await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
   assert(await prompt.evaluate(n=>n.getAnimations().some(a=>a.id==='viewer-entry-prompt')),'off-screen replay');
