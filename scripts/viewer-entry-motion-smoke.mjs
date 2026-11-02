@@ -19,6 +19,9 @@ try {
   });
   await page.goto(base+'/server/viewer/?localAttemptId=motion');
   await page.locator('#answer-q0').waitFor();await page.evaluate(()=>document.fonts.ready);
+  // End initial resume alignment through a real interaction before controlled
+  // scrolling. Font/layout callbacks can otherwise restore q0 after scrollTo.
+  await page.locator('.viewer-header h1').click();
   await page.mouse.move(1,1);
   await page.evaluate(()=>{const node=document.querySelector('[data-block-id="q3"] .question-card__prompt-row');window.scrollTo(0,scrollY+node.getBoundingClientRect().top-innerHeight*.75);});
   await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
