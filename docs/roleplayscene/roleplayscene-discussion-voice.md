@@ -4,7 +4,14 @@
 
 The discussion workflow is implemented on `main` and shares the worksheet voice-processing module.
 
-The discussion input, including choice cue-card discussions, offers **Add by voice / 用語音加入**. Sign-in is checked before microphone permission. A successful recording is transcribed, only the new transcript is rewritten, and the result is inserted at the end or after a deliberately placed caret/selection. Existing discussion text is preserved; Undo restores the exact previous text. Whole-discussion Rewrite stays explicit. Its input limit is now 2,000 Unicode code points, separate from total discussion length. No worksheet answer-length limit is imposed.
+The discussion input, including choice cue-card discussions, offers **Add by voice / 用語音加入**. Sign-in is checked before microphone permission. Authentication-required failures
+in voice input, whole-discussion rewriting or recovery processing offer the shared
+**Sign in / Cancel** prompt. Cancel/Escape preserves discussion and recovery without
+opening login; Escape closes only the prompt, not the discussion panel underneath.
+Confirming uses the existing login flow, then requires an explicit recording or
+retry action. Closing the form or replacing the project invalidates a pending
+prompt, including replacement with the same story fingerprint. No work is replayed
+automatically after login. A successful recording is transcribed, only the new transcript is rewritten, and the result is inserted at the end or after a deliberately placed caret/selection. Existing discussion text is preserved; Undo restores the exact previous text. Whole-discussion Rewrite stays explicit. Its input limit is now 2,000 Unicode code points, separate from total discussion length. No worksheet answer-length limit is imposed.
 
 The discussion session adapts the existing worksheet recorder, processing workflow and recovery controls. It owns operations independently of panel DOM. One operation runs per story session. Closing a panel or navigating stops recording and processes the original scene; later network results never switch scenes or move focus away from another discussion. Changing stories or leaving player mode cancels the operation and advances a generation guard. Story fingerprint, generation, scene and text snapshots protect insertion.
 
@@ -17,6 +24,11 @@ Recovery uses the existing sessionStorage lifetime. Transcript text is backed up
 No backend routes, providers, environment settings, database migration, editor controls, package contracts, or retired widget restoration are required. The recorder retains its existing approximately one-minute and 20 MiB limits. Slow requests remain visibly pending until cancellation or transport failure; no automatic retries were introduced.
 
 ## Verification
+
+- Run `node scripts/roleplayscene-voice-sign-in-smoke.mjs` for sign-in consent,
+  cancellation, explicit post-login recording, recovery preservation and stale
+  panel/project guards in both modes, languages and desktop/mobile widths.
+
 
 - Run `npm test` for the full suite, including adapter tests for insertion, undo, preflight, cancellation/reused scene IDs, sessionStorage recovery, print exclusion, and Unicode limits.
 - With the static server running, run `node scripts/roleplayscene-music-navigation-smoke.mjs` for native audio and actual Chrome Back/Forward navigation. It uses full headless Chromium with back/forward caching enabled and fails unless a cached restore is exercised.

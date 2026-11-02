@@ -35,8 +35,15 @@ This merged workflow is active on `main`. Historical PR sequencing is no longer 
 - Rewrite input is limited to 2,000 Unicode code points. The existing worksheet
   answer limit remains separate and uses UTF-16 length. Oversized additions are
   retained in an editable recovery area, never truncated into the answer.
-- Session readiness is checked before requesting microphone permission. Sign-in
-  uses the existing flow and requires another explicit click; it never starts
+- Session readiness is checked before requesting microphone permission. In the
+  viewer, an authentication-required result first offers **Sign in / Cancel**
+  using the shared confirmation dialog. Cancel/Escape preserves the answer and
+  any recovery content without opening login. Confirming uses the existing
+  popup/session verification; a stale or disposed question cannot start login.
+  Concurrent viewer voice requests share one prompt. Network/permission failures
+  do not trigger this prompt. RolePlayScene discussion uses the same confirmation
+  helper with its own project and panel-lifetime guards.
+  Sign-in requires another explicit click; it never starts
   recording automatically. If the initial session check fails, click the original
   action again after signing in; whole-answer Rewrite then uses the current answer.
   No empty rewrite recovery source is queued. Audio retained after an upload authentication failure
@@ -76,6 +83,7 @@ node scripts/static-server.mjs
 
 ```sh
 node scripts/viewer-voice-smoke.mjs
+node scripts/viewer-voice-sign-in-smoke.mjs
 ```
 
 `VIEWER_SMOKE_URL` can override `http://127.0.0.1:8765`.

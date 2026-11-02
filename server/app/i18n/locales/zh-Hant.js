@@ -683,6 +683,12 @@ export default {
     },
     "review": { "notAnswered": "未作答" },
     "voice": {
+      "signInTitleVoice": "登入以使用語音輸入",
+      "signInTitleRewrite": "登入以改寫答案",
+      "signInPromptVoice": "系統會保留你目前的答案。登入後，請再次按「用語音加入」開始錄音。",
+      "signInPromptRewrite": "系統會保留你目前的答案。登入後，請再次按「改寫」繼續。",
+      "signInPromptRecovery": "系統會保留你目前的答案及復原內容。登入後，請返回復原操作區並自行重試。錄音及處理不會自動開始。",
+
       "resolveRecovery": "請先檢查或捨棄復原內容，再開始新的語音輸入或改寫整個答案。",
       "signInThenRewrite": "請登入，然後再次按「改寫」。系統將使用你目前的答案。",
       "signInThenVoice": "請登入，然後再次按「用語音加入」。錄音不會自動開始。",

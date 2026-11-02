@@ -1,7 +1,7 @@
 import { t } from '../i18n/index.js';
 
 // Presentation adapter only. Each app retains its surrounding feature surface.
-export function promptForReadSignIn({ isCurrent = () => true, blocked = false, canRedirect = false, redirect, intent, confirmation = false } = {}) {
+export function promptForReadSignIn({ isCurrent = () => true, blocked = false, canRedirect = false, redirect, intent, confirmation = false, title, description } = {}) {
   if (typeof document === 'undefined' || typeof document.createElement !== 'function' || !isCurrent()) return Promise.resolve(false);
   return new Promise(resolve => {
     const previous = document.activeElement;
@@ -11,10 +11,10 @@ export function promptForReadSignIn({ isCurrent = () => true, blocked = false, c
     dialog.style.cssText = 'box-sizing:border-box;max-width:min(440px,90vw);border:1px solid #cbd5e1;border-radius:12px;padding:24px;color:#172033;background:white';
     const heading = document.createElement('h3');
     heading.id = `read-auth-${Math.random().toString(36).slice(2)}`;
-    heading.textContent = t(confirmation ? 'mutationAuth.title' : 'readAuth.title');
+    heading.textContent = title ?? t(confirmation ? 'mutationAuth.title' : 'readAuth.title');
     dialog.setAttribute('aria-labelledby', heading.id);
     const body = document.createElement('p');
-    body.textContent = t(blocked ? 'apiErrors.popupBlockedHelp' : confirmation ? 'mutationAuth.confirm' : intent?.kind === 'mutation' ? 'mutationAuth.description' : 'readAuth.description');
+    body.textContent = description ?? t(blocked ? 'apiErrors.popupBlockedHelp' : confirmation ? 'mutationAuth.confirm' : intent?.kind === 'mutation' ? 'mutationAuth.description' : 'readAuth.description');
     const actions = document.createElement('div');
     actions.className = 'confirm-modal__actions';
     actions.style.cssText = 'display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px';
