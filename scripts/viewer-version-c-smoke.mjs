@@ -155,10 +155,20 @@ try {
      &&Math.abs((b.top+b.bottom)-(icon.top+icon.bottom))<1;
    }),'chooser SVG close icon is centered in its circular button');
    const backgroundScroll = await page.evaluate(()=>scrollY);
+   // Simulate late font/media reflow above the current viewport. Overflow
+   // locking alone blocks wheels but still permits browser scroll anchoring.
+   const headerPadding = await page.locator('.viewer-header').evaluate(node=>{
+    const previous=node.style.paddingBottom;
+    node.style.paddingBottom=(parseFloat(getComputedStyle(node).paddingBottom)+18)+'px';
+    return previous;
+   });
    await page.mouse.move(1,1);
    await page.mouse.wheel(0,1200);
    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
    assert.equal(await page.evaluate(()=>scrollY),backgroundScroll,'modal backdrop cannot move the worksheet');
+   await page.locator('.viewer-header').evaluate((node,previous)=>{node.style.paddingBottom=previous;},headerPadding);
+   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+   assert.equal(await page.evaluate(()=>scrollY),backgroundScroll,'restoring background layout also preserves modal scroll lock');
    assert.equal(await page.evaluate(()=>window.viewerSession.state.lastActiveBlockId),current);
    // Traverse every section exactly once, including short and 200/400% equivalent CSS viewports.
    const seen=[];
@@ -188,6 +198,7 @@ try {
    if(shots)await page.screenshot({path:`${shots}/chooser-${locale}-${viewport.width}-${viewport.height}.png`});
    await page.locator('.viewer-chooser__close').click();
    assert.equal(await page.locator('dialog[open]').count(),0);
+   assert.equal(await page.evaluate(()=>getComputedStyle(document.documentElement).overflowAnchor),'auto','normal scroll anchoring returns after closing');
    assert(await page.evaluate(()=>document.activeElement.matches('.viewer-browse,.viewer-actions-launcher')));
   }
   // Enlarged text uses measured row heights; resize keeps the focused item.
