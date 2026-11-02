@@ -3233,6 +3233,8 @@ html:has(.viewer-shell--continuous) {
 }
 html:has(.viewer-navigation dialog[open]) {
   overflow: hidden;
+  /* Late font/media reflow must not scroll the inert worksheet either. */
+  overflow-anchor: none;
 }
 
 /* Menus open inward from the prompt’s top-right audio control. */
