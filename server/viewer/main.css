@@ -3334,7 +3334,8 @@ html:has(.viewer-navigation dialog[open]) {
     --viewer-marker-size:24px;
     --viewer-book-size:28px;
   }
-  .viewer-shell--continuous .viewer-block-section { margin-inline:43px 28px; }
+  /* Reserve the fixed launcher width plus clearance throughout scrolling. */
+  .viewer-shell--continuous .viewer-block-section { margin-inline:43px 44px; }
 }
 @media print {
   .viewer-shell--continuous .content-card::before { display:none; }
