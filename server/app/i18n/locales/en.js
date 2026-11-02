@@ -683,6 +683,12 @@ export default {
     },
     "review": { "notAnswered": "Not answered" },
     "voice": {
+      "signInTitleVoice": "Sign in to use voice input",
+      "signInTitleRewrite": "Sign in to rewrite your answer",
+      "signInPromptVoice": "Your current answer will be kept. After signing in, press “Add by voice” again to start recording.",
+      "signInPromptRewrite": "Your current answer will be kept. After signing in, press “Rewrite” again to continue.",
+      "signInPromptRecovery": "Your current answer and recovery content will be kept. After signing in, return to the recovery controls and explicitly retry. Recording and processing will not start automatically.",
+
       "resolveRecovery": "Review or discard the recovered text before starting another voice input or rewriting the whole answer.",
       "signInThenRewrite": "Sign in, then click Rewrite again. Your current answer will be used.",
       "signInThenVoice": "Sign in, then click Add by voice again. Recording will not start automatically.",

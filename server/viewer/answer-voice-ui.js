@@ -38,7 +38,7 @@ export function createVoiceStatus({ session, t, view }) {
   } };
 }
 
-export function createVoiceControls({ session, block, control, t, view, applied, signal, sharedStatusId, canRestoreFocus }) {
+export function createVoiceControls({ session, block, control, t, view, applied, signal, sharedStatusId, canRestoreFocus, requestSignIn }) {
   let intent = null;
   let placedSelection = null;
   const root = document.createElement('div'); root.className = 'viewer-voice';
@@ -58,10 +58,19 @@ export function createVoiceControls({ session, block, control, t, view, applied,
   });
   const perform = async (options = {}) => {
     if (session.voice.active) return;
+    const attemptId = session.state.localAttemptId;
+    const payload = session.state.viewerPayload;
     const result = await session.voice.run(block.blockId, { intent, ...options });
     intent = null;
-    if (result?.error?.code === 'AUTH_REQUIRED' && !signal?.aborted) session.beginServerSignIn();
-    update();
+    if (result?.error?.code === 'AUTH_REQUIRED' && !signal?.aborted) {
+      if (requestSignIn) {
+        const isCurrent = () => !signal?.aborted && control.isConnected
+          && session.state.localAttemptId === attemptId && session.state.viewerPayload === payload;
+        await requestSignIn({ isCurrent });
+        if (!isCurrent()) return;
+      } else session.beginServerSignIn();
+    }
+    if (!signal?.aborted) update();
   };
   const add = button(t('viewer.voice.add'), () => perform());
   add.classList.add('question-card__voice-btn');
