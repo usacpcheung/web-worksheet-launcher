@@ -41,7 +41,8 @@ This merged workflow is active on `main`. Historical PR sequencing is no longer 
   any recovery content without opening login. Confirming uses the existing
   popup/session verification; a stale or disposed question cannot start login.
   Concurrent viewer voice requests share one prompt. Network/permission failures
-  do not trigger this prompt. RolePlayScene retains its own existing sign-in policy.
+  do not trigger this prompt. RolePlayScene discussion uses the same confirmation
+  helper with its own project and panel-lifetime guards.
   Sign-in requires another explicit click; it never starts
   recording automatically. If the initial session check fails, click the original
   action again after signing in; whole-answer Rewrite then uses the current answer.

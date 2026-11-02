@@ -4,8 +4,8 @@ import { getVoiceRecovery, hasRecoveryText } from './answer-voice-workflow.js';
 
 const pending = new WeakMap();
 
-// Viewer-only presentation policy. Authentication never replays voice/provider work.
-export function requestViewerVoiceSignIn(session, { blockId, signal, isCurrent = () => true,
+// Shared learner voice presentation policy (viewer and RolePlayScene). Authentication never replays voice/provider work.
+export function requestVoiceSignIn(session, { blockId, signal, isCurrent = () => true,
   prompt = promptForReadSignIn, translate = t,
 } = {}) {
   if (pending.has(session)) return pending.get(session);

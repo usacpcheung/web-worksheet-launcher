@@ -17,7 +17,7 @@ import { PackageLoadProgress, packageLoadLabel } from './package-load-progress.j
 import { setWorksheetText, renderWorksheetText, WORKSHEET_TEXT_CSS, installWorksheetTextStyles, assertWorksheetTextFormats, hasMarkdown } from '../app/worksheet-text.js';
 import { createVoiceWorkflow, normalizeVoiceRecovery, REWRITE_INPUT_LIMIT, unicodeLength, hasPendingRecovery, getVoiceRecovery } from './answer-voice-workflow.js';
 import { createVoiceControls, createVoiceStatus } from './answer-voice-ui.js';
-import { requestViewerVoiceSignIn } from './voice-sign-in.js';
+import { requestVoiceSignIn } from './voice-sign-in.js';
 import { createWorksheetViewHost, createBlockViewScope } from './block-view-host.js';
 import { createEntryMotion } from './entry-motion.js';
 import { createSectionNavigation } from './section-navigation.js';
@@ -6594,7 +6594,7 @@ function renderViewerShell(session) {
 
         const voiceUi = createVoiceControls({ session, block, control, t, signal,
           sharedStatusId: crossQuestionStatus.root.id,
-          requestSignIn: ({ isCurrent }) => requestViewerVoiceSignIn(session, {
+          requestSignIn: ({ isCurrent }) => requestVoiceSignIn(session, {
             blockId: block.blockId, signal: scope.signal, isCurrent,
           }),
           canRestoreFocus: () => {

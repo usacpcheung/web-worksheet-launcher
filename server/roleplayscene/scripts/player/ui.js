@@ -1,5 +1,6 @@
 import { getSceneName } from '../scene-name.js';
 import { createVoiceControls, createVoiceStatus } from '../../../viewer/answer-voice-ui.js';
+import { requestVoiceSignIn } from '../../../viewer/voice-sign-in.js';
 import { t as sharedTranslate } from '../../../app/i18n/index.js';
 import { unicodeLength, hasPendingRecovery } from '../../../viewer/answer-voice-workflow.js';
 import { translate } from '../i18n.js';
@@ -452,7 +453,7 @@ export function renderPlayerUI({
   const capturingVoice = () => ['requesting_permission', 'recording', 'stopping'].includes(discussionSession?.voice?.active?.state);
   const voiceTranslate = (key, vars) => key === 'viewer.voice.otherQuestion'
     ? translate('player.discussion.voiceOtherScene', vars)
-    : ['locked', 'atEnd', 'atCursor', 'resolveRecovery', 'signInThenRewrite'].includes(key.replace('viewer.voice.', ''))
+    : ['locked', 'atEnd', 'atCursor', 'resolveRecovery', 'signInThenRewrite', 'signInTitleRewrite', 'signInPromptVoice', 'signInPromptRewrite', 'signInPromptRecovery'].includes(key.replace('viewer.voice.', ''))
       ? translate('player.discussion.voice.' + key.replace('viewer.voice.', ''), vars) : sharedTranslate(key, vars);
   const viewVoice = id => { if (id === scene?.id) openDiscussion(); else viewDiscussionScene?.(id); };
   const voiceStatus = discussionSession?.voice ? createVoiceStatus({ session: discussionSession, t: voiceTranslate, view: viewVoice }) : null;
@@ -584,10 +585,18 @@ export function renderPlayerUI({
     rewriteButton.className = 'theater-panel-action theater-panel-action--primary';
     rewriteButton.textContent = translate('player.discussion.rewrite');
 
+    const voiceFormSignal = formLifetime.signal;
+    const voiceProject = discussionSession?.project;
+    const voiceGeneration = discussionSession?.generation;
     const voiceControls = discussionSession?.voice ? createVoiceControls({
       session: discussionSession, block: discussionSession.state.viewerPayload.blocks.find(b => b.blockId === scene.id),
       control: textarea, t: voiceTranslate, view: viewVoice,
-      signal: formLifetime.signal,
+      signal: voiceFormSignal,
+      requestSignIn: ({ isCurrent }) => requestVoiceSignIn(discussionSession, {
+        blockId: scene.id, signal: voiceFormSignal, translate: voiceTranslate,
+        isCurrent: () => isCurrent() && discussionSession.project === voiceProject
+          && discussionSession.generation === voiceGeneration,
+      }),
       applied: value => { textarea.value = value.text; },
     }) : null;
     if (voiceControls) actions.append(voiceControls.add);
@@ -704,7 +713,7 @@ export function renderPlayerUI({
   cueClose.addEventListener('click', () => closeCueCard({ returnFocus: true }));
 
   const handleDocumentKeydown = (event) => {
-    if (event.key === 'Escape' && !cueOverlay.hidden) {
+    if (event.key === 'Escape' && !cueOverlay.hidden && !event.target?.closest?.('dialog[open]')) {
       closeCueCard({ returnFocus: true });
     }
   };
