@@ -82,7 +82,9 @@ try {
    await settled();
    assert.equal(await page.evaluate(app=>window[`${app}Session`]._uploadPackageFlow,app),null);
    mode='success'; await (app === 'viewer' ? clickViewerSave(page) : button.click()); await settled();
-   assert.equal(requests.length,7); assert.equal(requests[6].title,app === 'viewer' ? 'Original snapshot' : 'After cancellation');
+   // A new save uses the current automatic name; only retries within the
+   // same recovery flow retain the original name and ZIP snapshot above.
+   assert.equal(requests.length,7); assert.equal(requests[6].title,'After cancellation');
    assert.notDeepEqual(requests[6].bytes,requests[0].bytes);
    // Reopening the same ID in a new generation invalidates a retained snapshot.
    mode='cancel'; await (app === 'viewer' ? clickViewerSave(page) : button.click());
