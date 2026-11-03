@@ -28,6 +28,7 @@ export function assertAttemptPackage(manifest, worksheet, attempt, { allowLegacy
     for (const key of ['studentName', 'attemptName']) {
       if (metadata[key] !== undefined && typeof metadata[key] !== 'string') throw new Error(`Invalid attempt metadata ${key}.`);
     }
+    if (metadata.attemptNameMode !== undefined && !['auto', 'custom'].includes(metadata.attemptNameMode)) throw new Error('Invalid attemptNameMode.');
     if (metadata.studentNameResolved !== undefined && typeof metadata.studentNameResolved !== 'boolean') throw new Error('Invalid studentNameResolved.');
   }
   if (allowLegacyEnvelope) return;

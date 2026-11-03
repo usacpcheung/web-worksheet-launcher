@@ -46,12 +46,21 @@ Authentication pending intents use the same `worksheetLauncher:pendingIntent` ke
 ### Attempt menu identity
 
 Local attempt records additionally retain `studentNameResolved`,
-`attemptNameDraft`, `savedAttemptName`, `savedAttemptSubject`, and
+`attemptNameMode`, `attemptNameDraft`, `savedAttemptName`, `savedAttemptSubject`, and
 `savedAttemptAccount`. Missing fields default to an unresolved optional student
 name, an empty draft/name, and no server association. The saved name/subject are
 remembered only after a successful server save or authenticated server resume.
-Changing accounts makes the name editable again; it does not grant access to the
-old account's records. No IndexedDB version migration is required.
+The final name remains editable on every server save. New/edited names retain the
+80-character limit; an unchanged legacy server name can still be saved. Automatic names follow
+student-name corrections and become title-only when the student name is cleared.
+An explicit empty student name is resolved and does not prompt again. Manual
+attempt-name input selects custom mode, preserved across cancellation, reload,
+export and import. Legacy records matching the current generated suggestion use
+automatic mode; other existing names are conservatively preserved as custom.
+Server-generated copy suffixes are preserved as custom names.
+A different final name creates another entry; matching names use the existing
+normalized owner/title/subject conflict choices. Slot-full recovery is unchanged.
+Changing accounts does not grant access to the old account's records. No IndexedDB version migration is required.
 
 The viewer's attempt menu offers server save, server-attempt management, local ZIP
 export, and the existing details/print settings. Local Save is labelled “Save on

@@ -88,6 +88,32 @@ try {
       await dialog.locator('[type="submit"]').click();
       await page.waitForFunction(() => document.querySelector('.viewer-attempt-dialog input')?.value.includes(' — 陳同學'));
       assert.equal(await dialog.locator('input').inputValue(), 'Drawing worksheet 畫畫工作紙 — 陳同學');
+      // Saving an automatic name must not freeze it after the first upload.
+      await dialog.locator('[type="submit"]').click();
+      await page.waitForFunction(() => !viewerSession.state.isUploadAttemptFlowActive);
+      assert.equal(posts.at(-1).title, 'Drawing worksheet 畫畫工作紙 — 陳同學');
+      const changeStudent = async value => {
+        await openViewerAttemptMenu(page); await menu.locator('button').nth(3).click();
+        await page.locator('#viewer-student-name-input').fill(value);
+        await page.locator('.viewer-details-form').filter({ has: page.locator('#viewer-student-name-input') }).locator('[type="submit"]').click();
+        await page.keyboard.press('Escape');
+        await page.evaluate(() => viewerSession.autosave());
+      };
+      for (const student of ['李同學', '']) {
+        await changeStudent(student);
+        await page.reload();
+        await openViewerAttemptMenu(page); await menu.locator('button').first().click();
+        await dialog.waitFor();
+        const expected = 'Drawing worksheet 畫畫工作紙' + (student ? ` — ${student}` : '');
+        assert.equal(await dialog.locator('input').inputValue(), expected, 'no repeat student prompt after deliberate clearing');
+        assert.equal(await dialog.locator('input').isEditable(), true);
+        await dialog.locator('[type="submit"]').click();
+        await page.waitForFunction(() => !viewerSession.state.isUploadAttemptFlowActive);
+        assert.equal(posts.at(-1).title, expected);
+      }
+      posts.length = 0;
+      await openViewerAttemptMenu(page); await menu.locator('button').first().click();
+      await dialog.waitFor();
       await dialog.locator('input').fill('😀'.repeat(81));
       assert.equal(await dialog.locator('[type="submit"]').isDisabled(), true);
       await dialog.locator('input').fill('  ');
@@ -98,13 +124,14 @@ try {
       await dialog.getByRole('button', { name: await label('common.actions.cancel'), exact: true }).click();
       assert.equal(posts.length, 0);
       await page.waitForFunction(() => !viewerSession.state.isUploadAttemptFlowActive);
+      await changeStudent('王同學');
       await page.reload();
       await clickViewerSave(page);
       await page.waitForFunction(() => !viewerSession.state.isUploadAttemptFlowActive);
       assert.equal(posts.length, 1); assert.equal(posts[0].title, serverName);
       assert.equal(await page.evaluate(() => viewerSession.state.viewerPayload.title), 'Drawing worksheet 畫畫工作紙');
       await openViewerAttemptMenu(page); await menu.locator('button').first().click();
-      await dialog.waitFor(); assert.equal(await dialog.locator('input').isEditable(), false);
+      await dialog.waitFor(); assert.equal(await dialog.locator('input').isEditable(), true);
       assert.equal(await dialog.locator('input').inputValue(), serverName);
       await dialog.getByRole('button', { name: await label('common.actions.cancel'), exact: true }).click();
       // Resume through the active worksheet manager: old local attempt remains saved.
@@ -124,7 +151,7 @@ try {
       failArtifact = false;
       await manager.getByRole('button', { name: await label('common.actions.resume'), exact: true }).click();
       await page.waitForFunction(() => viewerSession.state.localAttemptId !== 'menu-test');
-      assert.equal(await page.evaluate(() => viewerSession.state.studentName), '陳同學');
+      assert.equal(await page.evaluate(() => viewerSession.state.studentName), '王同學');
       assert.equal(await page.evaluate(() => viewerSession.state.savedAttemptName), serverName);
       assert.equal(await page.evaluate(() => new URL(location.href).searchParams.get('localAttemptId')), await page.evaluate(() => viewerSession.state.localAttemptId));
       assert.equal(await page.evaluate(async () => (await (await import('/server/viewer/storage/index.js')).viewerStorage.attempts.get('menu-test')).answers.q.value), 'Keep my answer 保留答案');

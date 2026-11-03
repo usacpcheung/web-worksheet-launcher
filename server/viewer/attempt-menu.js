@@ -1,5 +1,5 @@
 // Viewer-only dialogs. Auth remains owned by the existing session coordinator.
-export function attemptDialog({ title, description = '', label, value = '', limit = 80, optional = false, readOnly = false, confirmLabel, cancelLabel, invalidLabel, isCurrent = () => true, onInput }) {
+export function attemptDialog({ title, description = '', label, value = '', limit = 80, optional = false, readOnly = false, existingValue = '', confirmLabel, cancelLabel, invalidLabel, isCurrent = () => true, onInput }) {
   if (!isCurrent()) return Promise.resolve(null);
   return new Promise(resolve => {
     const previous = document.activeElement?.closest('.viewer-attempt-menu')
@@ -22,7 +22,7 @@ export function attemptDialog({ title, description = '', label, value = '', limi
       input.setAttribute('aria-describedby', error.id);
       const validate = () => {
         const length = Array.from(input.value.trim()).length;
-        const invalid = (!optional && !length) || (!readOnly && length > limit);
+        const invalid = (!optional && !length) || (!readOnly && length > limit && input.value.trim() !== existingValue);
         confirm.disabled = invalid; counter.textContent = readOnly ? '' : `${Array.from(input.value).length}/${limit}`;
         error.textContent = invalid ? invalidLabel : ''; input.setAttribute('aria-invalid', String(invalid));
       };
@@ -75,4 +75,17 @@ export function defaultAttemptName(title, student) {
   const suffix = student?.trim() ? ` — ${student.trim()}` : '';
   const name = Array.from(suffix).slice(0, 60).join('');
   return Array.from(String(title || '')).slice(0, 80 - Array.from(name).length).join('') + name;
+}
+
+// Legacy records have no provenance: preserve names that differ from the suggestion.
+export function attemptNameMode(record, title, student) {
+  if (record.attemptNameMode === 'auto' || record.attemptNameMode === 'custom') return record.attemptNameMode;
+  const name = record.attemptNameDraft || record.savedAttemptName || '';
+  return !name || name === defaultAttemptName(title, student) ? 'auto' : 'custom';
+}
+
+export function currentAttemptName(state) {
+  return attemptNameMode(state, state.viewerPayload?.title, state.studentName) === 'custom'
+    ? (state.attemptNameDraft ?? state.savedAttemptName ?? '')
+    : defaultAttemptName(state.viewerPayload?.title, state.studentName);
 }

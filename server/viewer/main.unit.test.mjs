@@ -7255,7 +7255,7 @@ test('attempt upload reports missing local media without sending a request or bl
   assert.equal(session.state.isUploadingAttemptPackage, false);
 });
 
-test('attempt presentation metadata survives local recovery and ZIP import without importing a server association', async () => {
+for (const nameMode of ['auto', 'custom']) test(`attempt presentation metadata survives local recovery and ZIP import (${nameMode}) without importing a server association`, async () => {
   const mod = await loadViewerModule();
   const saved = [];
   const storage = { resumeFlags: { get: () => null, set() {} }, importedWorksheets: { put: async () => {}, remove: async () => {} },
@@ -7263,19 +7263,24 @@ test('attempt presentation metadata survives local recovery and ZIP import witho
   const session = new mod.ViewerAttemptSession(storage);
   session.applyAttemptState({ localId: 'original', localAttemptId: 'original', status: 'in_progress', startedAt: '2026-11-03T00:00:00Z',
     viewerPayload: { worksheetId: 'w', snapshotId: 's', snapshotVersion: 1, title: 'Worksheet', blocks: [{ blockId: 'q', kind: 'question', prompt: { text: 'Q' }, responseConfig: { inputType: 'text' } }] },
-    answers: { q: { value: 'Answer' } }, studentName: '', studentNameResolved: true, attemptNameDraft: 'Saved name (2)', savedAttemptName: 'Saved name (2)', savedAttemptSubject: 'Subject', savedAttemptAccount: 'account-a' });
+    answers: { q: { value: 'Answer' } }, studentName: '', studentNameResolved: true, attemptNameMode: nameMode, attemptNameDraft: 'Saved name (2)', savedAttemptName: 'Saved name (2)', savedAttemptSubject: 'Subject', savedAttemptAccount: 'account-a' });
   const recovery = session.createRecoveryRecord();
   assert.equal(recovery.studentNameResolved, true);
   assert.equal(recovery.savedAttemptAccount, 'account-a');
   const pkg = await session.buildUploadedAttemptPackage();
-  assert.deepEqual(pkg.attempt.metadata, { studentName: '', studentNameResolved: true, attemptName: 'Saved name (2)' });
+  assert.deepEqual(pkg.attempt.metadata, { studentName: '', studentNameResolved: true, attemptName: nameMode === 'auto' ? 'Worksheet' : 'Saved name (2)', attemptNameMode: nameMode });
+  assert.equal(recovery.attemptNameMode, nameMode);
   assert.equal(pkg.worksheet.title, 'Worksheet');
   assert.equal(JSON.stringify(pkg.attempt).includes('account-a'), false);
   const restored = new mod.ViewerAttemptSession(storage);
   restored.validateViewerPayload = async () => {};
   await restored.restoreAttemptPackageAsLocalAttempt({ manifest: pkg.manifest, worksheet: pkg.worksheet, attempt: pkg.attempt, assets: [] });
   assert.equal(restored.state.studentNameResolved, true);
-  assert.equal(restored.state.attemptNameDraft, 'Saved name (2)');
+  assert.equal(restored.state.attemptNameDraft, nameMode === 'auto' ? 'Worksheet' : 'Saved name (2)');
+  assert.equal(restored.state.attemptNameMode, nameMode);
+  restored.state.studentName = 'Ann';
+  const updated = await restored.buildUploadedAttemptPackage();
+  assert.equal(updated.attempt.metadata.attemptName, nameMode === 'auto' ? 'Worksheet — Ann' : 'Saved name (2)');
   assert.equal(restored.state.savedAttemptName, '');
   assert.equal(restored.state.savedAttemptAccount, null);
 });
@@ -7295,7 +7300,19 @@ test('successful server copy records the actual name and preserves success if lo
   const result = await session.uploadCurrentAttemptPackage({}, { conflictAction: 'copy' });
   assert.equal(result.ok, true);
   assert.equal(session.state.savedAttemptName, 'Chosen name (2)');
+  assert.equal(session.state.attemptNameMode, 'custom');
   assert.equal(session.state.attemptNameDraft, 'Chosen name (2)');
   assert.equal(session.state.savedAttemptAccount, 'account-a');
   assert.equal(session.state.savedAttemptSubject, 'Subject');
+});
+
+test('legacy saved-name-only recovery preserves its name while explicit custom clearing stays empty', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({ resumeFlags: { get: () => null, set() {} } });
+  const record = { localId: 'legacy', status: 'in_progress', viewerPayload: { title: 'Worksheet', blocks: [] }, savedAttemptName: 'My saved work', attemptNameDraft: '' };
+  session.applyAttemptState(record);
+  assert.equal(session.state.attemptNameMode, 'custom');
+  assert.equal(session.createRecoveryRecord().attemptNameDraft, 'My saved work');
+  session.applyAttemptState({ ...record, attemptNameMode: 'custom' });
+  assert.equal(session.createRecoveryRecord().attemptNameDraft, '');
 });

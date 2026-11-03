@@ -124,7 +124,9 @@ imports discard staged records before exposing an incoming draft.
 ## Optional attempt presentation metadata
 
 `content/attempt.json.metadata` may contain `studentName` (string),
-`studentNameResolved` (boolean), and `attemptName` (string). Missing fields retain
+`studentNameResolved` (boolean), `attemptName` (string), and optional
+`attemptNameMode` (`auto` or `custom`). Automatic names follow the worksheet title
+and current student name; custom names remain independent. Missing fields retain
 legacy defaults. `studentNameResolved: true` records an explicit decision to
 continue without a name as well as a confirmed name; print and server save share
 that decision. The existing details panel remains editable. These optional fields

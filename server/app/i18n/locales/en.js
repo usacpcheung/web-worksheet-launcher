@@ -667,7 +667,7 @@ export default {
       "export": "Export attempt package (.zip)",
       "local": "Save on this device",
       "name": "Attempt name",
-      "nameHelp": "This name identifies the server record without changing the worksheet title. Saving does not submit your answers.",
+      "nameHelp": "A different name creates another saved attempt and uses another slot; the previous entry remains. A matching name offers replacement or a copy. Saving does not submit your answers.",
       "invalidName": "Enter between 1 and 80 characters.",
       "student": "Student name (optional)",
       "studentHelp": "You may continue without a name. We will not ask again for this attempt. You can edit it later in Details and print settings.",

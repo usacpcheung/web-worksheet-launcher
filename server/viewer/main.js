@@ -1,5 +1,5 @@
 import { prepareBrowserEntry } from './browser-entry.js';
-import { attemptDialog, createAttemptMenu, defaultAttemptName } from './attempt-menu.js';
+import { attemptDialog, createAttemptMenu, attemptNameMode, currentAttemptName } from './attempt-menu.js';
 import { createChoiceButtonGroup as renderChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, getChoicePrefix } from './choice-button-group.js';
 import { optionImageRef, imageDescription, hasOptionImages } from '../app/option-images.js';
 import { prepareMutation } from '../app/auth/mutation-auth.js';
@@ -3112,7 +3112,9 @@ class ViewerAttemptSession {
     );
     this.state.studentName = pickAttemptStudentName(attemptRecord);
     this.state.studentNameResolved = attemptRecord.studentNameResolved === true;
-    this.state.attemptNameDraft = typeof attemptRecord.attemptNameDraft === 'string' ? attemptRecord.attemptNameDraft : '';
+    this.state.attemptNameMode = attemptNameMode(attemptRecord, this.state.viewerPayload?.title, this.state.studentName);
+    this.state.attemptNameDraft = typeof attemptRecord.attemptNameDraft === 'string' ? attemptRecord.attemptNameDraft : (attemptRecord.savedAttemptName || '');
+    if (!attemptRecord.attemptNameMode && !this.state.attemptNameDraft) this.state.attemptNameDraft = attemptRecord.savedAttemptName || '';
     this.state.savedAttemptName = typeof attemptRecord.savedAttemptName === 'string' ? attemptRecord.savedAttemptName : '';
     this.state.savedAttemptSubject = typeof attemptRecord.savedAttemptSubject === 'string' ? attemptRecord.savedAttemptSubject : null;
     this.state.savedAttemptAccount = typeof attemptRecord.savedAttemptAccount === 'string' ? attemptRecord.savedAttemptAccount : null;
@@ -3283,7 +3285,8 @@ class ViewerAttemptSession {
       lastActiveIndex: Number.isInteger(this.state.lastActiveIndex) ? this.state.lastActiveIndex : 0,
       studentName: this.state.studentName || '',
       studentNameResolved: this.state.studentNameResolved === true,
-      attemptNameDraft: this.state.attemptNameDraft || '',
+      attemptNameMode: this.state.attemptNameMode,
+      attemptNameDraft: currentAttemptName(this.state),
       savedAttemptName: this.state.savedAttemptName || '',
       savedAttemptSubject: this.state.savedAttemptSubject ?? null,
       savedAttemptAccount: this.state.savedAttemptAccount || null,
@@ -3617,7 +3620,8 @@ class ViewerAttemptSession {
       metadata: {
         studentName: this.state.studentName || '',
         studentNameResolved: this.state.studentNameResolved === true,
-        attemptName: this.state.attemptNameDraft || this.state.savedAttemptName || '',
+        attemptName: currentAttemptName(this.state),
+        attemptNameMode: this.state.attemptNameMode,
       },
       status: packageStatus,
       createdAt: this.state.startedAt || updatedAt,
@@ -3736,7 +3740,7 @@ class ViewerAttemptSession {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = formatAttemptDownloadFilename({ title: this.state.attemptNameDraft || this.state.savedAttemptName || this.state.viewerPayload?.title, updatedAt: nowIso() });
+      anchor.download = formatAttemptDownloadFilename({ title: currentAttemptName(this.state), updatedAt: nowIso() });
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
@@ -3850,7 +3854,7 @@ class ViewerAttemptSession {
       if (!prepared) {
         await this.flushLocalStateForAuthRedirect();
         if (!operation.canPublish()) return staleUploadResult();
-        const title = this.state.attemptNameDraft || this.state.savedAttemptName || String(this.state.viewerPayload?.title || 'Untitled worksheet');
+        const title = currentAttemptName(this.state);
         const subject = this.state.savedAttemptSubject ?? firstNonBlankString(
           this.state.sourceSubject,
           this.state.viewerPayload?.subject,
@@ -3928,6 +3932,7 @@ class ViewerAttemptSession {
 
       this.clearNotificationsBySource(VIEWER_NOTIFICATION_UPLOAD_SOURCE);
       this.state.savedAttemptName = uploadResult.data?.title || uploadTitle;
+      if (this.state.savedAttemptName !== uploadTitle) this.state.attemptNameMode = 'custom';
       this.state.attemptNameDraft = this.state.savedAttemptName;
       this.state.savedAttemptSubject = uploadResult.data?.subject ?? uploadSubject;
       this.state.savedAttemptAccount = this.state.serverSession?.user?.sub || null;
@@ -4214,6 +4219,8 @@ class ViewerAttemptSession {
       lastActiveIndex: 0,
       studentName: typeof rawAttempt.metadata?.studentName === 'string' ? rawAttempt.metadata.studentName : '',
       studentNameResolved: rawAttempt.metadata?.studentNameResolved === true,
+      attemptNameMode: options.serverName && options.serverName !== rawAttempt.metadata?.attemptName
+        ? undefined : rawAttempt.metadata?.attemptNameMode,
       attemptNameDraft: options.serverName || rawAttempt.metadata?.attemptName || '',
       savedAttemptName: options.serverName || '',
       savedAttemptSubject: options.serverName ? (options.subject ?? '') : null,
@@ -7100,10 +7107,11 @@ function renderViewerShell(session) {
         session.state.savedAttemptName = ''; session.state.savedAttemptSubject = null; session.state.savedAttemptAccount = null;
       }
       const value = await attemptDialog({ title: t('viewer.attemptMenu.save'), description: t('viewer.attemptMenu.nameHelp'),
-        label: t('viewer.attemptMenu.name'), value: session.state.attemptNameDraft || session.state.savedAttemptName || defaultAttemptName(session.state.viewerPayload.title, session.state.studentName),
-        readOnly: Boolean(session.state.savedAttemptName), confirmLabel: t('viewer.attemptMenu.save'), cancelLabel: t('common.actions.cancel'),
+        label: t('viewer.attemptMenu.name'), value: currentAttemptName(session.state),
+        existingValue: session.state.savedAttemptName || '',
+        confirmLabel: t('viewer.attemptMenu.save'), cancelLabel: t('common.actions.cancel'),
         invalidLabel: t('viewer.attemptMenu.invalidName'), isCurrent,
-        onInput: value => { session.state.attemptNameDraft = value; session.state.attemptRevision++; session.scheduleAutosave(); },
+        onInput: value => { session.state.attemptNameMode = 'custom'; session.state.attemptNameDraft = value; session.state.attemptRevision++; session.scheduleAutosave(); },
       });
       if (value === null || !isCurrent()) return;
       session.state.attemptNameDraft = value; session.state.attemptRevision++; await session.autosave();

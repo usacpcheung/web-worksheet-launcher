@@ -76,7 +76,7 @@ try {
    await settled();
    assert.equal(await page.evaluate(app=>window[`${app}Session`]._uploadPackageFlow,app),null);
    mode='success'; await (app === 'viewer' ? clickViewerSave(page) : button.click()); await settled();
-   assert.equal(requests.length,5); assert.equal(requests[4].title,app === 'viewer' ? 'Original snapshot' : 'After cancellation');
+   assert.equal(requests.length,5); assert.equal(requests[4].title,'After cancellation');
    assert.notDeepEqual(requests[4].bytes,requests[0].bytes);
    // Reopening the same ID in a new generation invalidates a retained snapshot.
    mode='cancel'; await (app === 'viewer' ? clickViewerSave(page) : button.click());
