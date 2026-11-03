@@ -1,3 +1,4 @@
+import { openViewerAttemptMenu } from './viewer-navigation-test-helpers.mjs';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { mkdir } from 'node:fs/promises';
@@ -75,6 +76,7 @@ try {
       assert.equal(results.answer, 'Preserved 答案');
       assert.equal(results.status, 'completed');
       assert.ok((await page.locator('.answer-summary:visible').innerText()).includes(results.completed));
+      await openViewerAttemptMenu(page);
       await page.getByRole('button', { name: results.detailsLabel, exact: true }).click();
       assert.ok((await page.locator('.viewer-details-modal').innerText()).includes(results.idLabel));
       if (locale === 'zh-Hant') {

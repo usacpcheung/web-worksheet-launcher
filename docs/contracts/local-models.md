@@ -42,3 +42,19 @@ Supported question input types are `text`, `number`, `boolean`, `multiple_choice
 Numeric answer keys use the shared number validator. A decimal-only question may retain a whole-valued decimal answer such as `1.0` (stored as numeric `1`); learner input formatting still follows the configured rules. Delayed question-image attachment checks the original draft generation, question and media references before applying. If the target changed, the newly stored unused asset is removed. A successful attachment schedules persistence before awaiting old-asset cleanup; cleanup failure or a later draft switch does not prevent the attachment from being saved.
 
 Authentication pending intents use the same `worksheetLauncher:pendingIntent` key in per-tab sessionStorage, with an `intentId` per write. They survive same-tab login navigation and reload; closing the tab ends its pending automatic action, while saved local work remains in IndexedDB. Resume flags remain in localStorage for start-panel compatibility. An auth-return page can adopt a legacy localStorage pending intent once; new writes do not use that shared key. Clearing writes a per-tab tombstone to prevent legacy intent resurrection. A replay validates ownership after asynchronous boundaries and never clears a newer intent.
+
+### Attempt menu identity
+
+Local attempt records additionally retain `studentNameResolved`,
+`attemptNameDraft`, `savedAttemptName`, `savedAttemptSubject`, and
+`savedAttemptAccount`. Missing fields default to an unresolved optional student
+name, an empty draft/name, and no server association. The saved name/subject are
+remembered only after a successful server save or authenticated server resume.
+Changing accounts makes the name editable again; it does not grant access to the
+old account's records. No IndexedDB version migration is required.
+
+The viewer's attempt menu offers server save, server-attempt management, local ZIP
+export, and the existing details/print settings. Local Save is labelled “Save on
+this device.” Export remains available without login. Printing remains the
+existing report preview and is available after submission; before submission the
+visible control explains its disabled state on hover, focus, or tap.

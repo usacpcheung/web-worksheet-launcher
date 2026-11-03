@@ -78,7 +78,10 @@ Editor UI should not feel like a landing page or a learner presentation. Keep it
 Version C's continuous worksheet and ordered, paginated chooser are the selected
 viewer direction. The latest standalone mockup is a visual and interaction
 reference; it is not the production implementation or a source of business rules.
-The detailed plan records trial parameters, open decisions and acceptance gates.
+For visual or interaction changes, provide a mockup for review when practical.
+Base it on current production CSS and flows; preserve behavior outside the proposed
+change. Label simplifications explicitly so they cannot become accidental
+implementation requirements. The detailed plan records trial parameters, open decisions and acceptance gates.
 Do not describe a planned feature as shipped until the corresponding PR is merged
 and its deployment status is known.
 

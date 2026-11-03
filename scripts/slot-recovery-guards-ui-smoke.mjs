@@ -1,3 +1,4 @@
+import { clickViewerSave, continueViewerSaveAfterDeletion } from './viewer-navigation-test-helpers.mjs';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 const base = process.env.VIEWER_SMOKE_URL || 'http://127.0.0.1:8765';
@@ -44,7 +45,7 @@ try {
     const keys = { upload:app==='editor'?'editor.server.uploadDraft':'viewer.upload.saveAttemptAriaLabel', copy:app==='editor'?'editor.modal.uploadConflict.saveAsNewCopy':'common.actions.saveAsCopy', delete:'common.actions.delete', confirm:app==='editor'?'editor.uploadedDraft.deleteDialog.confirm':'common.actions.delete', cancel:'common.actions.cancel' };
     return Object.fromEntries(Object.entries(keys).map(([k,v])=>[k,t(v)]));
    },app);
-   const button = page.getByRole('button',{name:labels.upload,exact:true});
+   const button = app === 'viewer' ? page.locator('.viewer-attempt-menu button').first() : page.getByRole('button',{name:labels.upload,exact:true});
    const settled = () => page.waitForFunction(app => !window[`${app}Session`].state[app==='editor'?'isUploadDraftFlowActive':'isUploadAttemptFlowActive'],app);
    const edit = title => page.evaluate(({app,title}) => {
     const session=window[`${app}Session`];
@@ -75,25 +76,26 @@ try {
      assert.equal(warning.saved,warning.expected);
      assert.equal(warning.reopened,warning.expected);
    }
-   await button.click(); await confirmDelete(); await waitUntil(()=>deletions===1);
+   await (app === 'viewer' ? clickViewerSave(page) : button.click()); await confirmDelete(); await waitUntil(()=>deletions===1);
    const deleteButton=page.getByRole('dialog').getByRole('button',{name:labels.delete,exact:true});
    assert.equal(await deleteButton.isDisabled(),true);
    await deleteButton.evaluate(el=>el.click());
    assert.equal(await page.getByRole('dialog').count(),1);
    assert.equal(deletions,1);
    mode='success'; await pendingDeletes[0].fulfill({json:{ok:true,data:{deleted:true}}});
+   if (app === 'viewer') await continueViewerSaveAfterDeletion(page);
    await settled(); assert.equal(requests.length,2);
 
-   mode='slot'; await button.click(); await confirmDelete(); await waitUntil(()=>deletions===2);
+   mode='slot'; await (app === 'viewer' ? clickViewerSave(page) : button.click()); await confirmDelete(); await waitUntil(()=>deletions===2);
    await pendingDeletes[1].fulfill({status:503,json:{ok:false,error:{code:'NETWORK_ERROR'}}});
    await page.waitForFunction(()=>!document.querySelector('.browse-results button')?.disabled);
    assert.equal(await page.getByRole('dialog').getByRole('button',{name:labels.delete,exact:true}).isEnabled(),true);
    await page.getByRole('dialog').getByRole('button',{name:labels.cancel,exact:true}).click();
    await settled(); assert.equal(requests.length,3);
 
-   mode='slot'; await button.click(); await confirmDelete(); await waitUntil(()=>deletions===3);
+   mode='slot'; await (app === 'viewer' ? clickViewerSave(page) : button.click()); await confirmDelete(); await waitUntil(()=>deletions===3);
    await page.getByRole('dialog').getByRole('button',{name:labels.cancel,exact:true}).click();
-   await settled(); mode='success'; await button.click(); await settled();
+   await settled(); mode='success'; await (app === 'viewer' ? clickViewerSave(page) : button.click()); await settled();
    const feedback=()=>page.evaluate(app=>JSON.stringify({message:window[`${app}Session`].state.serverActionMessage,notices:window[`${app}Session`].state.notifications.filter(n=>app!=='editor'||n.category==='server').map(n=>({kind:n.kind,text:n.text}))}),app);
    const before=await feedback();
    await pendingDeletes[2].fulfill({status:404,json:{ok:false,error:{code:'NOT_FOUND'}}});
@@ -107,7 +109,7 @@ try {
        viewerSession.apiClient=createServerApiClient({listTimeoutMs:stop==='timeout'?100:15000});
      },stop);
      mode='list-stall'; const beforePosts=requests.length; const beforeLists=pendingLists.length;
-     await button.click(); await waitUntil(()=>pendingLists.length>beforeLists);
+     await (app === 'viewer' ? clickViewerSave(page) : button.click()); await waitUntil(()=>pendingLists.length>beforeLists);
      if(stop==='cancel') {
        const cancel=page.locator('[data-upload-cancel="viewer"]');
        assert.equal(await cancel.isVisible(),true); await cancel.click();
@@ -117,12 +119,12 @@ try {
      // An obsolete transport completion cannot open a recovery dialog.
      await pendingLists.at(-1).fulfill({json:{ok:true,data:{items:[row]}}}).catch(()=>{});
      await page.waitForTimeout(50); assert.equal(await page.getByRole('dialog').count(),0);
-     mode='success';await button.click();await settled();assert.equal(requests.length,beforePosts+2);
+     mode='success';await (app === 'viewer' ? clickViewerSave(page) : button.click());await settled();assert.equal(requests.length,beforePosts+2);
    }
    if(app==='viewer') {
      mode='success'; await page.evaluate(async()=>{ const {createServerApiClient}=await import('/server/app/api/server-api-client.js'); viewerSession.apiClient=createServerApiClient(); await viewerSession.listUploadedAttempts(); });
      mode='list-stall'; const beforeLists=pendingLists.length, beforePosts=requests.length;
-     await button.click(); await waitUntil(()=>pendingLists.length===beforeLists+1);
+     await (app === 'viewer' ? clickViewerSave(page) : button.click()); await waitUntil(()=>pendingLists.length===beforeLists+1);
      await page.evaluate(()=>{void viewerSession.listUploadedAttempts();});
      await waitUntil(()=>pendingLists.length===beforeLists+2);
      await pendingLists[beforeLists].fulfill({json:{ok:true,data:{items:[{uploaded_attempt_id:'obsolete',title:'Obsolete'}]}}});

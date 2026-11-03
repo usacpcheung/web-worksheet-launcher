@@ -379,6 +379,8 @@ export function createRequestHandler({ service, rolePlaySceneDraftService, artif
           throw error;
         }
         const result = await service.uploadAttempt({
+          expectedAttemptId: url.searchParams.get('expectedAttemptId') || '',
+          expectedArtifactHash: url.searchParams.get('expectedArtifactHash') || '',
           ...(operationId ? { operationId } : {}),
           identity, zipBytes, title: url.searchParams.get('title') || '', subject: url.searchParams.get('subject') || '', conflictAction: url.searchParams.get('conflictAction') || '',
         });

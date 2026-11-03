@@ -38,7 +38,7 @@ try {
       window.open = (...args) => { const popup = open(...args); popup.print = () => { popup.printed = true; }; popup.close = () => {}; return popup; };
     });
     const ready = page.waitForEvent('popup');
-    await page.locator('.viewer-header-actions > button').last().click();
+    await page.locator('.viewer-header-actions > button[aria-describedby="viewer-print-hint"]').click();
     const printed = await ready;
     await printed.waitForFunction(() => window.printed);
     await printed.emulateMedia({media:'print'});

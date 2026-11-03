@@ -1,3 +1,4 @@
+import { clickViewerSave, continueViewerSaveAfterDeletion } from './viewer-navigation-test-helpers.mjs';
 // Exercise real UI -> SharedAuthGate -> API client with isolated HTTP fixtures.
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
@@ -52,12 +53,11 @@ try {
         return Object.fromEntries(['viewer.upload.saveAttemptAriaLabel', 'common.actions.cancel', 'common.actions.saveAsCopy', 'common.actions.delete', 'viewer.attemptConflict.replaceServerAttempt', 'viewer.notifications.uploadAttempt.signInRequired', 'viewer.notifications.uploadAttempt.saved', 'apiErrors.invalidPackage', 'apiErrors.uploadUncertain'].map(key => [key, t(key)]));
       });
       assert.match(labels['apiErrors.uploadUncertain'], locale === 'en' ? /server may already have saved/ : /伺服器可能已儲存/);
-      const save = page.getByRole('button', { name: labels['viewer.upload.saveAttemptAriaLabel'], exact: true });
       const dialog = () => page.getByRole('dialog');
       const noFalseAuth = async () => assert.equal(await page.evaluate(text => window.viewerSession.state.notifications.some(n => n.text === text), labels['viewer.notifications.uploadAttempt.signInRequired']), false);
       for (const action of ['cancel', 'replace', 'copy']) {
         posts = []; mode = 'conflict';
-        await save.click();
+        await clickViewerSave(page);
         await dialog().waitFor({ timeout: 5000 });
         await noFalseAuth();
         const key = action === 'replace' ? 'viewer.attemptConflict.replaceServerAttempt' : action === 'copy' ? 'common.actions.saveAsCopy' : 'common.actions.cancel';
@@ -66,7 +66,7 @@ try {
         assert.deepEqual(posts, action === 'cancel' ? ['fail_on_conflict'] : ['fail_on_conflict', action]);
       }
       mode = 'slot'; posts = []; deletes = 0;
-      await save.click();
+      await clickViewerSave(page);
       await page.locator('.viewer-attempts-modal').waitFor();
       await page.locator('.viewer-attempts-modal').getByRole('button', { name: labels['common.actions.cancel'], exact: true }).click();
       assert.deepEqual(posts, ['fail_on_conflict']);
@@ -74,7 +74,7 @@ try {
       await noFalseAuth();
       for (const scenario of ['slot', 'copy-slot']) {
         mode = scenario; posts = []; deletes = 0;
-        await save.click();
+        await clickViewerSave(page);
         await dialog().waitFor();
         if (scenario === 'copy-slot') {
           await dialog().getByRole('button', { name: labels['common.actions.saveAsCopy'], exact: true }).click();
@@ -83,13 +83,14 @@ try {
         await noFalseAuth();
         await page.locator('.viewer-attempts-modal').getByRole('button', { name: labels['common.actions.delete'], exact: true }).click();
         await dialog().last().getByRole('button', { name: labels['common.actions.delete'], exact: true }).click();
+        await continueViewerSaveAfterDeletion(page);
         await page.waitForFunction(text => window.viewerSession.state.serverActionMessage === text && !window.viewerSession.state.isUploadingAttemptPackage, labels['viewer.notifications.uploadAttempt.saved']);
         assert.equal(deletes, 1);
         assert.deepEqual(posts, scenario === 'slot' ? ['fail_on_conflict', 'fail_on_conflict'] : ['fail_on_conflict', 'copy', 'copy']);
       }
       for (const scenario of ['invalid', 'network']) {
         mode = scenario; posts = []; lookups = 0;
-        await save.click();
+        await clickViewerSave(page);
         const message = labels[scenario === 'invalid' ? 'apiErrors.invalidPackage' : 'apiErrors.uploadUncertain'];
         await page.waitForFunction(text => window.viewerSession.state.serverActionMessage === text && !window.viewerSession.state.isUploadingAttemptPackage, message);
         await noFalseAuth();
@@ -103,7 +104,7 @@ try {
         window.viewerSession.authGate.options.redirectToAuth = value => window.authRedirects.push(value.redirectTo);
       });
       mode = 'probe-failure'; posts = [];
-      await save.click();
+      await clickViewerSave(page);
       await page.waitForFunction(async () => {
         const { t } = await import('/server/app/i18n/index.js');
         return window.viewerSession.state.notifications.some(n => n.text === t('viewer.notifications.auth.unableToVerifySignIn'));
@@ -113,7 +114,7 @@ try {
       for (const status of [401, 403]) {
         mode = `auth-${status}`; posts = []; lookups = 0;
         await page.evaluate(() => window.viewerSession.refreshServerSession());
-        await save.click();
+        await clickViewerSave(page);
         await page.waitForFunction(() => !window.viewerSession.state.isUploadAttemptFlowActive && !window.viewerSession.state.isUploadingAttemptPackage);
         assert.equal(posts.length, 1);
         assert.equal(lookups, 0);
@@ -132,7 +133,7 @@ try {
         assert.equal(posts.length, 1);
         // Only another explicit Save may send again, and repeated 403 stays bounded.
         await page.evaluate(() => window.viewerSession.refreshServerSession());
-        await save.click();
+        await clickViewerSave(page);
         await page.waitForFunction(() => !window.viewerSession.state.isUploadAttemptFlowActive);
         assert.equal(posts.length, 2);
         assert.equal(await page.evaluate(() => window.authRedirects.length), 0);

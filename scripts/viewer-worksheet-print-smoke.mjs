@@ -48,7 +48,7 @@ try {
         metadata: { localId: 'print-fixture', origin: 'local_source', updatedAt: now } });
     }, locale);
     await page.goto(base + '/server/viewer/?localAttemptId=print-fixture');
-    const printButton = page.locator('.viewer-header-actions > button').last();
+    const printButton = page.locator('.viewer-header-actions > button[aria-describedby="viewer-print-hint"]');
     await printButton.waitFor();
     await page.evaluate(() => document.fonts.ready);
     const before = await page.evaluate(() => JSON.stringify({ answers: window.viewerSession.state.answers, blocks: window.viewerSession.state.viewerPayload.blocks }));

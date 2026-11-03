@@ -38,7 +38,7 @@ try {
   assert(await utilities.evaluate(node=>node.parentElement.matches('.viewer-action-panel')));
   assert(await utilities.evaluate(node=>node.getBoundingClientRect().bottom<document.querySelector('.viewer-progress-ring').getBoundingClientRect().top));
   const utilityBounds=await utilities.locator(':scope > button:visible, :scope > details > summary').evaluateAll(nodes=>nodes.map(n=>{const r=n.getBoundingClientRect();return {top:r.top,width:r.width,height:r.height};}));
-  assert.equal(utilityBounds.length,4);
+  assert.equal(utilityBounds.length,3);
   assert(utilityBounds.every(r=>r.width===40&&r.height===40&&Math.abs(r.top-utilityBounds[0].top)<1));
   await utilities.locator('summary').click();
   assert(await utilities.locator('.language-selector__menu').evaluate(node=>{
@@ -230,7 +230,7 @@ try {
   await page.keyboard.press('Escape');
   await clickViewerAction(page,locale==='en'?'Previous':'上一節');
   assert.equal(await page.evaluate(()=>window.viewerSession.state.lastActiveBlockId),'b18');
-  await clickViewerAction(page,locale==='en'?'Save':'儲存');
+  await clickViewerAction(page,locale==='en'?'Save on this device':'儲存至此裝置');
   await page.waitForFunction(()=>!window.viewerSession.state.autosavePending);
   assert.deepEqual(errors,[]);
   await page.close();

@@ -21,6 +21,8 @@ export default {
     description: 'Sign in to continue this server browse, open or download action. Your local work will be kept.',
   },
   apiErrors: {
+    "attemptNameInvalid": "Attempt names must contain between 1 and 80 characters.",
+    "attemptTargetChanged": "The selected server attempt changed. Refresh the list and confirm again.",
     deleteUncertain: "Deletion could not be confirmed. The item may already have been deleted. Refresh the list to check before trying again.",
     deleteRefreshFailed: "The item was deleted, but the list could not be refreshed. Refresh the list to see its current contents.",
     recoveryTimedOut: "Automatic retries timed out. You can retry now or continue sign-in.",
@@ -658,6 +660,28 @@ export default {
     }
   },
   "viewer": {
+    "attemptMenu": {
+      "menu": "Attempt menu",
+      "save": "Save to server",
+      "manage": "Manage server attempts",
+      "export": "Export attempt package (.zip)",
+      "local": "Save on this device",
+      "name": "Attempt name",
+      "nameHelp": "This name identifies the server record without changing the worksheet title. Saving does not submit your answers.",
+      "invalidName": "Enter between 1 and 80 characters.",
+      "student": "Student name (optional)",
+      "studentHelp": "You may continue without a name. We will not ask again for this attempt. You can edit it later in Details and print settings.",
+      "invalidStudent": "Use no more than 120 characters.",
+      "continue": "Continue",
+      "printHint": "Submit your answers to enable printing.",
+      "finishFirst": "Finish or cancel recording, processing or uploading before switching attempts.",
+      "continueSave": "Continue saving to server",
+      "spaceFreed": "A slot is available. Your current attempt has not yet been saved to the server.",
+      "slotHelp": "To save a new attempt, first delete a server record. You can also export the current attempt to this device.",
+      "fullName": "Full name",
+      "localSaveFailed": "Could not save on this device. The action was stopped. Keep this page open and retry.",
+      "serverMissing": "This server attempt is no longer available. Refresh the list and try again."
+    },
     navigation: {
       "actions": "Worksheet actions",
       "browse": "Browse worksheet",
@@ -1025,7 +1049,7 @@ export default {
       "progressPercent": "Uploading attempt... {percent}%",
       "progressPreparing": "Preparing upload...",
       "progressSaving": "Saving upload...",
-      "saveAttemptAriaLabel": "Save attempt",
+      "saveAttemptAriaLabel": "Save to server",
       "saveAttemptTitle": "Save attempt",
       "exportAttemptAriaLabel": "Export attempt package (.zip)",
       "exportAttemptTitle": "Export attempt package (.zip)",

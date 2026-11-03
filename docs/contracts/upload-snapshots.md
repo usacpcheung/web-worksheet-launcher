@@ -55,3 +55,36 @@ failure does not invalidate a successful upload.
   and slot recovery, context ownership and cancellation.
 - Existing upload lifecycle, cancellation and receipt-recovery suites retain
   coverage of stale contexts, busy ownership and transport recovery boundaries.
+
+## Viewer attempt names and slot recovery
+
+The viewer first obtains sign-in consent/readiness using the shared mutation
+flow, then asks for an optional student name (unless already resolved), then
+reviews the server name. A first name defaults to worksheet title plus student
+name and is editable with a limit of 80 Unicode code points after trimming.
+A saved name is displayed read-only; there is no manager rename action. Long
+legacy saved names remain usable for replacement. Generated copy names reserve
+space for their suffix inside the 80-character limit. The server returns the
+actual saved `title` and `subject` so subsequent saves and authenticated resumes
+keep the correct identity without changing the worksheet title.
+
+A conflict replacement from the current viewer includes `expectedAttemptId` and
+`expectedArtifactHash`. Under the existing account transaction lock, the server
+rejects a missing/changed target with `ATTEMPT_REPLACE_TARGET_CHANGED`, before
+storing bytes. Legacy clients without these optional fields keep their existing
+conflict behavior. These fields participate in request identity only when sent;
+legacy upload receipts remain compatible.
+
+The three account-wide slots remain unchanged. Replacement consumes no new slot;
+new saves and copies do. Full-slot recovery offers download of an existing record,
+local export of the active attempt, and confirmed deletion. Deletion alone does
+not retry the upload: the user must press **Continue saving to server**. A slot
+freed by another client also requires this explicit decision. If another client
+consumes the slot first, the existing recovery coordinator handles another
+rejection without auto-deletion or changing the retained snapshot.
+
+The manager can open from the answering interface. Resuming first flushes current
+local work, refuses switching during voice/upload/finalization work, and keeps
+the current attempt if fetching or validation fails. Successful resume updates
+the local-attempt URL after restoration. Long names wrap to two lines in rows;
+the expanded Details section exposes the complete name.
