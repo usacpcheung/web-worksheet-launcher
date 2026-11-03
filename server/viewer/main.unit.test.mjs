@@ -309,7 +309,7 @@ async function loadViewerModule(overrides = {}) {
   globalThis.document = globalThis[bagName].document;
   globalThis.window = globalThis[bagName].window;
 
-  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource.replace(/from '(\.\/(?:answer-(?:voice-workflow|voice-ui)|voice-sign-in|attempt-menu|package-load-progress|block-view-host|section-navigation|worksheet-navigation|entry-motion)\.js)'/g, (_, path) => 'from ' + JSON.stringify(new NodeURL(path, import.meta.url).href)))}`;
+  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource.replace(/from '(\.\/(?:answer-(?:voice-workflow|voice-ui)|voice-sign-in|attempt-menu|browser-entry|package-load-progress|block-view-host|section-navigation|worksheet-navigation|entry-motion)\.js)'/g, (_, path) => 'from ' + JSON.stringify(new NodeURL(path, import.meta.url).href)))}`;
   return import(dataUrl);
 }
 
@@ -4021,7 +4021,7 @@ test('renderViewerStartPanel shows contextual server-attempt management action',
 
 test('viewer manager reads carry their dialog ownership guard', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes('await session.listUploadedAttempts({ isCurrent: () => !closing && overlay.isConnected });'), true);
+  assert.equal(source.includes('await session.listUploadedAttempts({ isCurrent: () => !closing && overlay.isConnected, recoverAuth: false });'), true);
 });
 
 test('bootstrapViewer falls back to start panel when resume flag record is invalid', { concurrency: false }, async () => {

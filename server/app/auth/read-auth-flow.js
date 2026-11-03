@@ -147,7 +147,7 @@ export function createReadAuthFlow({ probe, signIn, prompt, subject, invalidate,
     const current = () => identityCurrent() && accountCurrent();
     if (!current()) return stale();
     if (preflight) {
-      const ready = await ensure({ isCurrent: contextCurrent, signal, intent, withContext: true });
+      const ready = await ensure({ isCurrent: contextCurrent, signal, intent, withContext: true, recoverAuth });
       if (!ready.ok || !current()) return current() ? ready : stale();
       accountCurrent = ready.isCurrent;
       if (!current()) return stale();

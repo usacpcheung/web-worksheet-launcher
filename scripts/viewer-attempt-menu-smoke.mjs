@@ -69,7 +69,7 @@ try {
       await openViewerAttemptMenu(page); await menu.locator('button').nth(1).click();
       await auth.waitFor();
       await auth.getByRole('button', { name: await label('common.actions.cancel'), exact: true }).click();
-      await page.locator('.viewer-attempts-modal').getByRole('button', { name: await label('common.actions.close'), exact: true }).click();
+      assert.equal(await page.locator('.viewer-attempts-modal').count(), 0);
       assert.equal(posts.length, 0);
       // Existing details retain editable student and school fields.
       await openViewerAttemptMenu(page); await menu.locator('button').nth(3).click();

@@ -1,3 +1,4 @@
+import { prepareBrowserEntry } from './browser-entry.js';
 import { attemptDialog, createAttemptMenu, defaultAttemptName } from './attempt-menu.js';
 import { createChoiceButtonGroup as renderChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, getChoicePrefix } from './choice-button-group.js';
 import { optionImageRef, imageDescription, hasOptionImages } from '../app/option-images.js';
@@ -4002,6 +4003,7 @@ class ViewerAttemptSession {
       if (result?.skipped) return result;
       if (result?.ok && !result.isCurrent?.()) return { ok: false, skipped: true, status: 'superseded' };
       if (!result?.ok) {
+        this.readAuth.observe(result);
         this.state.uploadedAttemptsError = getApiErrorMessage(result, 'list');
         return result;
       }
@@ -4075,7 +4077,7 @@ class ViewerAttemptSession {
     }
   }
 
-  async downloadUploadedAttempt(uploadedAttemptRow, { isCurrent = () => true } = {}) {
+  async downloadUploadedAttempt(uploadedAttemptRow, { isCurrent = () => true, recoverAuth = true } = {}) {
     const uploadedAttemptId = uploadedAttemptRow?.uploaded_attempt_id || null;
     if (!uploadedAttemptId) return { ok: false, status: 'missing_id' };
     this.state.uploadedAttemptActionInFlightById = {
@@ -4084,9 +4086,10 @@ class ViewerAttemptSession {
     };
     this.notifyStateChange();
     try {
-      const artifact = uploadedAttemptRow?.__artifactData ? { ok: true, data: uploadedAttemptRow.__artifactData, isCurrent } : await this.readAuth.read(() => this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId), { isCurrent, intent: { kind: 'attempt-download', id: uploadedAttemptId } });
+      const artifact = uploadedAttemptRow?.__artifactData ? { ok: true, data: uploadedAttemptRow.__artifactData, isCurrent } : await this.readAuth.read(() => this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId), { isCurrent, recoverAuth, intent: { kind: 'attempt-download', id: uploadedAttemptId } });
       if (artifact?.skipped) return artifact;
       if (!artifact?.ok) {
+        this.readAuth.observe(artifact);
         this.state.serverActionMessage = getApiErrorMessage(artifact, 'download');
         this.pushNotification({
           kind: 'error',
@@ -4294,7 +4297,7 @@ class ViewerAttemptSession {
     return { ok: true, data: { localAttemptId: restoredLocalAttemptId } };
   }
 
-  async resumeUploadedAttempt(uploadedAttemptRow, { isCurrent = () => true } = {}) {
+  async resumeUploadedAttempt(uploadedAttemptRow, { isCurrent = () => true, recoverAuth = true } = {}) {
     const uploadedAttemptId = uploadedAttemptRow?.uploaded_attempt_id || null;
     if (!uploadedAttemptId) return { ok: false, status: 'missing_id' };
     this.state.uploadedAttemptActionInFlightById = {
@@ -4303,9 +4306,10 @@ class ViewerAttemptSession {
     };
     this.notifyStateChange();
     try {
-      const artifact = uploadedAttemptRow?.__artifactData ? { ok: true, data: uploadedAttemptRow.__artifactData, isCurrent } : await this.readAuth.read(() => this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId), { isCurrent, intent: { kind: 'attempt', id: uploadedAttemptId } });
+      const artifact = uploadedAttemptRow?.__artifactData ? { ok: true, data: uploadedAttemptRow.__artifactData, isCurrent } : await this.readAuth.read(() => this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId), { isCurrent, recoverAuth, intent: { kind: 'attempt', id: uploadedAttemptId } });
       if (artifact?.skipped) return artifact;
       if (!artifact?.ok) {
+        this.readAuth.observe(artifact);
         this.state.serverActionMessage = getApiErrorMessage(artifact, 'open');
         this.pushNotification({
           kind: 'error',
@@ -4762,6 +4766,7 @@ class ViewerAttemptSession {
     if (result.ok && !result.isCurrent?.()) { this.notifyStateChange(); return { ok: false, skipped: true, status: 'superseded' }; }
     if (result.skipped) { this.notifyStateChange(); return result; }
     if (!result.ok) {
+      this.readAuth.observe(result);
       this.state.serverActionMessage = getApiErrorMessage(result, 'list');
       this.state.publishedListError = getApiErrorMessage(result, 'list');
       this.notifyStateChange();
@@ -4798,14 +4803,15 @@ class ViewerAttemptSession {
     const progressToken = this.packageLoad.start(normalizedPublishedPackageId);
     try {
       const isCurrent = () => this.packageLoad.current === progressToken && (options.isCurrent?.() ?? true);
-      const sessionReady = await this.preflightPublishedSession({ isCurrent, intent: { kind: 'publication', id: normalizedPublishedPackageId, filters: { subject: options.sourceSubject || '', owner: options.sourceOwner || '' } } });
+      const sessionReady = await this.preflightPublishedSession({ isCurrent, recoverAuth: options.recoverAuth !== false, intent: { kind: 'publication', id: normalizedPublishedPackageId, filters: { subject: options.sourceSubject || '', owner: options.sourceOwner || '' } } });
       if (!sessionReady.ok) return sessionReady.result;
       this.packageLoad.update(progressToken, 'downloading');
       const artifact = await this.readAuth.read(() => this.apiClient.fetchPublishedPackageArtifact(normalizedPublishedPackageId, {
         onProgress: progress => this.packageLoad.update(progressToken, 'downloading', progress),
-      }), { preflight: false, prepared: sessionReady, isCurrent, intent: { kind: 'publication', id: normalizedPublishedPackageId, filters: { subject: options.sourceSubject || '', owner: options.sourceOwner || '' } } });
+      }), { preflight: false, prepared: sessionReady, isCurrent, recoverAuth: options.recoverAuth !== false, intent: { kind: 'publication', id: normalizedPublishedPackageId, filters: { subject: options.sourceSubject || '', owner: options.sourceOwner || '' } } });
       if (artifact.skipped) return artifact;
       if (!artifact.ok) {
+        this.readAuth.observe(artifact);
         this.state.serverActionMessage = getApiErrorMessage(artifact, 'download');
         this.notifyStateChange();
         return artifact;
@@ -5135,6 +5141,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
   if (session?.state?.isManagingUploadedAttempts) {
     return;
   }
+  if (!await prepareBrowserEntry(session, { kind: 'attempts' }, options)) return;
   // Defensive cleanup for stale duplicate manager overlays from prior open attempts.
   Array.from(document.querySelectorAll('.confirm-modal-overlay')).forEach((overlay) => {
     if (overlay.querySelector('.viewer-attempts-modal')) {
@@ -5229,7 +5236,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     signInBtn.hidden = isLoggedIn;
     signInBtn.disabled = isChecking || signInInFlight;
     signInBtn.textContent = signInInFlight ? t('common.actions.signingIn') : t('common.actions.signIn');
-    refreshBtn.disabled = signInInFlight || session.state.isLoadingUploadedAttempts;
+    refreshBtn.disabled = !isLoggedIn || signInInFlight || session.state.isLoadingUploadedAttempts;
     list.innerHTML = '';
     if (!isLoggedIn) {
       slotUsageLine.textContent = '';
@@ -5325,7 +5332,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
           const isCurrent = () => !closing && overlay.isConnected && currentId === session.state.localAttemptId && generation === session._uploadContextGeneration;
           try { await session.flushLocalStateForAuthRedirect(); } catch { session.pushNotification({ kind: 'error', text: t('viewer.attemptMenu.localSaveFailed') }); return; }
           if (!isCurrent()) return;
-          const result = await session.resumeUploadedAttempt(row, { isCurrent });
+          const result = await session.resumeUploadedAttempt(row, { isCurrent, recoverAuth: false });
           await renderRows();
           if (!result?.ok || closing || !overlay.isConnected) return;
           closeModal();
@@ -5340,7 +5347,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
       downloadBtn.textContent = inFlightAction === 'download' ? t('viewer.serverAttempts.downloading') : t('common.actions.downloadZip');
       downloadBtn.disabled = Boolean(inFlightAction);
       downloadBtn.addEventListener('click', async () => {
-        await session.downloadUploadedAttempt(row, { isCurrent: () => !closing && overlay.isConnected });
+        await session.downloadUploadedAttempt(row, { recoverAuth: false, isCurrent: () => !closing && overlay.isConnected });
         await renderRows();
       });
       const deleteBtn = document.createElement('button');
@@ -5379,7 +5386,8 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
           renderRows();
         }
       },
-      onSessionReady: async ({ finalizeFlow, isCurrent, reportAuthFailure }) => {
+      onSessionReady: async ({ finalizeFlow, isCurrent: authCurrent, reportAuthFailure }) => {
+        const isCurrent = () => !closing && overlay.isConnected && authCurrent();
         try {
           const readiness = await session.probeServerSessionSilently({ force: true, isCurrent });
           if (!isCurrent()) return;
@@ -5396,11 +5404,9 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
           session.notifyStateChange();
           await renderRows();
         } finally {
-          if (isCurrent()) {
-            signInInFlight = false;
-            renderRows();
-            finalizeFlow();
-          }
+          signInInFlight = false;
+          if (isCurrent()) renderRows();
+          finalizeFlow();
         }
       },
       onSessionNotReady: ({ result, finalizeFlow }) => {
@@ -5427,7 +5433,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     startModalSignInFlow();
   });
   refreshBtn.addEventListener('click', async () => {
-    await session.listUploadedAttempts({ isCurrent: () => !closing && overlay.isConnected });
+    await session.listUploadedAttempts({ isCurrent: () => !closing && overlay.isConnected, recoverAuth: false });
     await renderRows();
   });
   closeBtn.addEventListener('click', () => {
@@ -5440,12 +5446,13 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     }
   });
 
-  await session.listUploadedAttempts({ isCurrent: () => !closing && overlay.isConnected });
+  await session.listUploadedAttempts({ isCurrent: () => !closing && overlay.isConnected, recoverAuth: false });
   await renderRows();
   if (!closing) closeBtn.focus();
 }
 
 async function showPublishedPackagesBrowseModal(session, options = {}) {
+  if (!await prepareBrowserEntry(session, { kind: 'published', filters: session.state.publishedFilters || {} }, options)) return;
   // Defensive cleanup for stale duplicate browse overlays from prior open attempts.
   Array.from(document.querySelectorAll('.confirm-modal-overlay')).forEach((overlay) => {
     if (overlay.querySelector('.viewer-published-browse-modal')) {
@@ -5523,7 +5530,8 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
   const updateLoadButtons = () => {
     if (closing || !overlay.isConnected) return;
     const progress = session.packageLoad.current;
-    const unavailable = Boolean(progress) || session.state.isLoadingPublishedPackages;
+    const unavailable = session.state.serverSession?.status !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN
+      || Boolean(progress) || session.state.isLoadingPublishedPackages;
     for (const control of [titleFilterInput, subjectFilterInput, ownerFilterInput, searchBtn, refreshBtn]) control.disabled = unavailable;
     loadMoreBtn.disabled = unavailable || !session.state.publishedHasMore;
     for (const [id, button] of loadButtons) {
@@ -5646,6 +5654,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
         try {
           result = await session.startFromPublishedPackage(item.published_package_id, {
             isCurrent: () => !closing && overlay.isConnected,
+            recoverAuth: false,
             sourceSubject: item.subject || '',
             sourceOwner: item.owner_email || item.owner_name || item.owner_sub || '',
           });
@@ -5654,6 +5663,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
         }
         if (result.skipped || closing) return;
         if (!result.ok) {
+          if (session.state.serverSession?.status === VIEWER_SERVER_SESSION_STATES.LOGGED_OUT) { renderRows(); return; }
           if (!closing && openBtn.isConnected) {
             loadError.textContent = getApiErrorMessage(result, 'open');
             loadError.hidden = false;
@@ -5685,7 +5695,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
       title: titleFilterInput.value,
       subject: subjectFilterInput.value,
       owner: ownerFilterInput.value,
-    }, { ...options, isCurrent: () => !closing && overlay.isConnected && (options.isCurrent?.() ?? true) });
+    }, { ...options, preflight: false, recoverAuth: false, isCurrent: () => !closing && overlay.isConnected && (options.isCurrent?.() ?? true) });
     if (options.isCurrent && !options.isCurrent()) return;
     renderRows();
   };
@@ -5709,7 +5719,8 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
           renderRows();
         }
       },
-      onSessionReady: async ({ finalizeFlow, isCurrent, reportAuthFailure }) => {
+      onSessionReady: async ({ finalizeFlow, isCurrent: authCurrent, reportAuthFailure }) => {
+        const isCurrent = () => !closing && overlay.isConnected && authCurrent();
         try {
           const readiness = await session.ensureServerSessionReady(undefined, { isCurrent });
           if (!isCurrent()) return;
@@ -5726,11 +5737,9 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
           session.notifyStateChange();
           renderRows();
         } finally {
-          if (isCurrent()) {
-            signInInFlight = false;
-            renderRows();
-            finalizeFlow();
-          }
+          signInInFlight = false;
+          if (isCurrent()) renderRows();
+          finalizeFlow();
         }
       },
       onSessionNotReady: ({ result, finalizeFlow }) => {
@@ -5765,7 +5774,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
     await refreshBrowse({ reset: true });
   });
   loadMoreBtn.addEventListener('click', async () => {
-    await session.browsePublishedPackages(session.state.publishedFilters || {}, { append: true });
+    await session.browsePublishedPackages(session.state.publishedFilters || {}, { append: true, preflight: false, recoverAuth: false, isCurrent: () => !closing && overlay.isConnected });
     renderRows();
   });
   refreshBtn.addEventListener('click', async () => {
@@ -5975,7 +5984,7 @@ function renderViewerShell(session) {
   manageAttemptsBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"/><path d="M3 9h18"/></svg>';
   const attemptMenuBtn = document.createElement('button'); attemptMenuBtn.type = 'button';
   attemptMenuBtn.className = 'viewer-header-icon-btn'; attemptMenuBtn.setAttribute('aria-label', t('viewer.attemptMenu.menu'));
-  attemptMenuBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>';
+  attemptMenuBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="0" aria-hidden="true"><g fill="currentColor"><circle cx="6" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="18" cy="12" r="1.4"/></g></svg>';
   createAttemptMenu({ trigger: attemptMenuBtn, signal, items: [
     { button: uploadAttemptBtn, label: t('viewer.attemptMenu.save') },
     { button: manageAttemptsBtn, label: t('viewer.attemptMenu.manage') },
