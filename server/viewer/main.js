@@ -6736,8 +6736,8 @@ function renderViewerShell(session) {
 
         const voiceUi = createVoiceControls({ session, block, control, t, signal,
           sharedStatusId: crossQuestionStatus.root.id,
-          requestSignIn: ({ isCurrent }) => requestVoiceSignIn(session, {
-            blockId: block.blockId, signal: scope.signal, isCurrent,
+          requestSignIn: ({ isCurrent, confirm }) => requestVoiceSignIn(session, {
+            blockId: block.blockId, signal: scope.signal, isCurrent, confirm,
           }),
           canRestoreFocus: () => {
             const rect = control.getBoundingClientRect();

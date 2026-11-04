@@ -715,6 +715,9 @@ export default {
 
       "resolveRecovery": "請先檢查或捨棄復原內容，再開始新的語音輸入或改寫整個答案。",
       "signInThenRewrite": "請登入，然後再次按「改寫」。系統將使用你目前的答案。",
+      "signedInThenVoice": "已登入。請按「用語音加入」開始錄音。",
+      "signedInThenRewrite": "已登入。請按「改寫」繼續。",
+      "signedInRecovery": "已登入，復原內容已保留。請按重試繼續，或捨棄內容。",
       "signInThenVoice": "請登入，然後再次按「用語音加入」。錄音不會自動開始。",
       "preflightFailed": "尚未開始處理。請檢查連線，然後再次按原來的操作按鈕。",
       "add": "用語音加入",

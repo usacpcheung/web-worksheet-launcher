@@ -715,6 +715,9 @@ export default {
 
       "resolveRecovery": "Review or discard the recovered text before starting another voice input or rewriting the whole answer.",
       "signInThenRewrite": "Sign in, then click Rewrite again. Your current answer will be used.",
+      "signedInThenVoice": "Signed in. Press Add by voice to start recording.",
+      "signedInThenRewrite": "Signed in. Press Rewrite to continue.",
+      "signedInRecovery": "Signed in. Your recovery content is kept. Choose Retry to continue, or discard it.",
       "signInThenVoice": "Sign in, then click Add by voice again. Recording will not start automatically.",
       "preflightFailed": "Processing did not start. Check your connection, then click the original action again.",
       "add": "Add by voice",

@@ -12,7 +12,7 @@ try {
     await page.route(url=>url.pathname.startsWith('/api/'),route=>{
       if(new URL(route.request().url()).pathname.endsWith('/session')) return route.fulfill({json:ready
         ? {ok:true,data:{user:{sub:'voice-fixture'}}} : {ok:false,error:{code:'AUTH_REQUIRED'}}});
-      providerCalls++;return route.fulfill({json:{ok:true,result:'Fixture text',data:{items:[]}}});
+      if (route.request().method() === 'POST') providerCalls++;return route.fulfill({json:{ok:true,result:'Fixture text',data:{items:[]}}});
     });
     await page.addInitScript(()=>{
       window.fixtureRecordings=0;
@@ -32,8 +32,8 @@ try {
     },locale);
     await page.goto(base+'/server/viewer/?localAttemptId=voice-auth');
     const add=page.locator('.question-card__voice-btn');await add.waitFor();
-    await page.evaluate(()=>{window.fixtureLogins=0;window.viewerSession.beginServerSignIn=async()=>{
-      window.fixtureLogins++;await window.fixtureSignIn();return {ok:true};
+    await page.evaluate(()=>{window.fixtureLogins=0;window.open=()=>{
+      window.fixtureLogins++;void window.fixtureSignIn();return {closed:false,close(){this.closed=true;}};
     };});
     const dialog=page.locator('.read-auth-prompt');
     const field=page.locator('.viewer-answer-area > textarea:not(.question-card__review-status)');
@@ -53,10 +53,12 @@ try {
     await page.locator('.question-card__rewrite-btn').click();await dialog.waitFor();
     assert.match(await dialog.innerText(),locale==='en'?/rewrite your answer/:/改寫答案/);
     await dialog.getByRole('button',{name:cancel,exact:true}).click();await unchanged();
-    assert.equal(await page.evaluate(()=>window.viewerSession.state.voiceRecovery.q1.text),'Keep this answer');
-    await page.locator('.viewer-voice-recovery-actions button').last().click();
+    assert.equal(await page.evaluate(()=>Boolean(window.viewerSession.state.voiceRecovery.q1)),false);
+    assert.equal(await page.locator('.viewer-voice-recovery').isVisible(),false);
     await add.click();await dialog.waitFor();await dialog.getByRole('button',{name:signIn,exact:true}).click();
     await page.waitForFunction(()=>window.fixtureLogins===1);await dialog.waitFor({state:'hidden'});
+    await page.waitForFunction(()=>!window.viewerSession.state.voiceRecovery.q1);
+    assert.equal(await page.locator('.viewer-voice-recovery').isVisible(),false);
     assert.deepEqual(await counts(),{login:1,record:0});assert.equal(providerCalls,0);await unchanged();
     // Explicit click is required after login; already-ready users have no prompt.
     await add.click();await page.waitForFunction(()=>window.viewerSession.voice.active?.state==='recording');

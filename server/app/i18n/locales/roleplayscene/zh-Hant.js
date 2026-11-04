@@ -473,7 +473,7 @@ export default {
       "cueCardTriggerLabel": "顯示「{label}」的提示卡"
     },
     "discussion": {
-      "voice": {"signInTitleRewrite":"登入以重寫討論內容","signInPromptVoice":"系統會保留你的討論內容。登入後，請再次按「用語音加入」開始錄音。","signInPromptRewrite":"系統會保留你的討論內容。登入後，請再次按「重寫」繼續。","signInPromptRecovery":"系統會保留你的討論及復原內容。登入後，請返回復原操作區並自行重試。錄音及處理不會自動開始。","locked":"處理期間此討論暫時唯讀。你可以隨時取消。","atEnd":"語音文字會加入討論末尾。移動游標可選擇其他位置。","atCursor":"語音文字會加入游標所在位置。","resolveRecovery":"請先檢查或捨棄復原內容，再用語音加入或改寫討論。","signInThenRewrite":"請登入，然後再次按「重寫」。系統會使用當時的討論內容。"},
+      "voice": {"signedInThenRewrite":"已登入。請按「重寫」繼續。","signInTitleRewrite":"登入以重寫討論內容","signInPromptVoice":"系統會保留你的討論內容。登入後，請再次按「用語音加入」開始錄音。","signInPromptRewrite":"系統會保留你的討論內容。登入後，請再次按「重寫」繼續。","signInPromptRecovery":"系統會保留你的討論及復原內容。登入後，請返回復原操作區並自行重試。錄音及處理不會自動開始。","locked":"處理期間此討論暫時唯讀。你可以隨時取消。","atEnd":"語音文字會加入討論末尾。移動游標可選擇其他位置。","atCursor":"語音文字會加入游標所在位置。","resolveRecovery":"請先檢查或捨棄復原內容，再用語音加入或改寫討論。","signInThenRewrite":"請登入，然後再次按「重寫」。系統會使用當時的討論內容。"},
       "voiceOtherScene": "{stage} 場景 {number} 的討論。請先完成或取消，再開始另一項語音輸入或改寫。",
       "printBusy": "請先完成或取消語音輸入或改寫，再列印。",
       "saveFailed": "未能儲存討論復原內容。請保持此頁開啟並複製文字。",

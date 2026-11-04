@@ -46,6 +46,13 @@ This merged workflow is active on `main`. Historical PR sequencing is no longer 
   Sign-in requires another explicit click; it never starts
   recording automatically. If the initial session check fails, click the original
   action again after signing in; whole-answer Rewrite then uses the current answer.
+  Initial authentication-only state has no recovery panel. Cancel clears that
+  transient state; verified login restores the original action with a signed-in
+  hint. Untouched whole-answer rewrite source is not treated as new recovery work.
+  Recorded audio, transcripts, edited recovery text and candidates are retained;
+  verified login removes only the obsolete authentication error and Sign in button.
+  Inline Sign in uses the same guarded completion without another consent dialog.
+  No recording, provider request or answer insertion is replayed by login.
   No empty rewrite recovery source is queued. Audio retained after an upload authentication failure
   exists only in memory and is released on discard, teardown or a replacement task.
 - A transcribed segment is saved immediately as local attempt recovery before

@@ -62,3 +62,11 @@ Authentication failure retains audio in memory for explicit same-account Retry;
 account changes invalidate it. Raw audio is never saved. Transcript-only retry
 continues to skip transcription. Recording controls stay app-owned; T2A migration
 remains separate work.
+
+Authentication-only failures before voice capture or an untouched whole-discussion
+rewrite do not show a recovery panel. Cancelling consent restores the original
+action; verified login removes obsolete login state and gives an explicit restart
+hint. Actual recordings/transcripts or edited recovery text remain available.
+Inline recovery Sign in shares the guarded completion and does not prompt twice.
+Login never starts capture, repeats provider calls or inserts an answer. A replaced
+project or disposed discussion panel cannot apply late authentication cleanup.
