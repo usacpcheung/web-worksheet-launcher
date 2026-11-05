@@ -726,6 +726,8 @@ export default {
       "cancel": "Cancel",
       "locked": "Your answer is read-only until processing finishes. You can cancel at any time.",
       "atEnd": "Voice text will be added at the end. Place the cursor to choose another position.",
+      "replaceSelection": "Voice text will replace the selected text. The original stays until processing succeeds.",
+      "resolveReplacement": "The original text is unchanged. Retry or insert the recovered result to replace the original selection, or discard it.",
       "atCursor": "Voice text will be added at the cursor.",
       "ready": "Ready to edit",
       "recoveryText": "Recovered text",
@@ -735,7 +737,7 @@ export default {
       "append": "Add at end",
       "signIn": "Sign in",
       "discard": "Discard",
-      "noRoom": "Your answer is at its limit. Shorten it before adding voice text.",
+      "noRoom": "Your answer is at its limit. Shorten it or select text to replace.",
       "finishFirst": "Finish or cancel processing before submitting.",
       "otherQuestion": "{stage} Question {number}. Finish or cancel before starting another voice input or rewrite.",
       "stages": {

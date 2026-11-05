@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createReadAuthFlow } from '../app/auth/read-auth-flow.js';
-import { createVoiceWorkflow, insertVoiceSegment, insertionIndex, normalizeVoiceRecovery,
+import { createVoiceWorkflow, insertVoiceSegment, insertionIndex, voiceInsertionRange, normalizeVoiceRecovery,
   unicodeLength, isVoiceQuestion, AUDIO_UPLOAD_LIMIT } from './answer-voice-workflow.js';
 
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
@@ -53,7 +53,7 @@ function setup(options = {}) {
     },
     setTimer: fn => { state.interval = fn; return 1; }, clearTimer: () => { state.interval = null; },
   });
-  return { state, flow, async record() { const pending = flow.run('q1'); await tick(); flow.stop(); return pending; } };
+  return { state, flow, async record(options = {}) { const pending = flow.run('q1', options); await tick(); flow.stop(); return pending; } };
 }
 
 test('insertion defaults to end, uses deliberate selection end, and avoids surrogate splitting', () => {
@@ -183,10 +183,15 @@ test('auth before capture never opens microphone; auth at upload retains audio o
   let expired = true;
   const h = setup({ transcribe: async () => expired ? { ok: false, error: { status: 401 } }
     : { ok: true, data: { text: 'recovered' } } });
-  await h.record(); assert.equal(h.state.recovery.q1.code, 'AUTH_REQUIRED');
+  await h.record({ intent: { deliberate: true, snapshot: 'Earlier', index: 7, replaceStart: 0 } });
+  assert.equal(h.state.recovery.q1.code, 'AUTH_REQUIRED');
+  assert.equal(h.state.answers.q1, 'Earlier');
+  assert.equal(h.state.recovery.q1.replaceStart, 0);
+  h.flow.settleAuthentication('q1', h.state.recovery.q1, true);
   assert.equal(JSON.stringify(h.state.recovery).includes('blob'), false);
   expired = false; await h.flow.run('q1', { retry: h.state.recovery.q1 });
   assert.equal(h.state.records.length, 1); assert.equal(h.state.requests.length, 3);
+  assert.equal(h.state.answers.q1, 'New segment');
 });
 
 test('local recovery normalization excludes audio, candidate and diagnostics', () => {
@@ -582,4 +587,71 @@ test('reload never promotes an authentication-only rewrite into pending text rec
   const blocks = [{blockId:'q1',kind:'question',responseConfig:{inputType:'text'}}];
   assert.deepEqual(normalizeVoiceRecovery({q1:record},blocks),{});
   assert.equal(normalizeVoiceRecovery({q1:{...record,text:'Edited recovery'}},blocks).q1.text,'Edited recovery');
+});
+
+const selected = (text, start, end) => ({ deliberate: true, snapshot: text, replaceStart: start, index: end });
+test('only an explicit valid snapshot range permits replacement; legacy and malformed ranges cannot delete', () => {
+  assert.deepEqual(voiceInsertionRange('a😀b', selected('a😀b', 1, 3)), { index: 3, replaceStart: 1 });
+  for (const range of [selected('other', 0, 2), selected('a😀b', -1, 3), selected('a😀b', 3, 1),
+    selected('a😀b', 2, 3), selected('a😀b', 1, 2), selected('a😀b', 0, 99),
+    selected('a😀b', 0.5, 3), { deliberate: true, snapshot: 'a😀b', index: 3 }]) {
+    assert.equal(voiceInsertionRange('a😀b', range).replaceStart, undefined);
+  }
+});
+for (const [text, start, end, output] of [
+  ['I like blue apples', 7, 11, 'I like red apples'],
+  ['我喜歡藍色蘋果', 3, 5, '我喜歡red蘋果'],
+  ['a😀b', 1, 3, 'a red b'],
+  ['Earlier', 0, 7, 'red'],
+]) test(`selection replacement preserves surrounding text and full Undo snapshot: ${text}`, async () => {
+  const h = setup({ rewrite: async () => ({ok:true,data:{text:'red'}}) });
+  h.state.answers.q1 = text;
+  await h.record({intent:selected(text,start,end)});
+  assert.equal(h.state.answers.q1, output);
+  assert.equal(h.state.applied[0].snapshot, text);
+  assert.equal(h.state.requests[1].text, 'new segment', 'rewrite receives only the new transcript');
+});
+test('full answer can be replaced at its limit; overflowing replacement remains recoverable', async () => {
+  const h = setup({maxLength:7});
+  await h.record({intent:selected('Earlier',0,7)});
+  assert.equal(h.state.answers.q1,'Earlier');
+  assert.equal(h.state.recovery.q1.code,'ANSWER_TOO_LONG');
+  assert.equal(h.state.recovery.q1.replaceStart,0);
+  await h.flow.run('q1',{retry:h.state.recovery.q1,candidate:'Short'});
+  assert.equal(h.state.answers.q1,'Short');
+  assert.equal(h.state.applied[0].snapshot,'Earlier');
+  assert.equal(h.state.requests.length,2);
+});
+test('failed rewrite and reload preserve selection for transcript-only retry', async () => {
+  let fail = true;
+  const h = setup({ rewrite:async () => fail ? {ok:false,error:{code:'UPSTREAM_FAILED'}} : {ok:true,data:{text:'New'}} });
+  h.state.answers.q1='Keep old tail';
+  await h.record({intent:selected(h.state.answers.q1,5,8)});
+  assert.equal(h.state.answers.q1,'Keep old tail');
+  h.state.recovery = normalizeVoiceRecovery(h.state.recovery,[{kind:'question',blockId:'q1'}]);
+  assert.equal(h.state.recovery.q1.replaceStart,5);
+  fail=false;
+  await h.flow.run('q1',{retry:h.state.recovery.q1});
+  assert.equal(h.state.answers.q1,'Keep New tail');
+  assert.equal(h.state.requests.filter(r=>r.kind==='transcribe').length,1);
+});
+test('stale answer never replaces the old selection; explicit append resets the range and Undo target', async () => {
+  const wait=deferred(); const h=setup({rewrite:()=>wait.promise});
+  const pending=h.flow.run('q1',{intent:selected('Earlier',0,7)}); await tick(); h.flow.stop(); await tick();
+  h.state.answers.q1='New typing';
+  wait.resolve({ok:true,data:{text:'Voice'}}); await pending;
+  assert.equal(h.state.answers.q1,'New typing');
+  const recovery=h.state.recovery.q1;
+  assert.equal(recovery.code,'STALE_CONTEXT');
+  await h.flow.run('q1',{retry:recovery,candidate:recovery.candidate,append:true});
+  assert.equal(h.state.answers.q1,'New typing Voice');
+  assert.equal(h.state.applied[0].snapshot,'New typing');
+});
+test('cancelling selected voice input retains the original even after late provider success', async () => {
+  const wait=deferred(); const h=setup({rewrite:()=>wait.promise});
+  const pending=h.flow.run('q1',{intent:selected('Earlier',0,7)}); await tick(); h.flow.stop(); await tick();
+  h.flow.cancel(); await pending;
+  assert.equal(h.state.answers.q1,'Earlier');
+  wait.resolve({ok:true,data:{text:'Late'}}); await tick();
+  assert.equal(h.state.applied.length,0);
 });

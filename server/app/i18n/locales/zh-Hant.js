@@ -726,6 +726,8 @@ export default {
       "cancel": "取消",
       "locked": "處理期間答案暫時唯讀。你可以隨時取消。",
       "atEnd": "語音文字會加入答案末尾。移動游標可選擇其他位置。",
+      "replaceSelection": "語音文字會取代已選取的文字。處理成功前，原文會保留。",
+      "resolveReplacement": "原文尚未更改。重試或插入復原結果會取代原先選取的文字；你也可以捨棄結果。",
       "atCursor": "語音文字會加入游標所在位置。",
       "ready": "可以編輯了",
       "recoveryText": "保留的文字",
@@ -735,7 +737,7 @@ export default {
       "append": "加入末尾",
       "signIn": "登入",
       "discard": "捨棄",
-      "noRoom": "答案已達字數上限。請先縮短答案。",
+      "noRoom": "答案已達字數上限。請先縮短答案，或選取要取代的文字。",
       "finishFirst": "請完成或取消處理後再提交。",
       "otherQuestion": "{stage} 第 {number} 題。請先完成或取消，再開始另一項語音輸入或改寫。",
       "stages": {

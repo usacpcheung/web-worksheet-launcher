@@ -67,3 +67,12 @@ export, and the existing details/print settings. Local Save is labelled “Save 
 this device.” Export remains available without login. Printing remains the
 existing report preview and is available after submission; before submission the
 visible control explains its disabled state on hover, focus, or tap.
+
+### Voice recovery selection range
+
+Viewer attempt recovery and RolePlayScene session recovery may retain optional
+`replaceStart` (UTF-16 offset) alongside the existing end `index` and `snapshot`.
+Only valid nonempty ranges with intact surrogate boundaries allow replacement.
+Missing/invalid ranges preserve insertion-only legacy behavior. Answer changes
+require explicit recovery; append clears the range. Recovery remains excluded
+from server attempt packages, worksheet/story packages and print.

@@ -79,7 +79,7 @@ Browse worksheet control. It has no grouping tabs or scrollable internal list.
 - Transcription and whole-answer rewrite: work remains attached to its original
   attempt/block. Another question remains editable, while another voice/rewrite
   operation cannot start. Preserve View/Cancel and submission blocking.
-- Preserve cancellation, stale-result rejection, caret insertion, selection-end
+- Preserve cancellation, stale-result rejection, caret insertion, selection replacement (with full Undo),
   insertion, raw answer text, validation limits, recovery, retry and Undo.
   Background completion neither scrolls nor steals focus.
 - Preserve save/resume, imported and published worksheets, package/audio adapters,

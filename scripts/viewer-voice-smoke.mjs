@@ -71,7 +71,7 @@ await current.locator('.viewer-answer-area > textarea:not(.question-card__review
 await current.getByRole('button',{name:'Add by voice',exact:true}).click();
 await page.getByRole('button',{name:'Stop',exact:true}).click();
 await page.waitForFunction(()=>!window.viewerSession.voice.active);
-assert.equal(await current.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').inputValue(),'Earlier New segment answer');
+assert.equal(await current.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').inputValue(),'New segment answer');
 assert.equal(await current.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').evaluate(e=>e.readOnly),false);
 await shot('voice-ready-mobile.png');
 
@@ -106,7 +106,7 @@ failRewrite=false;
 await current.getByRole('button',{name:'Retry rewrite',exact:true}).click();
 await page.waitForFunction(()=>!window.viewerSession.voice.active);
 assert.equal(transcriptions,count);
-assert.equal(await current.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').inputValue(),'Earlier New segment answer New segment');
+assert.equal(await current.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').inputValue(),'New segment answer New segment');
 await current.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').fill('Edited after voice');
 await clickViewerAction(page, 'Next');
 await clickViewerAction(page, 'Previous');
@@ -164,7 +164,7 @@ await page.locator('.language-selector__option[value="zh-Hant"]').click();
 await page.waitForFunction(()=>document.querySelector('.viewer-voice-recovery > [role="status"]')?.textContent === '未能將錄音轉換為文字，請重新錄音。');
 assert.equal((await page.locator('body').textContent()).includes('PRIVATE UPSTREAM'),false);
 assert.deepEqual(errors, []);
-console.log('PASS cross-question completion, focus, selection insertion, undo, mobile width, recovery editing and reload, rewrite-only retry; no browser errors');
+console.log('PASS cross-question completion, focus, selection replacement, undo, mobile width, recovery editing and reload, rewrite-only retry; no browser errors');
 
 } finally { await browser.close(); }
 })().catch(e=>{console.error(e);process.exit(1)});
