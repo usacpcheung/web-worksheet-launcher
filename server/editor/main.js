@@ -1,3 +1,4 @@
+import { isLongText, textLimitCeiling, textConfigError, STANDARD_TEXT_LIMIT, LONG_TEXT_LIMIT } from '../app/text-answer.js';
 import { imageQuestions, assertImageQuestions, imageBudget } from '../app/image-response.js';
 import { mountOptionImageEditor } from './option-image-editor.js';
 import { optionImageRef, optionHasContent, imageDescription } from '../app/option-images.js';
@@ -842,6 +843,7 @@ function createEmptyQuestionBlock(position) {
     },
     responseConfig: {
       inputType: 'text',
+      textMode: 'standard',
       maxLength: 200,
       displayMode: 'multi_line',
     },
@@ -1483,7 +1485,7 @@ class EditorDraftSession {
             },
             responseConfig: isRecord(block.responseConfig)
               ? normalizeQuestionResponseConfig(block.responseConfig, { forContract: true })
-              : { inputType: 'text', maxLength: 200, displayMode: 'multi_line' },
+              : { inputType: 'text', textMode: 'standard', maxLength: 200, displayMode: 'multi_line' },
           };
         }
 
@@ -1518,6 +1520,8 @@ class EditorDraftSession {
         errors.push(`draft.blocks[${index}].position must be a non-negative integer`);
       }
       if (block.kind === 'question') {
+        const textError = textConfigError(block.responseConfig, { authoring: true });
+        if (textError) errors.push(`draft.blocks[${index}]: ${t(isLongText(block.responseConfig) ? 'textAnswer.invalidLong' : 'textAnswer.invalid', { max: textLimitCeiling(block.responseConfig) })}`);
         if (!block?.prompt?.text?.trim()) errors.push(`draft.blocks[${index}].prompt.text is required for question blocks`);
         if (promptTextState(block.prompt).exceedsLimit) errors.push(t('formatting.promptTooLong', { max: PROMPT_TEXT_LIMIT }));
         if (!isRecord(block.responseConfig)) errors.push(`draft.blocks[${index}].responseConfig is required for question blocks`);
@@ -2572,6 +2576,7 @@ class EditorDraftSession {
       }
       if (TEXT_INPUT_TYPES.has(normalizedInputType) && !Number.isFinite(nextResponseConfig.maxLength)) {
         nextResponseConfig.maxLength = 200;
+        nextResponseConfig.textMode = 'standard';
       }
       if (normalizedInputType !== 'multiple_choice') {
         delete nextResponseConfig.options;
@@ -2634,9 +2639,24 @@ class EditorDraftSession {
     return { ok: true, impact };
   }
 
+  updateQuestionTextMode(blockId, longText, { confirmReduction = false } = {}) {
+    const block = this.state.draft?.blocks.find(item => item.blockId === blockId && item.kind === 'question');
+    if (block?.responseConfig?.inputType !== 'text') return { ok: false };
+    const current = block.responseConfig;
+    if (isLongText(current) === longText) return { ok: true };
+    const nextLimit = longText ? LONG_TEXT_LIMIT : Math.min(current.maxLength || 200, STANDARD_TEXT_LIMIT);
+    if (!longText && current.maxLength > nextLimit && !confirmReduction) {
+      return { ok: false, reason: 'confirm-reduction', max: nextLimit };
+    }
+    block.responseConfig = { ...current, textMode: longText ? 'long' : 'standard', maxLength: nextLimit,
+      displayMode: longText ? 'multi_line' : current.displayMode };
+    this.touchDraft();
+    return { ok: true };
+  }
+
   updateQuestionMaxLength(blockId, maxLength) {
     if (!this.state.draft || !blockId) return;
-    const parsed = Number.parseInt(maxLength, 10);
+    const parsed = Number(maxLength);
     if (!Number.isFinite(parsed) || parsed <= 0) {
       // Preserve existing maxLength when input is empty, non-numeric, or non-positive.
       return;
@@ -2650,6 +2670,7 @@ class EditorDraftSession {
         ...block,
         responseConfig: {
           ...(isRecord(block.responseConfig) ? block.responseConfig : {}),
+          textMode: isLongText(block.responseConfig) ? 'long' : 'standard',
           maxLength: normalized,
         },
       };
@@ -3259,7 +3280,7 @@ class EditorDraftSession {
           },
           responseConfig: isRecord(block.responseConfig)
             ? normalizeQuestionResponseConfig(block.responseConfig)
-            : { inputType: 'text', maxLength: 200, displayMode: 'multi_line' },
+            : { inputType: 'text', textMode: 'standard', maxLength: 200, displayMode: 'multi_line' },
           content: undefined,
         };
       }
@@ -6446,6 +6467,10 @@ function renderEditorShell(session) {
       if (activeElement !== questionInputType) {
         questionInputType.value = responseConfig.inputType || 'text';
       }
+      questionMaxLength.max = String(textLimitCeiling(responseConfig));
+      questionMaxLength.setAttribute('aria-invalid', String(Boolean(textConfigError(responseConfig, { authoring: true }))));
+      const textLimitError = rightPanel.querySelector('[data-text-limit-error]');
+      if (textLimitError) textLimitError.textContent = textConfigError(responseConfig, { authoring: true }) ? t(isLongText(responseConfig) ? 'textAnswer.invalidLong' : 'textAnswer.invalid', { max: textLimitCeiling(responseConfig) }) : '';
       if (activeElement !== questionMaxLength) {
         questionMaxLength.value = responseConfig.maxLength || 200;
       }
@@ -6923,6 +6948,7 @@ function renderEditorShell(session) {
       selectedBlock.kind,
       normalizedInputType,
       normalizedResponseConfig?.displayMode || '',
+      normalizedResponseConfig?.textMode || '',
       normalizedSelectionMode,
       normalizedResponseConfig?.shuffleOptions ? '1' : '0',
       normalizedPromptMediaRefs,
@@ -7686,6 +7712,37 @@ function renderEditorShell(session) {
     }
     answerSection.appendChild(answerGrid);
     if (TEXT_INPUT_TYPES.has(activeInputType)) {
+      const longLabel = document.createElement('label');
+      longLabel.className = 'editor-long-text-toggle';
+      const longToggle = document.createElement('input');
+      longToggle.type = 'checkbox';
+      longToggle.id = 'editor-question-long-text';
+      longToggle.checked = isLongText(selectedBlock.responseConfig);
+      longLabel.append(longToggle, document.createTextNode(t('textAnswer.toggle')));
+      const modeHint = document.createElement('p');
+      modeHint.className = 'muted';
+      modeHint.textContent = t(isLongText(selectedBlock.responseConfig) ? 'textAnswer.longHint' : 'textAnswer.standardHint');
+      longToggle.addEventListener('change', async () => {
+        const draft = session.state.draft;
+        const id = selectedBlock.blockId;
+        const nextMode = longToggle.checked;
+        const configAtClick = draft.blocks.find(block => block.blockId === id)?.responseConfig;
+        const outcome = session.updateQuestionTextMode(id, nextMode);
+        if (outcome.reason === 'confirm-reduction') {
+          longToggle.checked = true;
+          const confirmed = await showConfirmDialog({
+            title: t('textAnswer.switchTitle'), descriptionText: t('textAnswer.switchDescription', { max: outcome.max }),
+            confirmLabel: t('textAnswer.switchConfirm'),
+          });
+          if (confirmed && session.state.draft === draft && session.state.selectedBlockId === id
+            && draft.blocks.find(block => block.blockId === id)?.responseConfig === configAtClick) {
+            session.updateQuestionTextMode(id, nextMode, { confirmReduction: true });
+          }
+        }
+        updateSummary();
+        if (session.state.selectedBlockId === id) rightPanel.querySelector('#editor-question-long-text')?.focus();
+      });
+      answerSection.append(longLabel, modeHint);
       const textSettingsRow = document.createElement('div');
       textSettingsRow.className = 'text-answer-settings';
       const maxLengthField = document.createElement('div');
@@ -7693,7 +7750,12 @@ function renderEditorShell(session) {
       const maxLengthLabel = document.createElement('label');
       maxLengthLabel.textContent = t('editor.question.maxLength');
       maxLengthLabel.htmlFor = 'editor-question-max-length';
-      maxLengthField.append(maxLengthLabel, questionMaxLength);
+      const limitError = document.createElement('p');
+      limitError.className = 'input-error';
+      limitError.dataset.textLimitError = '';
+      limitError.setAttribute('role', 'status');
+      limitError.textContent = textConfigError(selectedBlock.responseConfig, { authoring: true }) ? t(isLongText(selectedBlock.responseConfig) ? 'textAnswer.invalidLong' : 'textAnswer.invalid', { max: textLimitCeiling(selectedBlock.responseConfig) }) : '';
+      maxLengthField.append(maxLengthLabel, questionMaxLength, limitError);
 
       const displayModeField = document.createElement('div');
       displayModeField.className = 'editor-field';
@@ -7701,7 +7763,8 @@ function renderEditorShell(session) {
       displayModeLabel.id = 'editor-question-text-display-mode-label';
       displayModeLabel.textContent = t('editor.question.responseFormat');
       displayModeField.append(displayModeLabel, questionTextDisplayMode);
-      textSettingsRow.append(maxLengthField, displayModeField);
+      textSettingsRow.append(maxLengthField);
+      if (!isLongText(selectedBlock.responseConfig)) textSettingsRow.append(displayModeField);
       answerSection.appendChild(textSettingsRow);
     }
 
@@ -9279,9 +9342,10 @@ function normalizeQuestionResponseConfig(responseConfig, options = {}) {
 
   if (inputType === 'image_response') return { inputType, maxImages: source.maxImages ?? 3 };
   delete normalized.maxImages;
+  if (inputType !== 'text') delete normalized.textMode;
   if (inputType === 'text') {
-    normalized.maxLength = Number.isFinite(source.maxLength) ? Number(source.maxLength) : 200;
-    normalized.displayMode = source.displayMode === 'single_line' ? 'single_line' : 'multi_line';
+    normalized.maxLength = Number.isFinite(source.maxLength) ? Number(source.maxLength) : isLongText(source) ? LONG_TEXT_LIMIT : 200;
+    normalized.displayMode = !isLongText(source) && source.displayMode === 'single_line' ? 'single_line' : 'multi_line';
     delete normalized.options;
     delete normalized.selectionMode;
     delete normalized.shuffleOptions;

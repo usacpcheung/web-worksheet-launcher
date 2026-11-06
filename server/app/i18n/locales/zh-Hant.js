@@ -1,6 +1,22 @@
 import roleplayscene from './roleplayscene/zh-Hant.js';
 
 export default {
+  textAnswer: {
+    invalidLong: '請輸入 1 至 {max} 的整數。',
+    packageTooLarge: '此作答套件超過 30 MB 上限。',
+    remainingOne: '尚餘 1 字元。',
+    "toggle": "長文字",
+    "standardHint": "最多 1,200 字元，可使用「用語音加入」及「改寫」。",
+    "longHint": "最多 20,000 字元，不提供「用語音加入」及「改寫」。",
+    "invalid": "請輸入 1 至 {max} 的整數。如需較長的答案，請啟用「長文字」。",
+    "switchTitle": "切換為一般文字？",
+    "switchDescription": "答案上限將減至 {max} 字元，並提供「用語音加入」及「改寫」。已儲存的作答紀錄會保留原有答案。",
+    "switchConfirm": "切換為一般文字",
+    "viewerLong": "長文字作答。請在此貼上或輸入文字。",
+    "rejected": "這次輸入超過 {max} 字元上限，已保留原有答案。請縮短文字後再試。",
+    "over": "超過 {max} 字元上限 {count} 字元。已保留原有答案，請縮短至上限以內。",
+    "remaining": "尚餘 {count} 字元。"
+},
   imageResponse: {
     prepareFailed:
       '無法在保留足夠細節的情況下將圖片縮小至 2 MB。請先縮小圖片或選擇另一張。已儲存的圖片不受影響。',

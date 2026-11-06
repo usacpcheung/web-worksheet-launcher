@@ -1,3 +1,4 @@
+import { isLongText, LONG_TEXT_LIMIT } from './text-answer.js';
 // Browser/server contract. Limits are bytes (MiB), consistently displayed as MB.
 export const IMAGE_INPUT_BYTES = 10 * 1024 * 1024;
 export const IMAGE_ANSWER_BYTES = 2 * 1024 * 1024;
@@ -34,7 +35,7 @@ export function imageBudget(blocks, mediaBytes, contentBytes = 0) {
         (Number.isFinite(c.maxLength) && c.maxLength > 0
           ? c.maxLength
           : c.maxLength == null
-            ? 200
+            ? (isLongText(c) ? LONG_TEXT_LIMIT : 200)
             : Infinity) *
           6
       );

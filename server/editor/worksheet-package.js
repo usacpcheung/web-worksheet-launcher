@@ -1,3 +1,4 @@
+import { hasLongText, assertTextQuestions } from '../app/text-answer.js';
 import { hasImageResponses, assertImageQuestions, assertImageBudget } from '../app/image-response.js';
 import { assertPackageAssets } from '../app/contracts/package-assets.js';
 import { hasOptionImages, assertOptionImages } from '../app/option-images.js';
@@ -149,6 +150,7 @@ function createWorksheetPackageFromDraft(draft, assetRecordsById = new Map()) {
     throw new Error('Draft record is required for package export.');
   }
   assertImageQuestions(draft.blocks);
+  assertTextQuestions(draft.blocks, { authoring: true });
   const draftBlocks = Array.isArray(draft.blocks) ? draft.blocks : [];
   assertWorksheetTextFormats(draftBlocks);
   if (draftBlocks.some(hasLegacyAudioRefs) && draftBlocks.some(hasAudioTracks)) {
@@ -169,6 +171,7 @@ function createWorksheetPackageFromDraft(draft, assetRecordsById = new Map()) {
   if (hasMarkdown(draftBlocks)) { manifest.packageVersion = 3; manifest.schemaVersion = 3; }
   if (hasOptionImages(draftBlocks)) { manifest.packageVersion = 4; manifest.schemaVersion = 4; }
   if (hasImageResponses(draftBlocks)) { manifest.packageVersion = 5; manifest.schemaVersion = 5; }
+  if (hasLongText(draftBlocks)) { manifest.packageVersion = 6; manifest.schemaVersion = 6; }
   const entries = [
     { path: 'manifest.json', data: JSON.stringify(manifest, null, 2) },
     { path: 'content/worksheet.json', data: JSON.stringify(worksheet, null, 2) },
@@ -236,20 +239,22 @@ function parseWorksheetPackage(arrayBuffer) {
 
   if (
     manifest?.format !== PACKAGE_FORMAT
-    || ![LEGACY_PACKAGE_VERSION, PACKAGE_VERSION, 3, 4, 5].includes(manifest?.packageVersion)
+    || ![LEGACY_PACKAGE_VERSION, PACKAGE_VERSION, 3, 4, 5, 6].includes(manifest?.packageVersion)
   ) {
     throw new Error('Unsupported worksheet package format or packageVersion.');
   }
   if (manifest.packageVersion === PACKAGE_VERSION && manifest.schemaVersion !== CONTENT_SCHEMA_VERSION) {
     throw new Error('Unsupported worksheet package schemaVersion.');
   }
-  if ([3, 4, 5].includes(manifest.packageVersion) && manifest.schemaVersion !== manifest.packageVersion) throw new Error('Unsupported worksheet package schemaVersion.');
+  if ([3, 4, 5, 6].includes(manifest.packageVersion) && manifest.schemaVersion !== manifest.packageVersion) throw new Error('Unsupported worksheet package schemaVersion.');
   assertWorksheetTextFormats(worksheet.blocks);
+  assertTextQuestions(worksheet.blocks);
+  if (hasLongText(worksheet.blocks) && manifest.packageVersion < 6) throw new Error("Long text requires worksheet package version 6.");
   if (hasMarkdown(worksheet.blocks) && manifest.packageVersion < 3) throw new Error('Markdown requires worksheet package version 3.');
 
   if (manifest.packageVersion >= 4) assertPackageAssets(manifest.assets, files);
   assertImageQuestions(worksheet.blocks);
-  if (hasImageResponses(worksheet.blocks) && manifest.packageVersion !== 5) throw new Error('Image responses require worksheet package version 5.');
+  if (hasImageResponses(worksheet.blocks) && manifest.packageVersion < 5) throw new Error('Image responses require worksheet package version 5.');
   assertImageBudget(worksheet.blocks, (manifest.assets || []).map(a=>({...a,byteLength:files.get(a.path)?.length || 0})), worksheetEntry.length * 4);
   const assets = normalizeAssetManifestList(manifest.assets);
 
