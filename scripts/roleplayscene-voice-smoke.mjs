@@ -105,6 +105,21 @@ try {
     assert.equal(await field.inputValue(), 'Earlier discussion new segment');
     await page.getByRole('button', { name: locale === 'en' ? 'Undo' : '復原', exact: true }).click();
     assert.equal(await field.inputValue(), 'Earlier discussion');
+    // Highlighting replaces only that text; both playback modes retain full Undo.
+    await field.focus();
+    await field.press('Control+Home');
+    for (let i = 0; i < 7; i++) await field.press('Shift+ArrowRight');
+    assert.match(await page.locator('.player-discussion-input-panel .viewer-voice-hint').innerText(), locale === 'en' ? /replace the selected text/ : /取代已選取/);
+    await add.click();
+    await page.waitForFunction(() => window.discussion.voice.active?.state === 'recording');
+    assert.equal(await field.inputValue(), 'Earlier discussion');
+    await page.getByRole('button', { name: locale === 'en' ? 'Stop' : '停止', exact: true }).click();
+    await page.waitForFunction(() => window.discussion.voice.active?.state === 'transcribing');
+    await page.evaluate(() => window.finishTranscript());
+    await page.waitForFunction(() => !window.discussion.voice.active);
+    assert.equal(await field.inputValue(), 'new segment discussion');
+    await page.getByRole('button', { name: locale === 'en' ? 'Undo' : '復原', exact: true }).click();
+    assert.equal(await field.inputValue(), 'Earlier discussion');
     if (locale === 'en' && width === 1280) {
       // Navigate while transcription is held; a late result must not steal focus.
       await add.click();
@@ -205,8 +220,8 @@ try {
     await page.locator('.theater-utilities-section--discussion button').first().click();
     assert.equal(await add.evaluate(button => {
       const ids = button.getAttribute('aria-describedby').split(/\s+/);
-      return ids.length === 1 && Boolean(document.getElementById(ids[0]));
-    }), true, 'Imported scene IDs cannot break the status description');
+      return ids.length === 2 && ids.every(id => Boolean(document.getElementById(id)));
+    }), true, 'Imported scene IDs cannot break the status and selection descriptions');
     for (const id of ['constructor', '__proto__', 'toString']) {
       await page.evaluate(id => window.importSpacedScene(id), id);
       await page.locator('.theater-utilities-toggle').click();

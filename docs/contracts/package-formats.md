@@ -137,3 +137,29 @@ editable suggestion. It never imports server ownership, IDs, or replacement
 permission. Server resume uses the authenticated list row's name and subject,
 including a generated copy suffix, in preference to the embedded suggestion.
 The immutable ZIP in a server copy may still contain the original suggestion.
+
+## Image-response questions and answer media
+
+Worksheets containing `responseConfig.inputType: "image_response"` use worksheet
+package/schema version **5**. At most three image-response questions are allowed;
+each has integer `maxImages` from 1 to 3 and no automatic correct-answer key.
+Worksheet v5 retains Markdown, MC option images and multilingual audio. Older
+worksheets keep their previous envelopes; current readers still accept v1–v4.
+
+Such attempts use package version **4**, manifest/attempt schema version 1, and
+ordered answers `answers[blockId].value: [{ assetId }]`. Empty arrays mean unanswered.
+Every reference must be unique within its answer, within the question's count limit,
+and backed by packaged JPEG/PNG bytes at most 2 MiB, with valid bounded headers and
+matching MIME. Answer media accompanies embedded worksheet media in `media/*`.
+The new envelope always requires the standard attempt schema/status; the historical
+browser envelope defaults remain limited to attempt v1–v3. All readers and server
+uploads share these checks. An exported v4 ZIP is checked against 30 MiB exactly.
+
+Editor package preparation and import check the maximum full-attempt budget:
+worksheet media plus allowed image-answer capacity, text-answer capacity, content
+and package allowance. Publication uses that validated worksheet package. Export
+captures worksheet/answers before asynchronous media reads and temporarily blocks
+image replacement; missing bytes fail export. Existing prepared upload bytes and
+slot/conflict retry rules remain unchanged. Import allocates new IDs and remaps
+both worksheet references and answer references, preserving order and isolation.
+See [image-response behavior and limits](../worksheet/image-response-investigation.md).

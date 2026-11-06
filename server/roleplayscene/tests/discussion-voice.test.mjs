@@ -20,7 +20,7 @@ function setup(options = {}) {
   session.bindProject(project);
   return { session, storage, counts: () => ({ captures, transcriptions }) };
 }
-test('voice inserts after selection and undo preserves long discussion without worksheet limit', async () => {
+test('legacy caret insertion and undo preserve long discussion without worksheet limit', async () => {
   const { session } = setup(); const before = 'A'.repeat(400) + ' end';
   session.setText('one', before);
   const task = session.voice.run('one', { intent: { deliberate: true, snapshot: before, index: 400 } });
@@ -154,4 +154,20 @@ test('discussion expiry after transcription retains sign-in guidance and retries
   assert.equal((await session.voice.run('one', { retry: session.recovery.one })).ok, true);
   assert.equal(session.getText('one'), 'Original new sentence');
   assert.deepEqual(counts(), { captures: 1, transcriptions: 1 });
+});
+
+test('discussion selection survives recovery reload and replacement Undo restores all original text', async () => {
+  const {session,storage,counts}=setup({api:{rewriteText:async()=>({ok:false,error:{code:'UPSTREAM_FAILED'}})}});
+  const before='Keep old discussion'; session.setText('one',before);
+  const task=session.voice.run('one',{intent:{deliberate:true,snapshot:before,replaceStart:5,index:8}});
+  await tick();session.voice.stop();await task;
+  assert.equal(session.getText('one'),before);
+  const restored=new RolePlaySceneDiscussionSession({storage,getProviderAuth:()=>({ensure:async()=>({ok:true,isCurrent:()=>true})}),
+    apiClient:{rewriteText:async()=>({ok:true,data:{text:'new'}}),transcribeAudio:()=>assert.fail('must not transcribe on retry')}});
+  restored.bindProject(project);
+  assert.equal(restored.recovery.one.replaceStart,5);
+  await restored.voice.run('one',{retry:restored.recovery.one});
+  assert.equal(restored.getText('one'),'Keep new discussion');
+  assert.equal(restored.undo('one'),true);assert.equal(restored.getText('one'),before);
+  assert.equal(counts().transcriptions,1);
 });

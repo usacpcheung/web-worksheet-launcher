@@ -9,7 +9,9 @@ This merged workflow is active on `main`. Historical PR sequencing is no longer 
 - Editable text questions offer **Add by voice**. The pipeline records, transcribes,
   rewrites only the new transcript, and inserts the result without a preview.
 - Additions append by default. A deliberate cursor placement inserts there; a
-  selection inserts after the selection and does not replace selected text.
+  selection replaces only the selected text after transcription and rewrite succeed.
+  The helper identifies replacement before recording. Original text stays intact
+  on cancellation/failure; Undo restores the entire previous answer.
   Successful insertion/cancellation clears the placement intent.
 - The target answer is read-only throughout checking, capture and processing.
   Stage messages, elapsed recording time, Stop and Cancel appear inline.
@@ -58,6 +60,10 @@ This merged workflow is active on `main`. Historical PR sequencing is no longer 
 - A transcribed segment is saved immediately as local attempt recovery before
   rewrite. Editing recovery follows normal autosave. If local storage fails, the
   existing save-error indicator applies; persistence cannot be guaranteed then.
+- Recovery stores an optional UTF-16 `replaceStart` alongside the existing end
+  `index` and answer `snapshot`. Valid ranges survive transcript retry/reload;
+  legacy index-only records remain insertion-only. Invalid or surrogate-splitting
+  ranges cannot delete text. Explicit stale-context append discards the range.
 - Reload restores raw text for review/rewrite, not audio or a rewritten candidate.
   Retry after transcription does not upload/transcribe again. Recovery is excluded
   from attempt packages, uploads and print. Successful completion/discard clears
@@ -97,7 +103,7 @@ node scripts/viewer-voice-sign-in-smoke.mjs
 `VIEWER_SMOKE_SCREENSHOTS` optionally specifies a screenshot output directory.
 The smoke uses an isolated browser context with synthetic microphone and API
 responses; it makes no paid transcription/rewrite calls. It checks cross-question
-completion, focus, selection insertion, default append after success, Undo, narrow
+completion, focus, selection replacement, default append after success, Undo, narrow
 layout, recovery editing/reload, rewrite-only retry, and edits after navigation.
 
 ## Live acceptance for future rollout
@@ -106,7 +112,7 @@ Automated tests do not establish real microphone/provider/device compatibility.
 Use the reviewed release on a test deployment and test Windows Chrome/Edge, actual iPad Safari
 and mobile Chrome. Live provider calls require explicit authorization.
 
-- Record a short answer: append, caret insertion, selection-end insertion, repeat
+- Record a short answer: append, caret insertion, selection replacement, repeat
   after typing, and Undo. Confirm earlier text is preserved.
 - Deny microphone permission; then allow it. Test sign-in before capture and
   session expiry during upload/rewrite. No surprise recording after sign-in.

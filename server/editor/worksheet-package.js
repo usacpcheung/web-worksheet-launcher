@@ -1,3 +1,4 @@
+import { hasImageResponses, assertImageQuestions, assertImageBudget } from '../app/image-response.js';
 import { assertPackageAssets } from '../app/contracts/package-assets.js';
 import { hasOptionImages, assertOptionImages } from '../app/option-images.js';
 import { createStoredZip, decodeUtf8, parseStoredZip, toUint8Array, crc32 } from './zip-utils.js';
@@ -147,6 +148,7 @@ function createWorksheetPackageFromDraft(draft, assetRecordsById = new Map()) {
   if (!isRecord(draft)) {
     throw new Error('Draft record is required for package export.');
   }
+  assertImageQuestions(draft.blocks);
   const draftBlocks = Array.isArray(draft.blocks) ? draft.blocks : [];
   assertWorksheetTextFormats(draftBlocks);
   if (draftBlocks.some(hasLegacyAudioRefs) && draftBlocks.some(hasAudioTracks)) {
@@ -166,6 +168,7 @@ function createWorksheetPackageFromDraft(draft, assetRecordsById = new Map()) {
   const manifest = buildPackageManifest(draft);
   if (hasMarkdown(draftBlocks)) { manifest.packageVersion = 3; manifest.schemaVersion = 3; }
   if (hasOptionImages(draftBlocks)) { manifest.packageVersion = 4; manifest.schemaVersion = 4; }
+  if (hasImageResponses(draftBlocks)) { manifest.packageVersion = 5; manifest.schemaVersion = 5; }
   const entries = [
     { path: 'manifest.json', data: JSON.stringify(manifest, null, 2) },
     { path: 'content/worksheet.json', data: JSON.stringify(worksheet, null, 2) },
@@ -198,7 +201,8 @@ function createWorksheetPackageFromDraft(draft, assetRecordsById = new Map()) {
     entries.push({ path, data: bytes });
   });
 
-  if (manifest.packageVersion === 4) assertOptionImages(worksheet.blocks, assertPackageAssets(manifest.assets, new Map(entries.map(entry => [entry.path, entry.data]))));
+  if (manifest.packageVersion >= 4) assertOptionImages(worksheet.blocks, assertPackageAssets(manifest.assets, new Map(entries.map(entry => [entry.path, entry.data]))));
+  assertImageBudget(draftBlocks, manifest.assets, new TextEncoder().encode(entries[1].data).length * 4);
   entries[0] = { path: 'manifest.json', data: JSON.stringify(manifest, null, 2) };
   return { manifest, worksheet, bytes: createStoredZip(entries) };
 }
@@ -232,18 +236,21 @@ function parseWorksheetPackage(arrayBuffer) {
 
   if (
     manifest?.format !== PACKAGE_FORMAT
-    || ![LEGACY_PACKAGE_VERSION, PACKAGE_VERSION, 3, 4].includes(manifest?.packageVersion)
+    || ![LEGACY_PACKAGE_VERSION, PACKAGE_VERSION, 3, 4, 5].includes(manifest?.packageVersion)
   ) {
     throw new Error('Unsupported worksheet package format or packageVersion.');
   }
   if (manifest.packageVersion === PACKAGE_VERSION && manifest.schemaVersion !== CONTENT_SCHEMA_VERSION) {
     throw new Error('Unsupported worksheet package schemaVersion.');
   }
-  if ([3, 4].includes(manifest.packageVersion) && manifest.schemaVersion !== manifest.packageVersion) throw new Error('Unsupported worksheet package schemaVersion.');
+  if ([3, 4, 5].includes(manifest.packageVersion) && manifest.schemaVersion !== manifest.packageVersion) throw new Error('Unsupported worksheet package schemaVersion.');
   assertWorksheetTextFormats(worksheet.blocks);
   if (hasMarkdown(worksheet.blocks) && manifest.packageVersion < 3) throw new Error('Markdown requires worksheet package version 3.');
 
-  if (manifest.packageVersion === 4) assertPackageAssets(manifest.assets, files);
+  if (manifest.packageVersion >= 4) assertPackageAssets(manifest.assets, files);
+  assertImageQuestions(worksheet.blocks);
+  if (hasImageResponses(worksheet.blocks) && manifest.packageVersion !== 5) throw new Error('Image responses require worksheet package version 5.');
+  assertImageBudget(worksheet.blocks, (manifest.assets || []).map(a=>({...a,byteLength:files.get(a.path)?.length || 0})), worksheetEntry.length * 4);
   const assets = normalizeAssetManifestList(manifest.assets);
 
   const seenAssetIds = new Set();
@@ -275,8 +282,8 @@ function parseWorksheetPackage(arrayBuffer) {
     }
   });
 
-  if (hasOptionImages(worksheet.blocks) && manifest.packageVersion !== 4) throw new Error('Option images require worksheet package version 4.');
-  if (manifest.packageVersion === 4) assertOptionImages(worksheet.blocks, new Map(assets.map(asset => [asset.assetId, { ...asset, byteLength: files.get(asset.path)?.length }])));
+  if (hasOptionImages(worksheet.blocks) && manifest.packageVersion < 4) throw new Error('Option images require worksheet package version 4.');
+  if (manifest.packageVersion >= 4) assertOptionImages(worksheet.blocks, new Map(assets.map(asset => [asset.assetId, { ...asset, byteLength: files.get(asset.path)?.length }])));
   if (manifest.packageVersion >= PACKAGE_VERSION) {
     const assetById = new Map(assets.map((asset) => [asset.assetId, asset]));
     const blocks = Array.isArray(worksheet.blocks) ? worksheet.blocks : [];

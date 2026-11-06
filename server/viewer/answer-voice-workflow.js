@@ -23,8 +23,21 @@ export function insertionIndex(text, intent) {
     ? index + 1 : index;
 }
 
-export function insertVoiceSegment(answer, segment, index) {
-  const prefix = answer.slice(0, index), suffix = answer.slice(index);
+// Legacy records contain only an insertion index. Replacement requires an explicit,
+// valid range against the exact answer snapshot; malformed ranges never delete text.
+export function voiceInsertionRange(text, intent) {
+  const index = insertionIndex(text, intent);
+  const start = intent?.replaceStart;
+  const splitsPair = offset => offset > 0 && /[\uD800-\uDBFF]/.test(text[offset - 1])
+    && /[\uDC00-\uDFFF]/.test(text[offset] || '');
+  const replaces = intent?.deliberate && intent.snapshot === text
+    && Number.isInteger(start) && start >= 0 && start < index
+    && index === intent.index && !splitsPair(start) && !splitsPair(index);
+  return { index, ...(replaces ? { replaceStart: start } : {}) };
+}
+
+export function insertVoiceSegment(answer, segment, index, replaceStart = index) {
+  const prefix = answer.slice(0, replaceStart), suffix = answer.slice(index);
   const gap = (left, right) => /[\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}\p{N}]\p{M}*[.!?,;:…'"”’)\]]*$/u.test(left)
     && /^["“‘'(\[]*[\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}\p{N}]/u.test(right) ? ' ' : '';
   const inserted = gap(prefix, segment) + segment + gap(segment, suffix);
@@ -40,8 +53,8 @@ export function normalizeVoiceRecovery(records, blocks = []) {
     if (!item || isInitialAuthRecovery(item) || typeof item.text !== 'string' || !hasRecoveryText(item)) continue;
     entries.push([block.blockId, {
       phase: 'text', text: item.text, snapshot: typeof item.snapshot === 'string' ? item.snapshot : '',
-      index: insertionIndex(typeof item.snapshot === 'string' ? item.snapshot : '',
-        { deliberate: true, snapshot: item.snapshot, index: item.index }),
+      ...voiceInsertionRange(typeof item.snapshot === 'string' ? item.snapshot : '',
+        { deliberate: true, snapshot: item.snapshot, index: item.index, replaceStart: item.replaceStart }),
       mode: item.mode === 'rewrite' ? 'rewrite' : 'voice',
       createdAt: typeof item.createdAt === 'string' ? item.createdAt : '',
       ...(typeof item.undoSnapshot === 'string' ? { undoSnapshot: item.undoSnapshot } : {}),
@@ -97,7 +110,7 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
   const keep = (op, code, candidate) => {
     if (!valid(op)) return;
     return recover(op.blockId, { mode: op.mode, phase: op.phase, text: op.text || '', snapshot: op.snapshot,
-      index: op.index, createdAt: op.createdAt, code,
+      index: op.index, ...(op.replaceStart !== undefined ? { replaceStart: op.replaceStart } : {}), createdAt: op.createdAt, code,
       ...(op.initialRewrite ? { initialRewrite: true } : {}),
       ...(typeof op.undoSnapshot === 'string' ? { undoSnapshot: op.undoSnapshot } : {}), ...(op.providerError ? { providerError: op.providerError } : {}),
       ...(candidate !== undefined ? { candidate, accountCurrent: op.accountCurrent } : {}) });
@@ -106,7 +119,7 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
     if (op.accountCurrent && !op.accountCurrent()) { keep(op, 'STALE_CONTEXT'); return false; }
     if (!fresh(op)) { keep(op, 'STALE_CONTEXT', candidate); return false; }
     const value = op.mode === 'rewrite' ? { text: candidate, caret: candidate.length }
-      : insertVoiceSegment(op.snapshot, candidate, op.index);
+      : insertVoiceSegment(op.snapshot, candidate, op.index, op.replaceStart);
     // Match the viewer's UTF-16 maxLength/save semantics, independently of the
     // bridge's Unicode-code-point input limit. Never let autosave truncate voice.
     if (value.text.length > (read(op.blockId).block.responseConfig?.maxLength || 200)) {
@@ -152,11 +165,11 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
     if (hasRecoveryText(retry) && !retry.text.trim() && candidate === undefined) return { ok: false, status: 'empty_source' };
     const op = { id: ++sequence, attemptId: current.attemptId, contextKey: current.contextKey, blockId, mode,
       snapshot: retry?.snapshot ?? current.answer,
-      index: insertionIndex(retry?.snapshot ?? current.answer, retry
-        ? { deliberate: true, snapshot: retry.snapshot, index: retry.index } : intent),
+      ...voiceInsertionRange(retry?.snapshot ?? current.answer, retry
+        ? { deliberate: true, snapshot: retry.snapshot, index: retry.index, replaceStart: retry.replaceStart } : intent),
       createdAt: new Date().toISOString(), controller: new AbortController(), state: 'checking_session',
       phase: hasRecoveryText(retry) ? 'text' : retry?.phase || 'preflight', text: retry?.text || '', undoSnapshot: undoSnapshot ?? retry?.undoSnapshot };
-    if (append) { op.snapshot = current.answer; op.index = current.answer.length; op.undoSnapshot = current.answer; }
+    if (append) { op.snapshot = current.answer; op.index = current.answer.length; delete op.replaceStart; op.undoSnapshot = current.answer; }
     if (mode === 'rewrite' || retry?.text || candidate !== undefined) pendingAudio = null;
     lastDiagnostic = null;
     active = op; emit();

@@ -1,6 +1,6 @@
 import { getApiErrorMessage } from '../app/api/error-presentation.js';
 import { supportsAnswerRecording } from './answer-recording.js';
-import { REWRITE_INPUT_LIMIT, unicodeLength, hasRecoveryText, hasPendingRecovery, getVoiceRecovery, isInitialAuthRecovery } from './answer-voice-workflow.js';
+import { REWRITE_INPUT_LIMIT, unicodeLength, hasRecoveryText, hasPendingRecovery, getVoiceRecovery, isInitialAuthRecovery, voiceInsertionRange } from './answer-voice-workflow.js';
 
 function button(label, action) {
   const node = document.createElement('button');
@@ -50,12 +50,14 @@ export function createVoiceControls({ session, block, control, t, view, applied,
       && placedSelection.index === control.selectionStart && placedSelection.index === control.selectionEnd) return;
     placedSelection = null;
     if (!control.readOnly && document.activeElement === control) {
-      intent = { deliberate: true, snapshot: control.value, index: control.selectionEnd };
+      intent = { deliberate: true, snapshot: control.value, index: control.selectionEnd, replaceStart: control.selectionStart };
+      authNotice = null;
+      update();
     }
   };
   for (const event of ['pointerup', 'keyup', 'input', 'select']) control.addEventListener(event, capture);
   control.addEventListener('blur', event => {
-    if (event.relatedTarget !== add) intent = null;
+    if (event.relatedTarget !== add) { intent = null; update(); }
   });
   const signInForRecovery = async (confirm = true) => {
     const attemptId = session.state.localAttemptId, payload = session.state.viewerPayload;
@@ -85,6 +87,7 @@ export function createVoiceControls({ session, block, control, t, view, applied,
   const add = button(t('viewer.voice.add'), () => perform());
   add.classList.add('question-card__voice-btn');
   const hint = document.createElement('p'); hint.className = 'viewer-voice-hint';
+  hint.id = `${control.id}-voice-hint`;
   const recovery = document.createElement('div'); recovery.className = 'viewer-voice-recovery';
   const message = document.createElement('p'); message.setAttribute('role', 'status');
   const editorLabel = document.createElement('label'); editorLabel.textContent = t('viewer.voice.recoveryText');
@@ -127,16 +130,19 @@ export function createVoiceControls({ session, block, control, t, view, applied,
     root.hidden = completed;
     add.hidden = completed;
     const record = getVoiceRecovery(session.state.voiceRecovery, block.blockId);
+    const range = voiceInsertionRange(control.value, intent);
+    const replaces = range.replaceStart !== undefined;
+    const retainedLength = control.value.length - (replaces ? range.index - range.replaceStart : 0);
     add.disabled = Boolean(op) || hasPendingRecovery(record) || !supportsAnswerRecording()
-      || control.value.length >= (block.responseConfig?.maxLength || 200);
-    add.setAttribute('aria-describedby', sharedStatusId || status.root.id);
+      || retainedLength >= (block.responseConfig?.maxLength || 200);
+    add.setAttribute('aria-describedby', `${sharedStatusId || status.root.id} ${hint.id}`);
     control.readOnly = Boolean(own);
     control.classList.toggle('viewer-voice-readonly', Boolean(own));
     status?.update(block.blockId);
-    hint.textContent = own ? t('viewer.voice.locked') : hasPendingRecovery(record) ? t('viewer.voice.resolveRecovery')
+    hint.textContent = own ? t('viewer.voice.locked') : hasPendingRecovery(record) ? t(record.replaceStart !== undefined && record.snapshot === control.value && record.code !== 'STALE_CONTEXT' ? 'viewer.voice.resolveReplacement' : 'viewer.voice.resolveRecovery')
       : !supportsAnswerRecording() ? t('viewer.voice.errors.RECORDING_UNSUPPORTED')
-      : control.value.length >= (block.responseConfig?.maxLength || 200) ? t('viewer.voice.noRoom')
-        : intent ? t('viewer.voice.atCursor') : t('viewer.voice.atEnd');
+      : retainedLength >= (block.responseConfig?.maxLength || 200) ? t('viewer.voice.noRoom')
+        : replaces ? t('viewer.voice.replaceSelection') : intent ? t('viewer.voice.atCursor') : t('viewer.voice.atEnd');
     if (authNotice && !record && !op) hint.textContent = authNotice;
     recovery.hidden = !record || Boolean(own) || isInitialAuthRecovery(record);
     if (record) {

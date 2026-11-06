@@ -7,7 +7,7 @@ export function showImageDialog({ src, alt, title, signal, opener = document.act
   const header = document.createElement('header');
   const heading = document.createElement('h2'); heading.textContent = title;
   const close = document.createElement('button'); close.type = 'button'; close.className = 'worksheet-image-close';
-  close.textContent = '×'; close.setAttribute('aria-label', t('common.actions.close')); close.autofocus = true;
+  close.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>'; close.setAttribute('aria-label', t('common.actions.close')); close.autofocus = true;
   header.append(heading, close);
   const image = document.createElement('img'); image.src = src; image.alt = alt;
   dialog.append(header, image); document.body.append(dialog);

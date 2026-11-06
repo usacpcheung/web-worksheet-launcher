@@ -1,6 +1,44 @@
 import roleplayscene from './roleplayscene/en.js';
 
 export default {
+  imageResponse: {
+    prepareFailed:
+      'This image could not be reduced to 2 MB while keeping enough detail. Please resize it or choose another image. Your saved images are unchanged.',
+    storageFull:
+      'This browser does not have enough storage space. Free some space or choose a smaller image, then try again. Your saved images are unchanged.',
+    budgetCalculating: 'Calculating worksheet and answer-image budget…',
+    type: 'Image response',
+    typeCount: 'Image response · {count}/3 questions used',
+    questionLimit: 'Maximum 3 image-response questions per worksheet.',
+    maxImages: 'Maximum images per answer',
+    rules:
+      'JPG or PNG · Up to 10 MB each; up to 24 megapixels and 8192 pixels per side. Images over 2 MB are reduced automatically.',
+    budget: 'Maximum attempt budget: {size} / 30 MB (includes answer images and package allowance).',
+    budgetExceeded:
+      'Package budget exceeded. Reduce worksheet media or the maximum image counts before publishing.',
+    pending: 'Please finish or cancel image preparation before saving, exporting or submitting.',
+    add: 'Add image',
+    replace: 'Replace',
+    remove: 'Remove',
+    removeTitle: 'Remove this image?',
+    removeHint: 'This image will be removed from this answer.',
+    image: 'Image {number}',
+    enlarge: 'Enlarge image {number}',
+    previous: 'Previous',
+    next: 'Next',
+    count: '{count} of {max} images added',
+    empty: 'Attach a photo or digital drawing of your work.',
+    preparing: 'Preparing your image… Images over 2 MB will be resized or compressed to fit the limit.',
+    review: 'Please check that your work is clear and readable.',
+    use: 'Use this image',
+    tooLarge: 'This file exceeds 10 MB. Please resize it or choose another image.',
+    dimensions:
+      'This image exceeds 24 megapixels or 8192 pixels on one side. Please reduce its dimensions or choose another image.',
+    format: 'This format is not supported. Please choose a JPG or PNG image.',
+    failed:
+      'The image could not be prepared or saved. Your existing answer is unchanged. Choose a smaller image, check device storage, or reopen the attempt if it changed in another tab.',
+    unavailable: 'Image unavailable',
+  },
   optionImages: {"imageAlt": "Option {option} image", "enlarge": "Enlarge option {option} image", "unavailable": "Image unavailable", "manage": "Add or manage option image", "description": "Image description (optional)", "descriptionHelp": "For screen readers or unavailable images. Not a visible caption or audio source. Recommended for image-only options.", "count": "{count} / 200 characters", "placeholder": "Option text — optional with an image", "required": "Each option needs text or an image.", "replace": "Replace this option image? Its description will be cleared.", "remove": "Remove this option image? Text and audio will be kept."},
   mutationAuth: {
     generateAudio: 'Generate audio',
@@ -726,6 +764,8 @@ export default {
       "cancel": "Cancel",
       "locked": "Your answer is read-only until processing finishes. You can cancel at any time.",
       "atEnd": "Voice text will be added at the end. Place the cursor to choose another position.",
+      "replaceSelection": "Voice text will replace the selected text. The original stays until processing succeeds.",
+      "resolveReplacement": "The original text is unchanged. Retry or insert the recovered result to replace the original selection, or discard it.",
       "atCursor": "Voice text will be added at the cursor.",
       "ready": "Ready to edit",
       "recoveryText": "Recovered text",
@@ -735,7 +775,7 @@ export default {
       "append": "Add at end",
       "signIn": "Sign in",
       "discard": "Discard",
-      "noRoom": "Your answer is at its limit. Shorten it before adding voice text.",
+      "noRoom": "Your answer is at its limit. Shorten it or select text to replace.",
       "finishFirst": "Finish or cancel processing before submitting.",
       "otherQuestion": "{stage} Question {number}. Finish or cancel before starting another voice input or rewrite.",
       "stages": {

@@ -67,3 +67,33 @@ export, and the existing details/print settings. Local Save is labelled “Save 
 this device.” Export remains available without login. Printing remains the
 existing report preview and is available after submission; before submission the
 visible control explains its disabled state on hover, focus, or tap.
+
+### Voice recovery selection range
+
+Viewer attempt recovery and RolePlayScene session recovery may retain optional
+`replaceStart` (UTF-16 offset) alongside the existing end `index` and `snapshot`.
+Only valid nonempty ranges with intact surrogate boundaries allow replacement.
+Missing/invalid ranges preserve insertion-only legacy behavior. Answer changes
+require explicit recovery; append clears the range. Recovery remains excluded
+from server attempt packages, worksheet/story packages and print.
+
+## Image-response persistence
+
+Image-response answer values are ordered arrays of `{ assetId }`, with their binary
+media stored in `localAssets`. `commitAnswerImages` writes the new binary and answer
+references in one transaction across `localAssets` and `localAttempts`. It compares
+expected old references and rejects stale or completed attempts. Cancellation before
+commit persists no candidate; a failed transaction leaves the previous answer intact.
+
+Normal attempt autosaves and recovery-journal writes cannot replace different saved
+image references. This prevents a stale text autosave from resurrecting a removed
+image, but does not introduce general multi-tab text merging. Image work is serialized
+within a viewer session; pending attachment blocks finalization/export/server save.
+Export holds an image-edit lock while collecting the immutable package snapshot.
+
+New answer assets have `metadata.ownerAttemptId`. Replacing/removing them reclaims
+unreferenced bytes in the same transaction; deleting an attempt also removes its
+owned answer assets. Imported answer-only assets receive the new attempt owner ID.
+Worksheet/shared assets retain their existing lifetime. Import uses fresh identities
+for both binaries and answer references; old packages and local records are unchanged.
+No database version migration is required.

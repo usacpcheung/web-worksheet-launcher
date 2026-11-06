@@ -5,3 +5,6 @@
 .worksheet-image-dialog img{display:block;max-width:100%;max-height:70dvh;width:auto;height:auto;object-fit:contain;margin:auto}
 .worksheet-image-close{flex:none;width:44px;height:44px;border:1px solid #d2dfef;border-radius:50%;background:#fff;color:#48678e;font-size:26px;cursor:pointer}
 @media print{.worksheet-image-dialog{display:none!important}}
+
+.worksheet-image-close{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;padding:0;line-height:1}
+.worksheet-image-close svg{display:block;width:20px;height:20px;flex:none;pointer-events:none}
