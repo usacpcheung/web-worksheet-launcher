@@ -116,6 +116,7 @@ export function createImageResponseControls({ session, block, signal }) {
       dialog.querySelector('h2').textContent = t('imageResponse.image', {
         number: index + 1,
       });
+      dialog.setAttribute('aria-label', t('imageResponse.image', { number: index + 1 }));
       pos.textContent = `${index + 1} / ${refs().length}`;
       prev.disabled = index === 0 || !urls[index - 1];
       next.disabled = index === refs().length - 1 || !urls[index + 1];
@@ -167,6 +168,8 @@ export function createImageResponseControls({ session, block, signal }) {
       [block.blockId]: { value: values, answeredAt: new Date().toISOString() },
     };
     session.state.attemptRevision++;
+    // Persist any text/metadata edits made while the image transaction was pending.
+    session.scheduleAutosave();
     session.state.lastSavedAt = new Date().toISOString();
     session.notifyStateChange();
   }

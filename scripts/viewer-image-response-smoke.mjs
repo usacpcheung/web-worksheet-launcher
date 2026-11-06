@@ -100,9 +100,19 @@ try {
         await page.locator('.image-response-add').click();
         await (await waiting).setFiles({ name, mimeType, buffer });
       }
+      await page.evaluate(() => {
+        const s = viewerSession, commit = s.storage.commitAnswerImages;
+        s.storage.commitAnswerImages = async args => {
+          await commit(args);
+          // Emulate another field changing during the asynchronous image commit.
+          s.state.studentName = 'Concurrent learner'; s.state.attemptRevision++;
+          s.storage.commitAnswerImages = commit;
+        };
+      });
       await add();
       await page.waitForFunction(() => viewerSession.state.answers.q?.value?.length === 1);
       assert.equal(await page.locator('.image-response-card').count(), 1);
+      await page.waitForFunction(async () => (await viewerSession.storage.attempts.get('image-smoke'))?.studentName === 'Concurrent learner');
       await page.reload();
       await page.locator('.image-response-card').waitFor();
       await page.locator('.image-response-open').click();
@@ -206,6 +216,14 @@ try {
       await page.waitForFunction(
         () => viewerSession.state.answers.q.value.length === 3 && !viewerSession.imagePending
       );
+      await page.locator('.image-response-open').first().click();
+      const enlarged = page.locator('.worksheet-image-dialog');
+      await enlarged.locator('.image-response-tools button').last().click();
+      assert.match(await enlarged.getAttribute('aria-label'), /2/);
+      assert.match(await enlarged.locator('img').getAttribute('alt'), /2/);
+      await enlarged.locator('.image-response-tools button').first().click();
+      assert.match(await enlarged.getAttribute('aria-label'), /1/);
+      await page.keyboard.press('Escape');
       if (process.env.VIEWER_SMOKE_SCREENSHOTS)
         await page.screenshot({
           path: `${process.env.VIEWER_SMOKE_SCREENSHOTS}/image-response-${locale}-${width}.png`,
