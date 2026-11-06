@@ -63,6 +63,16 @@ try {
       assert.equal(await toggle.isChecked(), true);
       assert.equal(await limit.inputValue(), '15000');
       await toggle.click();
+      // Autosave replaces the draft object while confirmation is open. Unchanged
+      // content must remain confirmable without relying on object identity.
+      assert.equal(
+        await page.evaluate(async () => {
+          const previous = window.editorSession.state.draft;
+          await window.editorSession.autosave();
+          return previous !== window.editorSession.state.draft;
+        }),
+        true
+      );
       await modal
         .getByRole('button', {
           name: locale === 'en' ? 'Switch to standard text' : '切換為一般文字',
