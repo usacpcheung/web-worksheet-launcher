@@ -7726,7 +7726,8 @@ function renderEditorShell(session) {
         const draft = session.state.draft;
         const id = selectedBlock.blockId;
         const nextMode = longToggle.checked;
-        const configAtClick = draft.blocks.find(block => block.blockId === id)?.responseConfig;
+        const draftGeneration = session._audioDraftGeneration;
+        const configAtClick = JSON.stringify(draft.blocks.find(block => block.blockId === id)?.responseConfig);
         const outcome = session.updateQuestionTextMode(id, nextMode);
         if (outcome.reason === 'confirm-reduction') {
           longToggle.checked = true;
@@ -7734,8 +7735,9 @@ function renderEditorShell(session) {
             title: t('textAnswer.switchTitle'), descriptionText: t('textAnswer.switchDescription', { max: outcome.max }),
             confirmLabel: t('textAnswer.switchConfirm'),
           });
-          if (confirmed && session.state.draft === draft && session.state.selectedBlockId === id
-            && draft.blocks.find(block => block.blockId === id)?.responseConfig === configAtClick) {
+          if (confirmed && session.state.draft?.localId === draft.localId
+            && session._audioDraftGeneration === draftGeneration && session.state.selectedBlockId === id
+            && JSON.stringify(session.state.draft.blocks.find(block => block.blockId === id)?.responseConfig) === configAtClick) {
             session.updateQuestionTextMode(id, nextMode, { confirmReduction: true });
           }
         }
