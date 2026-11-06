@@ -30,7 +30,12 @@ export function bindTextAnswerInput(control, { config, getValue, accepted, rejec
     'paste',
     (event) => {
       if (!event.clipboardData) return;
-      const text = event.clipboardData.getData('text/plain').replace(/\r\n?/g, '\n');
+      const clipboardText = event.clipboardData.getData('text/plain');
+      // Native single-line inputs strip line breaks; textareas normalize CRLF.
+      const text =
+        control.tagName === 'INPUT'
+          ? clipboardText.replace(/[\r\n]/g, '')
+          : clipboardText.replace(/\r\n?/g, '\n');
       const next =
         control.value.slice(0, control.selectionStart) + text + control.value.slice(control.selectionEnd);
       if (!acceptsTextEdit(control.value, next, config)) {
