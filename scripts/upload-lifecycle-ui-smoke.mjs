@@ -1,3 +1,4 @@
+import { openViewerAttemptMenu, clickViewerSave, confirmViewerSaveDetails } from './viewer-navigation-test-helpers.mjs';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 const base = process.env.VIEWER_SMOKE_URL || 'http://127.0.0.1:8765';
@@ -45,8 +46,9 @@ try {
         const { t } = await import('/server/app/i18n/index.js');
         return [t(app === 'editor' ? 'editor.server.uploadDraft' : 'viewer.upload.saveAttemptAriaLabel'), t('common.actions.cancel')];
       }, app);
-      const button = page.getByRole('button', { name: labels[0], exact: true });
+      const button = app === 'viewer' ? page.locator('.viewer-attempt-menu button').first() : page.getByRole('button', { name: labels[0], exact: true });
       holdSession = true;
+      if (app === 'viewer') await openViewerAttemptMenu(page);
       await button.click();
       for (let i = 0; !releaseSession && i < 100; i++) await page.waitForTimeout(20);
       assert.ok(releaseSession, 'preflight must be held');
@@ -58,6 +60,7 @@ try {
       assert.equal(probes, 1);
       assert.equal(posts, 0);
       holdSession = false; releaseSession();
+      if (app === 'viewer') await confirmViewerSaveDetails(page);
       await page.getByRole('dialog').waitFor();
       assert.equal(await button.isDisabled(), true, 'busy through conflict choice');
       await button.dispatchEvent('click');
@@ -66,13 +69,15 @@ try {
       await page.waitForFunction(app => !window[`${app}Session`].state[app === 'editor' ? 'isUploadDraftFlowActive' : 'isUploadAttemptFlowActive'], app);
       assert.equal(await button.isEnabled(), true);
       mode = 'success';
-      await button.click();
+      if (app === 'viewer') await clickViewerSave(page);
+      else await button.click();
       await page.waitForFunction(app => !window[`${app}Session`].state[app === 'editor' ? 'isUploadDraftFlowActive' : 'isUploadAttemptFlowActive'], app);
       assert.equal(posts, 2, 'one fresh upload after cancellation');
       assert.equal(await button.isEnabled(), true);
       if (app === 'viewer') for (const replacement of ['same-id', 'different-id']) for (const response of ['ready', 'network', 'logged_out']) {
         holdSession = true; releaseSession = null;
-        await button.click();
+        if (app === 'viewer') await openViewerAttemptMenu(page);
+      await button.click();
         for (let i = 0; !releaseSession && i < 100; i++) await page.waitForTimeout(20);
         assert.ok(releaseSession);
         const beforePosts = posts;

@@ -259,11 +259,11 @@ export class PackageService {
   async findAvailableAttemptCopyTitle({ client, identity, title, subject }) {
     const baseTitle = stripGeneratedCopySuffix(title);
     for (let copyIndex = 2; copyIndex < 1000; copyIndex += 1) {
-      const candidate = `${baseTitle} (${copyIndex})`;
+      const candidate = `${Array.from(baseTitle).slice(0, 80 - String(copyIndex).length - 3).join('')} (${copyIndex})`;
       const existing = await this.findAttemptConflict({ client, identity, title: candidate, subject });
       if (!existing) return candidate;
     }
-    return `${baseTitle} (${crypto.randomUUID().slice(0, 8)})`;
+    return `${Array.from(baseTitle).slice(0, 69).join('')} (${crypto.randomUUID().slice(0, 8)})`;
   }
 
   getUploadOperation(identity, operationId) {
@@ -589,13 +589,13 @@ export class PackageService {
     await deleteArtifactBestEffort({ artifactStore: this.artifactStore, artifactPath: deleted.rows[0].artifact_path });
     return { ok: true, statusCode: 200, data: { uploaded_attempt_id: deleted.rows[0].uploaded_attempt_id, deleted: true } };
   }
-  async uploadAttempt({ identity, title, subject, zipBytes, conflictAction = 'fail_on_conflict', operationId = null }) {
+  async uploadAttempt({ identity, title, subject, zipBytes, conflictAction = 'fail_on_conflict', operationId = null, expectedAttemptId = '', expectedArtifactHash = '' }) {
     const validation = validateUploadedAttemptPackage(zipBytes);
     if (!validation.ok) return { ok: false, statusCode: 400, error: validation.error };
     const action = normalizeUploadConflictAction(conflictAction);
     const normalizedTitle = normalizeText(title, 'Untitled attempt');
     const normalizedSubject = normalizeText(subject, '');
-    const operation = createUploadOperation({ operationId, kind: 'worksheet-attempt', metadata: [title, subject, conflictAction], zipBytes });
+    const operation = createUploadOperation({ operationId, kind: 'worksheet-attempt', metadata: [title, subject, conflictAction, ...(expectedAttemptId ? [expectedAttemptId, expectedArtifactHash] : [])], zipBytes });
     const client = await this.db.connect();
     let artifact = null;
     let commitAttempted = false;
@@ -615,6 +615,14 @@ export class PackageService {
         title: normalizedTitle,
         subject: normalizedSubject,
       });
+      if (action === 'replace' && expectedAttemptId && (!conflict || conflict.uploaded_attempt_id !== expectedAttemptId || conflict.artifact_sha256 !== expectedArtifactHash)) {
+        await client.query('ROLLBACK');
+        return { ok: false, statusCode: 409, error: { code: 'ATTEMPT_REPLACE_TARGET_CHANGED', message: 'The selected server attempt changed. Refresh and confirm again.' } };
+      }
+      if (!conflict && Array.from(normalizedTitle).length > 80) {
+        await client.query('ROLLBACK');
+        return { ok: false, statusCode: 400, error: { code: 'INVALID_ATTEMPT_NAME', message: 'Attempt names must contain no more than 80 characters.' } };
+      }
       if (conflict && action === 'fail_on_conflict') {
         const attempts = await this.listOwnAttempts(identity, client);
         await client.query('ROLLBACK');
@@ -639,7 +647,11 @@ export class PackageService {
         };
       }
       const attempt = validation.attempt;
+      let savedTitle = normalizedTitle;
+      let savedSubject = normalizedSubject;
       if (conflict && action === 'replace') {
+        savedTitle = conflict.title;
+        savedSubject = conflict.subject || '';
         uploadedAttemptId = conflict.uploaded_attempt_id;
         artifact = await this.artifactStore.storeArtifact({
           ownerSub: identity.sub,
@@ -659,11 +671,12 @@ export class PackageService {
         const finalTitle = conflict && action === 'copy'
           ? await this.findAvailableAttemptCopyTitle({ client, identity, title: normalizedTitle, subject: normalizedSubject })
           : normalizedTitle;
+        savedTitle = finalTitle;
         uploadedAttemptId = crypto.randomUUID();
         artifact = await this.artifactStore.storeArtifact({ ownerSub: identity.sub, bucket: 'attempts', artifactId: uploadedAttemptId, bytes: zipBytes });
         await client.query(`INSERT INTO uploaded_attempts(uploaded_attempt_id,owner_sub,owner_email,owner_name,title,subject,status,submitted_at,checked_at,artifact_path,artifact_sha256,artifact_size_bytes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, [uploadedAttemptId, identity.sub, identity.email, identity.name, finalTitle, normalizedSubject, attempt.status, attempt.submittedAt || null, attempt.checking?.checkedAt || null, artifact.artifactPath, artifact.artifactSha256, artifact.artifactSizeBytes]);
       }
-      const result = await recordUploadOperation(client, identity, operation, { ok: true, statusCode: conflict && action === 'replace' ? 200 : 201, data: { uploaded_attempt_id: uploadedAttemptId } });
+      const result = await recordUploadOperation(client, identity, operation, { ok: true, statusCode: conflict && action === 'replace' ? 200 : 201, data: { uploaded_attempt_id: uploadedAttemptId, title: savedTitle, subject: savedSubject } });
       commitAttempted = true;
       await client.query('COMMIT');
       for (const artifactPath of cleanupArtifactPathsAfterCommit) {

@@ -536,3 +536,50 @@ for (const change of ['cancel', 'target', 'account', 'peer-expiry']) {
     assert.deepEqual(h.state.requests.map(r => r.kind), ['transcribe']);
   });
 }
+
+for (const authenticated of [false, true]) test(`initial login cleanup leaves answers untouched (authenticated=${authenticated})`, async () => {
+  const { state, flow } = setup({ checkSession: async () => ({ ok: false, error: { code: 'AUTH_REQUIRED' } }) });
+  await flow.run('q1');
+  const record = state.recovery.q1;
+  assert.equal(record.phase, 'preflight');
+  flow.settleAuthentication('q1', record, authenticated);
+  assert.equal(state.recovery.q1, undefined);
+  assert.equal(state.answers.q1, 'Earlier');
+  assert.equal(state.records.length, 0); assert.equal(state.requests.length, 0);
+});
+test('authentication cleanup preserves transcripts, edited rewrite source and pending capture', () => {
+  for (const record of [
+    { phase: 'text', text: 'Transcript', mode: 'voice' },
+    { phase: 'capture', text: '', mode: 'voice' },
+    { phase: 'text', text: 'Edited', snapshot: 'Earlier', mode: 'rewrite', initialRewrite: true },
+  ]) {
+    const { state, flow } = setup();
+    state.recovery.q1 = { ...record, code: 'AUTH_REQUIRED', providerError: { error: { code: 'AUTH_REQUIRED' } } };
+    const before = state.recovery.q1;
+    flow.settleAuthentication('q1', before, false);
+    assert.equal(state.recovery.q1, before);
+    flow.settleAuthentication('q1', before, true);
+    assert.equal(state.recovery.q1.text, record.text);
+    assert.equal(state.recovery.q1.code, 'RECOVERED');
+    assert.equal(state.recovery.q1.providerError, undefined);
+    assert.equal(state.requests.length, 0);
+  }
+});
+test('untouched initial rewrite restores the original action, but a replaced record is not cleared', async () => {
+  const { state, flow } = setup({ checkSession: async () => ({ ok: false, error: { code: 'AUTH_REQUIRED' } }) });
+  await flow.run('q1', { mode: 'rewrite' });
+  const record = state.recovery.q1;
+  assert.equal(record.initialRewrite, true);
+  flow.settleAuthentication('q1', { ...record }, true);
+  assert.equal(state.recovery.q1, record);
+  flow.settleAuthentication('q1', record, true);
+  assert.equal(state.recovery.q1, undefined);
+  assert.equal(state.answers.q1, 'Earlier');
+});
+
+test('reload never promotes an authentication-only rewrite into pending text recovery', () => {
+  const record = { phase:'text', mode:'rewrite', text:'Earlier', snapshot:'Earlier', code:'AUTH_REQUIRED', initialRewrite:true };
+  const blocks = [{blockId:'q1',kind:'question',responseConfig:{inputType:'text'}}];
+  assert.deepEqual(normalizeVoiceRecovery({q1:record},blocks),{});
+  assert.equal(normalizeVoiceRecovery({q1:{...record,text:'Edited recovery'}},blocks).q1.text,'Edited recovery');
+});

@@ -21,6 +21,8 @@ export default {
     description: '登入後可繼續瀏覽、開啟或下載伺服器上的內容。本機工作將會保留。',
   },
   apiErrors: {
+    "attemptNameInvalid": "作答名稱須為 1 至 80 個字元。",
+    "attemptTargetChanged": "所選的伺服器作答記錄已變更。請重新整理清單後再次確認。",
     deleteUncertain: "無法確認刪除結果，項目可能已被刪除。請先重新整理清單確認，再決定是否重試。",
     deleteRefreshFailed: "項目已刪除，但無法更新清單。請重新整理清單以查看最新內容。",
     recoveryTimedOut: "自動重試已逾時。你可以立即重試或繼續登入。",
@@ -658,6 +660,28 @@ export default {
     }
   },
   "viewer": {
+    "attemptMenu": {
+      "menu": "作答選單",
+      "save": "儲存至伺服器",
+      "manage": "管理伺服器作答記錄",
+      "export": "匯出作答套件 (.zip)",
+      "local": "儲存至此裝置",
+      "name": "作答記錄名稱",
+      "nameHelp": "使用不同名稱會新增一份作答並佔用另一個名額，原有記錄會保留。名稱相同時，可選擇取代或另存副本。儲存不等於提交作答。",
+      "invalidName": "請輸入 1 至 80 個字元。",
+      "student": "學生姓名（選填）",
+      "studentHelp": "可留空繼續；這份作答不會再次詢問。你可以稍後在詳細資料與列印設定中修改。",
+      "invalidStudent": "姓名不可超過 120 個字元。",
+      "continue": "繼續",
+      "printHint": "提交作答後即可列印報告。",
+      "finishFirst": "請先完成或取消錄音、處理或上載，再切換作答。",
+      "continueSave": "繼續儲存至伺服器",
+      "spaceFreed": "已有可用名額。目前的作答尚未儲存至伺服器。",
+      "slotHelp": "如要新增作答，請先刪除一份伺服器記錄。你也可以匯出目前作答至此裝置。",
+      "fullName": "完整名稱",
+      "localSaveFailed": "未能儲存至此裝置，操作已停止。請保留此頁並重試。",
+      "serverMissing": "此伺服器作答記錄已不存在，請重新整理清單後再試。"
+    },
     navigation: {
       "actions": "工作紙操作",
       "browse": "瀏覽工作紙",
@@ -691,6 +715,9 @@ export default {
 
       "resolveRecovery": "請先檢查或捨棄復原內容，再開始新的語音輸入或改寫整個答案。",
       "signInThenRewrite": "請登入，然後再次按「改寫」。系統將使用你目前的答案。",
+      "signedInThenVoice": "已登入。請按「用語音加入」開始錄音。",
+      "signedInThenRewrite": "已登入。請按「改寫」繼續。",
+      "signedInRecovery": "已登入，復原內容已保留。請按重試繼續，或捨棄內容。",
       "signInThenVoice": "請登入，然後再次按「用語音加入」。錄音不會自動開始。",
       "preflightFailed": "尚未開始處理。請檢查連線，然後再次按原來的操作按鈕。",
       "add": "用語音加入",
@@ -1025,7 +1052,7 @@ export default {
       "progressPercent": "正在上載作答記錄... {percent}%",
       "progressPreparing": "正在準備上載...",
       "progressSaving": "正在儲存上載...",
-      "saveAttemptAriaLabel": "儲存作答記錄",
+      "saveAttemptAriaLabel": "儲存至伺服器",
       "saveAttemptTitle": "儲存作答記錄",
       "exportAttemptAriaLabel": "匯出作答套件（.zip）",
       "exportAttemptTitle": "匯出作答套件（.zip）",

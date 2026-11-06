@@ -1,6 +1,6 @@
 import { getApiErrorMessage } from '../app/api/error-presentation.js';
 import { supportsAnswerRecording } from './answer-recording.js';
-import { REWRITE_INPUT_LIMIT, unicodeLength, hasRecoveryText, hasPendingRecovery, getVoiceRecovery } from './answer-voice-workflow.js';
+import { REWRITE_INPUT_LIMIT, unicodeLength, hasRecoveryText, hasPendingRecovery, getVoiceRecovery, isInitialAuthRecovery } from './answer-voice-workflow.js';
 
 function button(label, action) {
   const node = document.createElement('button');
@@ -40,6 +40,7 @@ export function createVoiceStatus({ session, t, view }) {
 
 export function createVoiceControls({ session, block, control, t, view, applied, signal, sharedStatusId, canRestoreFocus, requestSignIn }) {
   let intent = null;
+  let authNotice = null;
   let placedSelection = null;
   const root = document.createElement('div'); root.className = 'viewer-voice';
   const status = sharedStatusId ? null : createVoiceStatus({ session, t, view });
@@ -56,19 +57,28 @@ export function createVoiceControls({ session, block, control, t, view, applied,
   control.addEventListener('blur', event => {
     if (event.relatedTarget !== add) intent = null;
   });
+  const signInForRecovery = async (confirm = true) => {
+    const attemptId = session.state.localAttemptId, payload = session.state.viewerPayload;
+    const record = getVoiceRecovery(session.state.voiceRecovery, block.blockId);
+    const isCurrent = () => !signal?.aborted && control.isConnected
+      && session.state.localAttemptId === attemptId && session.state.viewerPayload === payload;
+    const result = requestSignIn ? await requestSignIn({ isCurrent, confirm }) : await session.beginServerSignIn();
+    if (!isCurrent()) return;
+    if (result?.ok && isInitialAuthRecovery(record) && !getVoiceRecovery(session.state.voiceRecovery, block.blockId)) {
+      authNotice = t(record.mode === 'rewrite' ? 'viewer.voice.signedInThenRewrite' : 'viewer.voice.signedInThenVoice');
+    }
+    update();
+  };
   const perform = async (options = {}) => {
     if (session.voice.active) return;
-    const attemptId = session.state.localAttemptId;
-    const payload = session.state.viewerPayload;
+    authNotice = null;
+    const attemptId = session.state.localAttemptId, payload = session.state.viewerPayload;
     const result = await session.voice.run(block.blockId, { intent, ...options });
     intent = null;
     if (result?.error?.code === 'AUTH_REQUIRED' && !signal?.aborted) {
-      if (requestSignIn) {
-        const isCurrent = () => !signal?.aborted && control.isConnected
-          && session.state.localAttemptId === attemptId && session.state.viewerPayload === payload;
-        await requestSignIn({ isCurrent });
-        if (!isCurrent()) return;
-      } else session.beginServerSignIn();
+      if (requestSignIn && (!control.isConnected || session.state.localAttemptId !== attemptId
+        || session.state.viewerPayload !== payload)) return;
+      await signInForRecovery();
     }
     if (!signal?.aborted) update();
   };
@@ -102,7 +112,7 @@ export function createVoiceControls({ session, block, control, t, view, applied,
     if (record) perform({ mode: 'voice', retry: record, append: true,
       ...(record.candidate !== undefined ? { candidate: record.candidate } : {}) });
   });
-  const signIn = button(t('viewer.voice.signIn'), () => session.beginServerSignIn());
+  const signIn = button(t('viewer.voice.signIn'), () => signInForRecovery(false));
   const discard = button(t('viewer.voice.discard'), () => { session.voice.discard(block.blockId); intent = null; });
   const actions = document.createElement('div'); actions.className = 'viewer-voice-recovery-actions';
   actions.append(retry, insert, append, signIn, discard);
@@ -127,7 +137,8 @@ export function createVoiceControls({ session, block, control, t, view, applied,
       : !supportsAnswerRecording() ? t('viewer.voice.errors.RECORDING_UNSUPPORTED')
       : control.value.length >= (block.responseConfig?.maxLength || 200) ? t('viewer.voice.noRoom')
         : intent ? t('viewer.voice.atCursor') : t('viewer.voice.atEnd');
-    recovery.hidden = !record || Boolean(own);
+    if (authNotice && !record && !op) hint.textContent = authNotice;
+    recovery.hidden = !record || Boolean(own) || isInitialAuthRecovery(record);
     if (record) {
       message.textContent = record.providerError
         ? getApiErrorMessage(record.providerError, record.providerError.source === 'repository-api' ? 'session' : record.providerError.operation || 'rewrite', record.providerError.source)
@@ -135,6 +146,7 @@ export function createVoiceControls({ session, block, control, t, view, applied,
       if (record.phase === 'preflight' && (!record.providerError || record.code === 'AUTH_REQUIRED')) message.textContent = t(record.code === 'AUTH_REQUIRED'
         ? (record.mode === 'rewrite' ? 'viewer.voice.signInThenRewrite' : 'viewer.voice.signInThenVoice')
         : 'viewer.voice.preflightFailed');
+      if (record.authenticated) message.textContent = t('viewer.voice.signedInRecovery');
       editorLabel.hidden = !hasRecoveryText(record);
       const value = record.candidate ?? record.text;
       if (document.activeElement !== editor && editor.value !== value) editor.value = value;

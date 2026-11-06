@@ -1,3 +1,4 @@
+import { clickViewerSave, continueViewerSaveAfterDeletion } from './viewer-navigation-test-helpers.mjs';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 const base = process.env.VIEWER_SMOKE_URL || 'http://127.0.0.1:8765';
@@ -44,7 +45,7 @@ try {
     const keys = { upload:app==='editor'?'editor.server.uploadDraft':'viewer.upload.saveAttemptAriaLabel', copy:app==='editor'?'editor.modal.uploadConflict.saveAsNewCopy':'common.actions.saveAsCopy', delete:'common.actions.delete', confirm:app==='editor'?'editor.uploadedDraft.deleteDialog.confirm':'common.actions.delete', cancel:'common.actions.cancel' };
     return Object.fromEntries(Object.entries(keys).map(([k,v])=>[k,t(v)]));
    },app);
-   const button = page.getByRole('button',{name:labels.upload,exact:true});
+   const button = app === 'viewer' ? page.locator('.viewer-attempt-menu button').first() : page.getByRole('button',{name:labels.upload,exact:true});
    const settled = () => page.waitForFunction(app => !window[`${app}Session`].state[app==='editor'?'isUploadDraftFlowActive':'isUploadAttemptFlowActive'],app);
    const edit = title => page.evaluate(({app,title}) => {
     const session=window[`${app}Session`];
@@ -52,7 +53,7 @@ try {
     else { session.state.viewerPayload.title=title; session.state.viewerPayload.subject=title; session.state.sourceSubject=title; session.setAnswer('q1',title); }
    },{app,title});
    await edit('Original snapshot');
-   await button.click();
+   await (app === 'viewer' ? clickViewerSave(page) : button.click());
    await page.getByRole('dialog').waitFor();
    await page.evaluate(app => { window.completedPackageFlow = window[`${app}Session`]._uploadPackageFlow; }, app);
    await edit('Edited during conflict');
@@ -60,9 +61,11 @@ try {
    await page.getByRole('dialog').getByRole('button',{name:labels.delete,exact:true}).click();
    await edit('Edited during deletion');
    await page.getByRole('dialog').last().getByRole('button',{name:labels.confirm,exact:true}).click();
+   if (app === 'viewer') await continueViewerSaveAfterDeletion(page);
    // Another client consumes the freed slot, then creates a name conflict.
    await page.getByRole('dialog').getByRole('button',{name:labels.delete,exact:true}).click();
    await page.getByRole('dialog').last().getByRole('button',{name:labels.confirm,exact:true}).click();
+   if (app === 'viewer') await continueViewerSaveAfterDeletion(page);
    await page.getByRole('dialog').getByRole('button',{name:labels.copy,exact:true}).click();
    await settled();
    assert.equal(requests.length,5); assert.equal(deletions,2);
@@ -72,17 +75,19 @@ try {
    assert.ok(requests.every(r=>r.id)); assert.equal(new Set(requests.map(r=>r.id)).size,5,'new authorized requests use distinct operation IDs');
    assert.equal(await page.evaluate(app=>window[`${app}Session`]._uploadPackageFlow,app),null);
    assert.equal(await page.evaluate(() => window.completedPackageFlow.preparedPackage),null);
-   mode='cancel'; await button.click();
+   mode='cancel'; await (app === 'viewer' ? clickViewerSave(page) : button.click());
    await page.getByRole('dialog').waitFor();
    await edit('After cancellation');
    await page.getByRole('dialog').getByRole('button',{name:labels.cancel,exact:true}).click();
    await settled();
    assert.equal(await page.evaluate(app=>window[`${app}Session`]._uploadPackageFlow,app),null);
-   mode='success'; await button.click(); await settled();
+   mode='success'; await (app === 'viewer' ? clickViewerSave(page) : button.click()); await settled();
+   // A new save uses the current automatic name; only retries within the
+   // same recovery flow retain the original name and ZIP snapshot above.
    assert.equal(requests.length,7); assert.equal(requests[6].title,'After cancellation');
    assert.notDeepEqual(requests[6].bytes,requests[0].bytes);
    // Reopening the same ID in a new generation invalidates a retained snapshot.
-   mode='cancel'; await button.click();
+   mode='cancel'; await (app === 'viewer' ? clickViewerSave(page) : button.click());
    await page.getByRole('dialog').waitFor();
    const beforeStaleChoice=requests.length;
    await page.evaluate(app => {
@@ -96,7 +101,7 @@ try {
    assert.equal(await page.evaluate(app=>window[`${app}Session`]._uploadPackageFlow,app),null);
    if(app==='viewer') {
     mode='list-failure'; const before=requests.length, deletedBefore=deletions;
-    await button.click(); await settled();
+    await (app === 'viewer' ? clickViewerSave(page) : button.click()); await settled();
     assert.equal(requests.length,before+1); assert.equal(deletions,deletedBefore);
     assert.equal(await page.getByRole('dialog').count(),0,'failed listing must not offer stale deletion rows');
    }

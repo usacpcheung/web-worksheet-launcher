@@ -1,3 +1,5 @@
+import { prepareBrowserEntry } from './browser-entry.js';
+import { attemptDialog, createAttemptMenu, attemptNameMode, currentAttemptName } from './attempt-menu.js';
 import { createChoiceButtonGroup as renderChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, getChoicePrefix } from './choice-button-group.js';
 import { optionImageRef, imageDescription, hasOptionImages } from '../app/option-images.js';
 import { prepareMutation } from '../app/auth/mutation-auth.js';
@@ -3109,6 +3111,13 @@ class ViewerAttemptSession {
       attemptRecord.viewerPayload?.metadata?.owner_sub
     );
     this.state.studentName = pickAttemptStudentName(attemptRecord);
+    this.state.studentNameResolved = attemptRecord.studentNameResolved === true;
+    this.state.attemptNameMode = attemptNameMode(attemptRecord, this.state.viewerPayload?.title, this.state.studentName);
+    this.state.attemptNameDraft = typeof attemptRecord.attemptNameDraft === 'string' ? attemptRecord.attemptNameDraft : (attemptRecord.savedAttemptName || '');
+    if (!attemptRecord.attemptNameMode && !this.state.attemptNameDraft) this.state.attemptNameDraft = attemptRecord.savedAttemptName || '';
+    this.state.savedAttemptName = typeof attemptRecord.savedAttemptName === 'string' ? attemptRecord.savedAttemptName : '';
+    this.state.savedAttemptSubject = typeof attemptRecord.savedAttemptSubject === 'string' ? attemptRecord.savedAttemptSubject : null;
+    this.state.savedAttemptAccount = typeof attemptRecord.savedAttemptAccount === 'string' ? attemptRecord.savedAttemptAccount : null;
     this.state.lastActiveBlockId = attemptRecord.lastActiveBlockId || null;
     this.state.lastActiveIndex = Number.isInteger(attemptRecord.lastActiveIndex) ? attemptRecord.lastActiveIndex : 0;
     this.state.lastSaveError = null;
@@ -3275,6 +3284,12 @@ class ViewerAttemptSession {
       lastActiveBlockId: this.state.lastActiveBlockId || null,
       lastActiveIndex: Number.isInteger(this.state.lastActiveIndex) ? this.state.lastActiveIndex : 0,
       studentName: this.state.studentName || '',
+      studentNameResolved: this.state.studentNameResolved === true,
+      attemptNameMode: this.state.attemptNameMode,
+      attemptNameDraft: currentAttemptName(this.state),
+      savedAttemptName: this.state.savedAttemptName || '',
+      savedAttemptSubject: this.state.savedAttemptSubject ?? null,
+      savedAttemptAccount: this.state.savedAttemptAccount || null,
       status: this.state.status,
       startedAt: this.state.startedAt,
       lastSavedAt: updatedAt,
@@ -3602,6 +3617,12 @@ class ViewerAttemptSession {
     return {
       schemaVersion: 1,
       kind: 'worksheet-attempt',
+      metadata: {
+        studentName: this.state.studentName || '',
+        studentNameResolved: this.state.studentNameResolved === true,
+        attemptName: currentAttemptName(this.state),
+        attemptNameMode: this.state.attemptNameMode,
+      },
       status: packageStatus,
       createdAt: this.state.startedAt || updatedAt,
       updatedAt,
@@ -3719,7 +3740,7 @@ class ViewerAttemptSession {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = formatAttemptDownloadFilename({ title: this.state.viewerPayload?.title, updatedAt: nowIso() });
+      anchor.download = formatAttemptDownloadFilename({ title: currentAttemptName(this.state), updatedAt: nowIso() });
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
@@ -3833,8 +3854,8 @@ class ViewerAttemptSession {
       if (!prepared) {
         await this.flushLocalStateForAuthRedirect();
         if (!operation.canPublish()) return staleUploadResult();
-        const title = String(this.state.viewerPayload?.title || 'Untitled worksheet');
-        const subject = firstNonBlankString(
+        const title = currentAttemptName(this.state);
+        const subject = this.state.savedAttemptSubject ?? firstNonBlankString(
           this.state.sourceSubject,
           this.state.viewerPayload?.subject,
           this.state.viewerPayload?.metadata?.subject
@@ -3852,6 +3873,8 @@ class ViewerAttemptSession {
         title: uploadTitle,
         subject: uploadSubject,
         conflictAction: options.conflictAction || 'fail_on_conflict',
+        expectedAttemptId: options.conflictAction === 'replace' ? packageFlow?.replaceTarget?.uploaded_attempt_id : undefined,
+        expectedArtifactHash: options.conflictAction === 'replace' ? packageFlow?.replaceTarget?.artifact_sha256 : undefined,
       }, {
         signal: operation.signal,
         onProgress: (progress) => {
@@ -3908,6 +3931,14 @@ class ViewerAttemptSession {
       }
 
       this.clearNotificationsBySource(VIEWER_NOTIFICATION_UPLOAD_SOURCE);
+      this.state.savedAttemptName = uploadResult.data?.title || uploadTitle;
+      if (this.state.savedAttemptName !== uploadTitle) this.state.attemptNameMode = 'custom';
+      this.state.attemptNameDraft = this.state.savedAttemptName;
+      this.state.savedAttemptSubject = uploadResult.data?.subject ?? uploadSubject;
+      this.state.savedAttemptAccount = this.state.serverSession?.user?.sub || null;
+      this.state.attemptRevision++;
+      try { await this.autosave(); } catch { /* Remote success must not be reported as an upload failure. Local error remains visible. */ }
+      if (!contextIsCurrent()) return uploadResult;
       this.state.serverActionMessage = t('viewer.notifications.uploadAttempt.saved');
       this.state.uploadAttemptConflictContext = null;
       this.state.uploadAttemptRecoveryHint = null;
@@ -3977,6 +4008,7 @@ class ViewerAttemptSession {
       if (result?.skipped) return result;
       if (result?.ok && !result.isCurrent?.()) return { ok: false, skipped: true, status: 'superseded' };
       if (!result?.ok) {
+        this.readAuth.observe(result);
         this.state.uploadedAttemptsError = getApiErrorMessage(result, 'list');
         return result;
       }
@@ -4050,7 +4082,7 @@ class ViewerAttemptSession {
     }
   }
 
-  async downloadUploadedAttempt(uploadedAttemptRow, { isCurrent = () => true } = {}) {
+  async downloadUploadedAttempt(uploadedAttemptRow, { isCurrent = () => true, recoverAuth = true } = {}) {
     const uploadedAttemptId = uploadedAttemptRow?.uploaded_attempt_id || null;
     if (!uploadedAttemptId) return { ok: false, status: 'missing_id' };
     this.state.uploadedAttemptActionInFlightById = {
@@ -4059,9 +4091,10 @@ class ViewerAttemptSession {
     };
     this.notifyStateChange();
     try {
-      const artifact = uploadedAttemptRow?.__artifactData ? { ok: true, data: uploadedAttemptRow.__artifactData, isCurrent } : await this.readAuth.read(() => this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId), { isCurrent, intent: { kind: 'attempt-download', id: uploadedAttemptId } });
+      const artifact = uploadedAttemptRow?.__artifactData ? { ok: true, data: uploadedAttemptRow.__artifactData, isCurrent } : await this.readAuth.read(() => this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId), { isCurrent, recoverAuth, intent: { kind: 'attempt-download', id: uploadedAttemptId } });
       if (artifact?.skipped) return artifact;
       if (!artifact?.ok) {
+        this.readAuth.observe(artifact);
         this.state.serverActionMessage = getApiErrorMessage(artifact, 'download');
         this.pushNotification({
           kind: 'error',
@@ -4184,7 +4217,14 @@ class ViewerAttemptSession {
       sourceImportedWorksheetId: importedRecord.localId,
       lastActiveBlockId: payload?.blocks?.[0]?.blockId || null,
       lastActiveIndex: 0,
-      studentName: '',
+      studentName: typeof rawAttempt.metadata?.studentName === 'string' ? rawAttempt.metadata.studentName : '',
+      studentNameResolved: rawAttempt.metadata?.studentNameResolved === true,
+      attemptNameMode: options.serverName && options.serverName !== rawAttempt.metadata?.attemptName
+        ? undefined : rawAttempt.metadata?.attemptNameMode,
+      attemptNameDraft: options.serverName || rawAttempt.metadata?.attemptName || '',
+      savedAttemptName: options.serverName || '',
+      savedAttemptSubject: options.serverName ? (options.subject ?? '') : null,
+      savedAttemptAccount: options.serverAccount || null,
       status: isInProgress ? 'in_progress' : 'completed',
       startedAt: restoredStartedAt,
       lastSavedAt: restoredUpdatedAt,
@@ -4264,7 +4304,7 @@ class ViewerAttemptSession {
     return { ok: true, data: { localAttemptId: restoredLocalAttemptId } };
   }
 
-  async resumeUploadedAttempt(uploadedAttemptRow, { isCurrent = () => true } = {}) {
+  async resumeUploadedAttempt(uploadedAttemptRow, { isCurrent = () => true, recoverAuth = true } = {}) {
     const uploadedAttemptId = uploadedAttemptRow?.uploaded_attempt_id || null;
     if (!uploadedAttemptId) return { ok: false, status: 'missing_id' };
     this.state.uploadedAttemptActionInFlightById = {
@@ -4273,9 +4313,10 @@ class ViewerAttemptSession {
     };
     this.notifyStateChange();
     try {
-      const artifact = uploadedAttemptRow?.__artifactData ? { ok: true, data: uploadedAttemptRow.__artifactData, isCurrent } : await this.readAuth.read(() => this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId), { isCurrent, intent: { kind: 'attempt', id: uploadedAttemptId } });
+      const artifact = uploadedAttemptRow?.__artifactData ? { ok: true, data: uploadedAttemptRow.__artifactData, isCurrent } : await this.readAuth.read(() => this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId), { isCurrent, recoverAuth, intent: { kind: 'attempt', id: uploadedAttemptId } });
       if (artifact?.skipped) return artifact;
       if (!artifact?.ok) {
+        this.readAuth.observe(artifact);
         this.state.serverActionMessage = getApiErrorMessage(artifact, 'open');
         this.pushNotification({
           kind: 'error',
@@ -4287,10 +4328,19 @@ class ViewerAttemptSession {
       const accountCurrent = artifact.isCurrent || (() => false);
       if (!isCurrent() || !accountCurrent()) return { ok: false, skipped: true, status: 'superseded' };
       const packageModel = parseUploadedAttemptPackage(artifact.data);
+      let serverRow = uploadedAttemptRow;
+      if (typeof serverRow.title !== 'string') {
+        const list = await this.listUploadedAttempts({ isCurrent: () => isCurrent() && accountCurrent(), recoverAuth: false });
+        if (!list?.ok || !isCurrent() || !accountCurrent()) return list;
+        serverRow = list.uploadedAttempts.find(row => row.uploaded_attempt_id === uploadedAttemptId);
+        if (!serverRow) throw new Error(t('viewer.attemptMenu.serverMissing'));
+      }
       return await this.restoreAttemptPackageAsLocalAttempt(packageModel, {
         isCurrent: () => isCurrent() && accountCurrent(),
-        subject: uploadedAttemptRow?.subject || '',
-        owner: uploadedAttemptRow?.owner_email || uploadedAttemptRow?.owner_name || uploadedAttemptRow?.owner_sub || '',
+        serverName: serverRow.title,
+        serverAccount: this.state.serverSession?.user?.sub || null,
+        subject: serverRow.subject || '',
+        owner: serverRow.owner_email || serverRow.owner_name || serverRow.owner_sub || '',
         worksheetOrigin: 'uploaded_attempt_restore',
         assetOrigin: 'uploaded_attempt_restore',
         attemptOrigin: 'imported_worksheet',
@@ -4723,6 +4773,7 @@ class ViewerAttemptSession {
     if (result.ok && !result.isCurrent?.()) { this.notifyStateChange(); return { ok: false, skipped: true, status: 'superseded' }; }
     if (result.skipped) { this.notifyStateChange(); return result; }
     if (!result.ok) {
+      this.readAuth.observe(result);
       this.state.serverActionMessage = getApiErrorMessage(result, 'list');
       this.state.publishedListError = getApiErrorMessage(result, 'list');
       this.notifyStateChange();
@@ -4759,14 +4810,15 @@ class ViewerAttemptSession {
     const progressToken = this.packageLoad.start(normalizedPublishedPackageId);
     try {
       const isCurrent = () => this.packageLoad.current === progressToken && (options.isCurrent?.() ?? true);
-      const sessionReady = await this.preflightPublishedSession({ isCurrent, intent: { kind: 'publication', id: normalizedPublishedPackageId, filters: { subject: options.sourceSubject || '', owner: options.sourceOwner || '' } } });
+      const sessionReady = await this.preflightPublishedSession({ isCurrent, recoverAuth: options.recoverAuth !== false, intent: { kind: 'publication', id: normalizedPublishedPackageId, filters: { subject: options.sourceSubject || '', owner: options.sourceOwner || '' } } });
       if (!sessionReady.ok) return sessionReady.result;
       this.packageLoad.update(progressToken, 'downloading');
       const artifact = await this.readAuth.read(() => this.apiClient.fetchPublishedPackageArtifact(normalizedPublishedPackageId, {
         onProgress: progress => this.packageLoad.update(progressToken, 'downloading', progress),
-      }), { preflight: false, prepared: sessionReady, isCurrent, intent: { kind: 'publication', id: normalizedPublishedPackageId, filters: { subject: options.sourceSubject || '', owner: options.sourceOwner || '' } } });
+      }), { preflight: false, prepared: sessionReady, isCurrent, recoverAuth: options.recoverAuth !== false, intent: { kind: 'publication', id: normalizedPublishedPackageId, filters: { subject: options.sourceSubject || '', owner: options.sourceOwner || '' } } });
       if (artifact.skipped) return artifact;
       if (!artifact.ok) {
+        this.readAuth.observe(artifact);
         this.state.serverActionMessage = getApiErrorMessage(artifact, 'download');
         this.notifyStateChange();
         return artifact;
@@ -4980,7 +5032,7 @@ async function showAttemptSlotFullModal(session, options = {}) {
   heading.textContent = t('viewer.attemptSlots.title');
   const description = document.createElement('p');
   description.className = 'confirm-modal__description';
-  description.textContent = t('viewer.attemptSlots.description');
+  description.textContent = t('viewer.attemptMenu.slotHelp');
   const list = document.createElement('div');
   list.className = 'browse-results';
   const actions = document.createElement('div');
@@ -4989,7 +5041,8 @@ async function showAttemptSlotFullModal(session, options = {}) {
   cancelBtn.type = 'button';
   cancelBtn.className = 'confirm-modal__btn';
   cancelBtn.textContent = t('common.actions.cancel');
-  actions.append(cancelBtn);
+  const exportBtn = document.createElement('button'); exportBtn.type = 'button'; exportBtn.className = 'confirm-modal__btn'; exportBtn.textContent = t('viewer.attemptMenu.export'); exportBtn.onclick = () => session.exportCurrentAttemptPackage();
+  actions.append(cancelBtn, exportBtn);
   dialog.append(heading, description, list, actions);
   overlay.append(dialog);
   host.appendChild(overlay);
@@ -4998,7 +5051,8 @@ async function showAttemptSlotFullModal(session, options = {}) {
     let settled = false;
     let deleting = false;
     const flow = session._uploadPackageFlow;
-    const isCurrent = () => !settled && (!flow || flow.canProgress());
+    const isCurrent = () => !settled && overlay.isConnected && (!flow || flow.canProgress());
+    const staleTimer = setInterval(() => { if (!isCurrent()) finish(false); }, 100);
     const setDeleting = value => {
       deleting = value;
       list.querySelectorAll('button').forEach(button => { button.disabled = value; });
@@ -5006,6 +5060,7 @@ async function showAttemptSlotFullModal(session, options = {}) {
     const finish = (deleted) => {
       if (settled) return;
       settled = true;
+      clearInterval(staleTimer);
       overlay.remove();
       if (previousActive && typeof previousActive.focus === 'function') {
         previousActive.focus();
@@ -5037,7 +5092,11 @@ async function showAttemptSlotFullModal(session, options = {}) {
         updatedLine.textContent = t('common.meta.updated', {
           value: formatTimestampForDisplay(item.updated_at || item.updatedAt || null),
         });
-        meta.append(title, subjectLine, updatedLine);
+        const details = document.createElement('details'); details.className = 'uploaded-draft-details';
+        const summary = document.createElement('summary'); summary.textContent = t('common.sections.details');
+        const fullName = document.createElement('p'); fullName.className = 'uploaded-draft-details-body'; fullName.textContent = item.title || '';
+        details.append(summary, fullName);
+        meta.append(title, subjectLine, updatedLine, details);
         const deleteBtn = document.createElement('button');
         deleteBtn.type = 'button';
         deleteBtn.className = 'uploaded-draft-action uploaded-draft-action--danger';
@@ -5047,17 +5106,30 @@ async function showAttemptSlotFullModal(session, options = {}) {
           setDeleting(true);
           try {
             const deleted = await session.deleteUploadedAttemptAndRefresh(item.uploaded_attempt_id, { isCurrent, confirm: () => showDeleteUploadedAttemptModal(item) });
-            if (isCurrent() && deleted?.ok) finish(true);
+            if (isCurrent() && deleted?.ok) {
+              list.replaceChildren(); description.textContent = t('viewer.attemptMenu.spaceFreed');
+              const proceed = document.createElement('button'); proceed.type = 'button'; proceed.className = 'confirm-modal__btn viewer-attempt-primary';
+              proceed.textContent = t('viewer.attemptMenu.continueSave'); proceed.onclick = () => { if (isCurrent()) finish(true); };
+              actions.querySelector('.viewer-attempt-primary')?.remove();
+              actions.append(proceed); proceed.focus();
+            }
           } finally {
             if (!settled) setDeleting(false);
           }
         });
-        row.append(meta, deleteBtn);
+        const download = document.createElement('button'); download.type = 'button'; download.className = 'uploaded-draft-action'; download.textContent = t('common.actions.downloadZip'); download.onclick = () => session.downloadUploadedAttempt(item, { isCurrent });
+        row.append(meta, download, deleteBtn);
         list.appendChild(row);
       });
     };
 
     renderSlotRows();
+    if (rows.length < (Number(session.state.uploadedAttemptSlotLimit) || 3)) {
+      description.textContent = t('viewer.attemptMenu.spaceFreed');
+      const proceed = document.createElement('button'); proceed.type = 'button'; proceed.className = 'confirm-modal__btn viewer-attempt-primary';
+      proceed.textContent = t('viewer.attemptMenu.continueSave'); proceed.onclick = () => { if (isCurrent()) finish(true); };
+      actions.append(proceed);
+    }
     cancelBtn.addEventListener('click', () => {
       finish(false);
     });
@@ -5072,9 +5144,11 @@ async function showAttemptSlotFullModal(session, options = {}) {
 }
 
 async function showUploadedAttemptsManagerModal(session, options = {}) {
+  if (options.signal?.aborted) return;
   if (session?.state?.isManagingUploadedAttempts) {
     return;
   }
+  if (!await prepareBrowserEntry(session, { kind: 'attempts' }, options)) return;
   // Defensive cleanup for stale duplicate manager overlays from prior open attempts.
   Array.from(document.querySelectorAll('.confirm-modal-overlay')).forEach((overlay) => {
     if (overlay.querySelector('.viewer-attempts-modal')) {
@@ -5133,10 +5207,12 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
   host.appendChild(overlay);
 
   let closing = false;
+  let resuming = false;
   let signInInFlight = false;
   const closeModal = () => {
     if (closing) return;
     closing = true;
+    options.signal?.removeEventListener('abort', closeModal);
     overlay.remove();
     renderViewerAuthFeedback(session);
     session.state.isManagingUploadedAttempts = false;
@@ -5145,6 +5221,8 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
       previousActive.focus();
     }
   };
+
+  options.signal?.addEventListener('abort', closeModal, { once: true });
 
   const renderRows = async () => {
     if (closing) return;
@@ -5165,7 +5243,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     signInBtn.hidden = isLoggedIn;
     signInBtn.disabled = isChecking || signInInFlight;
     signInBtn.textContent = signInInFlight ? t('common.actions.signingIn') : t('common.actions.signIn');
-    refreshBtn.disabled = signInInFlight || session.state.isLoadingUploadedAttempts;
+    refreshBtn.disabled = !isLoggedIn || signInInFlight || session.state.isLoadingUploadedAttempts;
     list.innerHTML = '';
     if (!isLoggedIn) {
       slotUsageLine.textContent = '';
@@ -5238,7 +5316,8 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
       sizeLine.textContent = t('common.meta.artifactSize', {
         value: Number.isFinite(row.artifact_size_bytes) ? `${Math.max(1, Math.round(row.artifact_size_bytes / 1024))} KB` : t('common.values.na'),
       });
-      detailBody.append(submittedLine, checkedLine, sizeLine);
+      const fullName = document.createElement('p'); fullName.textContent = `${t('viewer.attemptMenu.fullName')}: ${row.title || ''}`;
+      detailBody.append(fullName, submittedLine, checkedLine, sizeLine);
       details.append(summary, detailBody);
       metaWrap.append(title, subjectLine, updatedLine, badge, details);
       const rowActions = document.createElement('div');
@@ -5250,13 +5329,24 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
       resumeBtn.textContent = inFlightAction === 'resume' ? t('viewer.serverAttempts.resuming') : t('common.actions.resume');
       resumeBtn.disabled = Boolean(inFlightAction);
       resumeBtn.addEventListener('click', async () => {
-        const result = await session.resumeUploadedAttempt(row, { isCurrent: () => !closing && overlay.isConnected });
-        await renderRows();
-        if (!result?.ok || closing || !overlay.isConnected) return;
-        closeModal();
-        if (onResumeSuccess) {
-          await onResumeSuccess(result?.data?.localAttemptId || null);
+        if (resuming) return;
+        if (session.voice.active || session.state.isUploadingAttemptPackage || session.state.isUploadAttemptFlowActive || session.state.isFinalizing) {
+          session.pushNotification({ kind: 'warn', text: t('viewer.attemptMenu.finishFirst') }); return;
         }
+        resuming = true;
+        try {
+          const currentId = session.state.localAttemptId; const generation = session._uploadContextGeneration;
+          const isCurrent = () => !closing && overlay.isConnected && currentId === session.state.localAttemptId && generation === session._uploadContextGeneration;
+          try { await session.flushLocalStateForAuthRedirect(); } catch { session.pushNotification({ kind: 'error', text: t('viewer.attemptMenu.localSaveFailed') }); return; }
+          if (!isCurrent()) return;
+          const result = await session.resumeUploadedAttempt(row, { isCurrent, recoverAuth: false });
+          await renderRows();
+          if (!result?.ok || closing || !overlay.isConnected) return;
+          closeModal();
+          if (onResumeSuccess) {
+            await onResumeSuccess(result?.data?.localAttemptId || null);
+          }
+        } finally { resuming = false; }
       });
       const downloadBtn = document.createElement('button');
       downloadBtn.type = 'button';
@@ -5264,7 +5354,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
       downloadBtn.textContent = inFlightAction === 'download' ? t('viewer.serverAttempts.downloading') : t('common.actions.downloadZip');
       downloadBtn.disabled = Boolean(inFlightAction);
       downloadBtn.addEventListener('click', async () => {
-        await session.downloadUploadedAttempt(row, { isCurrent: () => !closing && overlay.isConnected });
+        await session.downloadUploadedAttempt(row, { recoverAuth: false, isCurrent: () => !closing && overlay.isConnected });
         await renderRows();
       });
       const deleteBtn = document.createElement('button');
@@ -5303,7 +5393,8 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
           renderRows();
         }
       },
-      onSessionReady: async ({ finalizeFlow, isCurrent, reportAuthFailure }) => {
+      onSessionReady: async ({ finalizeFlow, isCurrent: authCurrent, reportAuthFailure }) => {
+        const isCurrent = () => !closing && overlay.isConnected && authCurrent();
         try {
           const readiness = await session.probeServerSessionSilently({ force: true, isCurrent });
           if (!isCurrent()) return;
@@ -5320,11 +5411,9 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
           session.notifyStateChange();
           await renderRows();
         } finally {
-          if (isCurrent()) {
-            signInInFlight = false;
-            renderRows();
-            finalizeFlow();
-          }
+          signInInFlight = false;
+          if (isCurrent()) renderRows();
+          finalizeFlow();
         }
       },
       onSessionNotReady: ({ result, finalizeFlow }) => {
@@ -5351,7 +5440,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     startModalSignInFlow();
   });
   refreshBtn.addEventListener('click', async () => {
-    await session.listUploadedAttempts({ isCurrent: () => !closing && overlay.isConnected });
+    await session.listUploadedAttempts({ isCurrent: () => !closing && overlay.isConnected, recoverAuth: false });
     await renderRows();
   });
   closeBtn.addEventListener('click', () => {
@@ -5364,12 +5453,13 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     }
   });
 
-  await session.listUploadedAttempts({ isCurrent: () => !closing && overlay.isConnected });
+  await session.listUploadedAttempts({ isCurrent: () => !closing && overlay.isConnected, recoverAuth: false });
   await renderRows();
   if (!closing) closeBtn.focus();
 }
 
 async function showPublishedPackagesBrowseModal(session, options = {}) {
+  if (!await prepareBrowserEntry(session, { kind: 'published', filters: session.state.publishedFilters || {} }, options)) return;
   // Defensive cleanup for stale duplicate browse overlays from prior open attempts.
   Array.from(document.querySelectorAll('.confirm-modal-overlay')).forEach((overlay) => {
     if (overlay.querySelector('.viewer-published-browse-modal')) {
@@ -5447,7 +5537,8 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
   const updateLoadButtons = () => {
     if (closing || !overlay.isConnected) return;
     const progress = session.packageLoad.current;
-    const unavailable = Boolean(progress) || session.state.isLoadingPublishedPackages;
+    const unavailable = session.state.serverSession?.status !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN
+      || Boolean(progress) || session.state.isLoadingPublishedPackages;
     for (const control of [titleFilterInput, subjectFilterInput, ownerFilterInput, searchBtn, refreshBtn]) control.disabled = unavailable;
     loadMoreBtn.disabled = unavailable || !session.state.publishedHasMore;
     for (const [id, button] of loadButtons) {
@@ -5570,6 +5661,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
         try {
           result = await session.startFromPublishedPackage(item.published_package_id, {
             isCurrent: () => !closing && overlay.isConnected,
+            recoverAuth: false,
             sourceSubject: item.subject || '',
             sourceOwner: item.owner_email || item.owner_name || item.owner_sub || '',
           });
@@ -5578,6 +5670,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
         }
         if (result.skipped || closing) return;
         if (!result.ok) {
+          if (session.state.serverSession?.status === VIEWER_SERVER_SESSION_STATES.LOGGED_OUT) { renderRows(); return; }
           if (!closing && openBtn.isConnected) {
             loadError.textContent = getApiErrorMessage(result, 'open');
             loadError.hidden = false;
@@ -5609,7 +5702,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
       title: titleFilterInput.value,
       subject: subjectFilterInput.value,
       owner: ownerFilterInput.value,
-    }, { ...options, isCurrent: () => !closing && overlay.isConnected && (options.isCurrent?.() ?? true) });
+    }, { ...options, preflight: false, recoverAuth: false, isCurrent: () => !closing && overlay.isConnected && (options.isCurrent?.() ?? true) });
     if (options.isCurrent && !options.isCurrent()) return;
     renderRows();
   };
@@ -5633,7 +5726,8 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
           renderRows();
         }
       },
-      onSessionReady: async ({ finalizeFlow, isCurrent, reportAuthFailure }) => {
+      onSessionReady: async ({ finalizeFlow, isCurrent: authCurrent, reportAuthFailure }) => {
+        const isCurrent = () => !closing && overlay.isConnected && authCurrent();
         try {
           const readiness = await session.ensureServerSessionReady(undefined, { isCurrent });
           if (!isCurrent()) return;
@@ -5650,11 +5744,9 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
           session.notifyStateChange();
           renderRows();
         } finally {
-          if (isCurrent()) {
-            signInInFlight = false;
-            renderRows();
-            finalizeFlow();
-          }
+          signInInFlight = false;
+          if (isCurrent()) renderRows();
+          finalizeFlow();
         }
       },
       onSessionNotReady: ({ result, finalizeFlow }) => {
@@ -5689,7 +5781,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
     await refreshBrowse({ reset: true });
   });
   loadMoreBtn.addEventListener('click', async () => {
-    await session.browsePublishedPackages(session.state.publishedFilters || {}, { append: true });
+    await session.browsePublishedPackages(session.state.publishedFilters || {}, { append: true, preflight: false, recoverAuth: false, isCurrent: () => !closing && overlay.isConnected });
     renderRows();
   });
   refreshBtn.addEventListener('click', async () => {
@@ -5838,7 +5930,7 @@ function renderViewerShell(session) {
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
   saveBtn.className = 'viewer-bottom-action-btn';
-  saveBtn.textContent = t('common.actions.save');
+  saveBtn.textContent = t('viewer.attemptMenu.local');
   const completeBtn = document.createElement('button');
   completeBtn.type = 'button';
   completeBtn.className = 'viewer-bottom-action-btn';
@@ -5873,14 +5965,14 @@ function renderViewerShell(session) {
   uploadAttemptBtn.type = 'button';
   uploadAttemptBtn.className = 'viewer-header-icon-btn';
   uploadAttemptBtn.setAttribute('aria-label', t('viewer.upload.saveAttemptAriaLabel'));
-  uploadAttemptBtn.title = t('viewer.upload.saveAttemptTitle');
+  uploadAttemptBtn.title = t('viewer.attemptMenu.save');
   uploadAttemptBtn.innerHTML = createViewerIcon('upload');
 
   const exportAttemptBtn = document.createElement('button');
   exportAttemptBtn.type = 'button';
   exportAttemptBtn.className = 'viewer-header-icon-btn';
-  exportAttemptBtn.setAttribute('aria-label', t('viewer.upload.exportAttemptAriaLabel'));
-  exportAttemptBtn.title = t('viewer.upload.exportAttemptTitle');
+  exportAttemptBtn.setAttribute('aria-label', t('viewer.attemptMenu.export'));
+  exportAttemptBtn.title = t('viewer.attemptMenu.export');
   exportAttemptBtn.innerHTML = createViewerIcon('download');
 
   const printReportBtn = document.createElement('button');
@@ -5895,7 +5987,55 @@ function renderViewerShell(session) {
       renderViewerShell(session);
     },
   });
-  headerActions.append(languageSelector, infoBtn, uploadAttemptBtn, cancelUploadBtn, exportAttemptBtn, printReportBtn);
+  const manageAttemptsBtn = document.createElement('button'); manageAttemptsBtn.type = 'button';
+  manageAttemptsBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"/><path d="M3 9h18"/></svg>';
+  const attemptMenuBtn = document.createElement('button'); attemptMenuBtn.type = 'button';
+  attemptMenuBtn.className = 'viewer-header-icon-btn'; attemptMenuBtn.setAttribute('aria-label', t('viewer.attemptMenu.menu'));
+  attemptMenuBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="0" aria-hidden="true"><g fill="currentColor"><circle cx="6" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="18" cy="12" r="1.4"/></g></svg>';
+  createAttemptMenu({ trigger: attemptMenuBtn, signal, items: [
+    { button: uploadAttemptBtn, label: t('viewer.attemptMenu.save') },
+    { button: manageAttemptsBtn, label: t('viewer.attemptMenu.manage') },
+    { button: exportAttemptBtn, label: t('viewer.attemptMenu.export') },
+    { button: infoBtn, label: t('viewer.details.openTechnicalDetailsTitle') },
+  ] });
+  uploadAttemptBtn.setAttribute('aria-label', t('viewer.attemptMenu.save'));
+  manageAttemptsBtn.setAttribute('aria-label', t('viewer.attemptMenu.manage'));
+  const printHint = document.createElement('div'); printHint.className = 'viewer-print-hint'; printHint.hidden = true;
+  printHint.id = 'viewer-print-hint'; printHint.setAttribute('role', 'tooltip'); printHint.textContent = t('viewer.attemptMenu.printHint');
+  document.body.append(printHint); printReportBtn.setAttribute('aria-describedby', printHint.id);
+  const hidePrintHint = () => { printHint.hidden = true; };
+  const showPrintHint = () => {
+    if (session.state.status === 'completed') return;
+    printHint.hidden = false;
+    const r = printReportBtn.getBoundingClientRect();
+    printHint.style.left = `${Math.max(12, Math.min(innerWidth - printHint.offsetWidth - 12, r.right - printHint.offsetWidth))}px`;
+    printHint.style.top = `${Math.max(12, Math.min(innerHeight - printHint.offsetHeight - 12, r.bottom + 8))}px`;
+  };
+  printReportBtn.addEventListener('mouseenter', showPrintHint, { signal });
+  printReportBtn.addEventListener('focus', showPrintHint, { signal });
+  printReportBtn.addEventListener('mouseleave', hidePrintHint, { signal });
+  printReportBtn.addEventListener('blur', hidePrintHint, { signal });
+  window.addEventListener('scroll', hidePrintHint, { passive: true, signal });
+  window.addEventListener('resize', hidePrintHint, { signal });
+  signal.addEventListener('abort', () => printHint.remove(), { once: true });
+  headerActions.append(languageSelector, printReportBtn, attemptMenuBtn, cancelUploadBtn);
+  manageAttemptsBtn.addEventListener('click', async () => {
+    await showUploadedAttemptsManagerModal(session, { signal, onResumeSuccess: () => {
+      const url = new URL(location.href); url.searchParams.set('localAttemptId', session.state.localAttemptId);
+      url.searchParams.delete('viewerPayload'); url.searchParams.delete('snapshot'); history.replaceState({}, '', url);
+      renderViewerShell(session);
+    } });
+  }, { signal });
+  let promptingIdentity = false;
+  const ensureStudentName = async isCurrent => {
+    if (session.state.studentName?.trim() || session.state.studentNameResolved) return true;
+    const value = await attemptDialog({ title: t('viewer.attemptMenu.student'), description: t('viewer.attemptMenu.studentHelp'),
+      label: t('viewer.attemptMenu.student'), optional: true, limit: 120,
+      confirmLabel: t('viewer.attemptMenu.continue'), cancelLabel: t('common.actions.cancel'), invalidLabel: t('viewer.attemptMenu.invalidStudent'), isCurrent });
+    if (value === null || !isCurrent()) return false;
+    studentName = value; session.state.studentName = value; session.state.studentNameResolved = true;
+    session.state.attemptRevision++; await session.autosave(); return isCurrent();
+  };
 
   const detailsModal = document.createElement('div');
   detailsModal.className = 'viewer-details-modal';
@@ -6075,6 +6215,8 @@ function renderViewerShell(session) {
     event.preventDefault();
     studentName = learnerNameInput.value.trim();
     session.state.studentName = studentName;
+    session.state.studentNameResolved = true;
+    session.state.attemptRevision++; session.scheduleAutosave();
     renderUI();
     learnerNameInput.focus();
   });
@@ -6594,8 +6736,8 @@ function renderViewerShell(session) {
 
         const voiceUi = createVoiceControls({ session, block, control, t, signal,
           sharedStatusId: crossQuestionStatus.root.id,
-          requestSignIn: ({ isCurrent }) => requestVoiceSignIn(session, {
-            blockId: block.blockId, signal: scope.signal, isCurrent,
+          requestSignIn: ({ isCurrent, confirm }) => requestVoiceSignIn(session, {
+            blockId: block.blockId, signal: scope.signal, isCurrent, confirm,
           }),
           canRestoreFocus: () => {
             const rect = control.getBoundingClientRect();
@@ -6903,8 +7045,9 @@ function renderViewerShell(session) {
     const printAvailable = session.state.status === 'completed';
     checkBtn.hidden = !checkAvailable;
     checkBtn.disabled = session.state.isFinalizing || !checkAvailable;
-    printReportBtn.hidden = !printAvailable;
-    printReportBtn.disabled = session.state.isFinalizing || !printAvailable;
+    printReportBtn.hidden = false;
+    printReportBtn.disabled = session.state.isFinalizing;
+    printReportBtn.setAttribute('aria-disabled', String(!printAvailable || session.state.isFinalizing));
     cancelUploadBtn.hidden = !session.state.isUploadingAttemptPackage && !session.state.isLoadingUploadRecoveryList;
     uploadAttemptBtn.disabled = session.state.isFinalizing || session.state.isUploadingAttemptPackage || session.state.isUploadAttemptFlowActive;
     exportAttemptBtn.disabled = session.state.isFinalizing || session.state.isUploadingAttemptPackage;
@@ -6957,6 +7100,22 @@ function renderViewerShell(session) {
       const ready = await session.ensureMutationSessionReady({ isCurrent: () => flow.canPublish(), signal: flow.signal, intent: { kind: 'mutation', operation: 'upload' } });
       if (ready.ok) accountCurrent = ready.isCurrent;
       if (!ready.ok || !flow.canPublish()) return;
+      const isCurrent = () => !signal.aborted && flow.canPublish();
+      if (!await ensureStudentName(isCurrent)) return;
+      const account = session.state.serverSession?.user?.sub || null;
+      if (session.state.savedAttemptAccount && session.state.savedAttemptAccount !== account) {
+        session.state.savedAttemptName = ''; session.state.savedAttemptSubject = null; session.state.savedAttemptAccount = null;
+      }
+      const value = await attemptDialog({ title: t('viewer.attemptMenu.save'), description: t('viewer.attemptMenu.nameHelp'),
+        label: t('viewer.attemptMenu.name'), value: currentAttemptName(session.state),
+        existingValue: session.state.savedAttemptName || '',
+        confirmLabel: t('viewer.attemptMenu.save'), cancelLabel: t('common.actions.cancel'),
+        invalidLabel: t('viewer.attemptMenu.invalidName'), isCurrent,
+        onInput: value => { session.state.attemptNameMode = 'custom'; session.state.attemptNameDraft = value; session.state.attemptRevision++; session.scheduleAutosave(); },
+      });
+      if (value === null || !isCurrent()) return;
+      session.state.attemptNameDraft = value; session.state.attemptRevision++; await session.autosave();
+      if (!isCurrent()) return;
       await runUploadRecoveryFlow({
         resource: 'worksheet-attempt',
         isCurrent: () => flow.canPublish(),
@@ -6964,6 +7123,7 @@ function renderViewerShell(session) {
         submit: conflictAction => session.retryAttemptUploadAfterSlotRecovery({ conflictAction }),
         chooseConflict: async () => {
           if (!session.state.uploadAttemptConflictContext) return 'cancel';
+          flow.replaceTarget = session.state.uploadAttemptConflictContext.existingAttempt;
           const choice = await showAttemptUploadConflictModal(session.state.uploadAttemptConflictContext);
           if (flow.canPublish() && choice !== 'copy' && choice !== 'replace') session.clearAttemptUploadConflictPrompt();
           return choice;
@@ -6991,6 +7151,8 @@ function renderViewerShell(session) {
         },
       });
       renderUI();
+    } catch (error) {
+      session.pushNotification({ kind: 'error', text: t('viewer.attemptMenu.localSaveFailed'), ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS });
     } finally {
       flow.preparedPackage = null;
       if (session._uploadPackageFlow === flow) session._uploadPackageFlow = null;
@@ -7000,15 +7162,24 @@ function renderViewerShell(session) {
   });
 
   printReportBtn.addEventListener('click', async () => {
-    const result = await startWorksheetPrintFlow({ session });
-    if (!result.ok) {
-      session.pushNotification({
-        kind: 'error',
-        text: result.message,
-        ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
-      });
-    }
-    renderUI();
+    if (session.state.status !== 'completed') { showPrintHint(); return; }
+    if (promptingIdentity || session.state.isFinalizing) return;
+    const attemptId = session.state.localAttemptId;
+    const isCurrent = () => !signal.aborted && session.state.localAttemptId === attemptId && session.state.status === 'completed';
+    promptingIdentity = true;
+    try {
+      if (!await ensureStudentName(isCurrent)) return;
+      const result = await startWorksheetPrintFlow({ session });
+      if (!result.ok) {
+        session.pushNotification({
+          kind: 'error',
+          text: result.message,
+          ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+        });
+      }
+      renderUI();
+    } catch { session.pushNotification({ kind: 'error', text: t('viewer.attemptMenu.localSaveFailed') }); }
+    finally { promptingIdentity = false; }
   });
   prevBtn.addEventListener('click', goPrev);
   nextBtn.addEventListener('click', goNext);

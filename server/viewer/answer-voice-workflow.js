@@ -7,7 +7,10 @@ export const unicodeLength = (value) => Array.from(String(value ?? '')).length;
 export const hasRecoveryText = record => record?.phase === 'text'
   || Boolean(record?.text) || record?.candidate !== undefined;
 export const getVoiceRecovery = (records, id) => records && Object.hasOwn(records, id) ? records[id] : undefined;
-export const hasPendingRecovery = record => Boolean(record && record.phase !== 'preflight');
+export const isInitialAuthRecovery = record => record?.code === 'AUTH_REQUIRED'
+  && (record.phase === 'preflight' || (record.initialRewrite === true
+    && record.candidate === undefined && record.text === record.snapshot?.trim()));
+export const hasPendingRecovery = record => Boolean(record && record.phase !== 'preflight' && !isInitialAuthRecovery(record));
 export const isVoiceQuestion = (block) => block?.kind === 'question'
   && (block.responseConfig?.inputType || 'text') === 'text';
 
@@ -34,7 +37,7 @@ export function normalizeVoiceRecovery(records, blocks = []) {
   const entries = [];
   for (const block of blocks.filter(isVoiceQuestion)) {
     const item = records && Object.hasOwn(records, block.blockId) ? records[block.blockId] : null;
-    if (!item || typeof item.text !== 'string' || !hasRecoveryText(item)) continue;
+    if (!item || isInitialAuthRecovery(item) || typeof item.text !== 'string' || !hasRecoveryText(item)) continue;
     entries.push([block.blockId, {
       phase: 'text', text: item.text, snapshot: typeof item.snapshot === 'string' ? item.snapshot : '',
       index: insertionIndex(typeof item.snapshot === 'string' ? item.snapshot : '',
@@ -95,6 +98,7 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
     if (!valid(op)) return;
     return recover(op.blockId, { mode: op.mode, phase: op.phase, text: op.text || '', snapshot: op.snapshot,
       index: op.index, createdAt: op.createdAt, code,
+      ...(op.initialRewrite ? { initialRewrite: true } : {}),
       ...(typeof op.undoSnapshot === 'string' ? { undoSnapshot: op.undoSnapshot } : {}), ...(op.providerError ? { providerError: op.providerError } : {}),
       ...(candidate !== undefined ? { candidate, accountCurrent: op.accountCurrent } : {}) });
   };
@@ -167,6 +171,7 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
       if (!fresh(op)) { keep(op, 'STALE_CONTEXT'); return { ok: false }; }
       op.identityCurrent = getProviderAuth?.()?.captureIdentity?.();
       if (mode === 'rewrite') {
+        op.initialRewrite = !retry && sourceText === undefined && undoSnapshot === undefined;
         op.text = hasRecoveryText(retry) ? retry.text : sourceText ?? current.answer.trim();
         op.phase = 'text';
       } else if (!hasRecoveryText(retry)) {
@@ -271,6 +276,15 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
       if (discard) recover(op.blockId, null);
       else keep(op, 'CANCELED');
       finish(op);
+    },
+    settleAuthentication(blockId, record, authenticated) {
+      if (active || read(blockId).recovery !== record || !read(blockId).editable || record?.code !== 'AUTH_REQUIRED') return;
+      if (isInitialAuthRecovery(record)) recover(blockId, null);
+      else if (authenticated) {
+        const { providerError, code, ...retained } = record;
+        recover(blockId, { ...retained, code: 'RECOVERED', authenticated: true });
+      }
+      emit();
     },
     discard(blockId) { pendingAudio = null; recover(blockId, null); },
     teardown() { this.cancel(); pendingAudio = null; lastDiagnostic = null; },

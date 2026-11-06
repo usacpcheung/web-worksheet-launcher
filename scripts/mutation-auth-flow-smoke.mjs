@@ -1,3 +1,4 @@
+import { openViewerAttemptMenu, confirmViewerSaveDetails } from './viewer-navigation-test-helpers.mjs';
 // Network-isolated acceptance of login preparation; no production resources.
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
@@ -44,6 +45,7 @@ try {
           await page.locator('details').evaluateAll(nodes => nodes.forEach(node => { node.open = true; }));
           await page.getByRole('button', { name: await label('editor.server.uploadDraft'), exact: true }).click();
         } else if (area === 'viewer') {
+          await openViewerAttemptMenu(page);
           await page.getByRole('button', { name: await label('viewer.upload.saveAttemptAriaLabel'), exact: true }).click();
         } else {
           const save = page.locator('#server-save-btn');
@@ -77,6 +79,7 @@ try {
           await clickUpload();
         }
       }
+      if (area === 'viewer') await confirmViewerSaveDetails(page);
       for (let i = 0; posts === 0 && i < 100; i++) await page.waitForTimeout(50);
       assert.equal(posts, 1);
       await page.waitForTimeout(100);

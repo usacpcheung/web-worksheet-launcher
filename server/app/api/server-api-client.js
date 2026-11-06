@@ -714,6 +714,7 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
           title: metadata.title || '',
           subject: metadata.subject || '',
           conflictAction: metadata.conflictAction || '',
+          ...(metadata.expectedAttemptId ? { expectedAttemptId: metadata.expectedAttemptId, expectedArtifactHash: metadata.expectedArtifactHash || '' } : {}),
         },
         onProgress: options.onProgress,
         signal: options.signal,

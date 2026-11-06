@@ -309,7 +309,7 @@ async function loadViewerModule(overrides = {}) {
   globalThis.document = globalThis[bagName].document;
   globalThis.window = globalThis[bagName].window;
 
-  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource.replace(/from '(\.\/(?:answer-(?:voice-workflow|voice-ui)|voice-sign-in|package-load-progress|block-view-host|section-navigation|worksheet-navigation|entry-motion)\.js)'/g, (_, path) => 'from ' + JSON.stringify(new NodeURL(path, import.meta.url).href)))}`;
+  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource.replace(/from '(\.\/(?:answer-(?:voice-workflow|voice-ui)|voice-sign-in|attempt-menu|browser-entry|package-load-progress|block-view-host|section-navigation|worksheet-navigation|entry-motion)\.js)'/g, (_, path) => 'from ' + JSON.stringify(new NodeURL(path, import.meta.url).href)))}`;
   return import(dataUrl);
 }
 
@@ -4021,7 +4021,7 @@ test('renderViewerStartPanel shows contextual server-attempt management action',
 
 test('viewer manager reads carry their dialog ownership guard', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes('await session.listUploadedAttempts({ isCurrent: () => !closing && overlay.isConnected });'), true);
+  assert.equal(source.includes('await session.listUploadedAttempts({ isCurrent: () => !closing && overlay.isConnected, recoverAuth: false });'), true);
 });
 
 test('bootstrapViewer falls back to start panel when resume flag record is invalid', { concurrency: false }, async () => {
@@ -5333,12 +5333,7 @@ test('local attempt backup locale entries are not duplicated or cross-locale mix
   assert.equal(enSource.includes('"action": "Rewrite"'), true);
 });
 
-test('viewer header actions include local attempt export icon wiring', async () => {
-  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes("exportAttemptBtn.setAttribute('aria-label', t('viewer.upload.exportAttemptAriaLabel'));"), true);
-  assert.equal(source.includes("exportAttemptBtn.innerHTML = createViewerIcon('download');"), true);
-  assert.equal(source.includes('await session.exportCurrentAttemptPackage();'), true);
-});
+// Menu export accessibility and download behavior are exercised in viewer-attempt-menu-smoke.mjs.
 
 test('start panel includes attempt package import action in attempts section', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
@@ -6141,7 +6136,7 @@ test('resumeUploadedAttempt restores uploaded package into a new local attempt',
   const mod = await loadViewerModule();
   const packageBytes = createStoredZip([
     { path: 'manifest.json', data: JSON.stringify({ format: 'worksheet-attempt-package', packageVersion: 1, assets: [] }) },
-    { path: 'content/worksheet.json', data: JSON.stringify({ title: 'Restored', blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: { inputType: 'text' } }] }) },
+    { path: 'content/worksheet.json', data: JSON.stringify({ title: 'Restored', subject: 'Embedded subject', blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: { inputType: 'text' } }] }) },
     { path: 'content/attempt.json', data: JSON.stringify({ status: 'submitted', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z', submittedAt: '2026-01-02T00:00:00.000Z', answers: { q1: { value: 'A' } }, checking: null }) },
   ]);
   const savedAttempts = [];
@@ -6153,6 +6148,7 @@ test('resumeUploadedAttempt restores uploaded package into a new local attempt',
   }, {
     apiClient: {
       getSession: async () => ({ ok: true, data: { user: { sub: 'learner' } } }),
+      listUploadedAttempts: async () => ({ ok: true, data: { items: [{ uploaded_attempt_id: 'a1', title: 'Saved copy (2)', subject: '' }] } }),
       fetchUploadedAttemptArtifact: async () => ({ ok: true, data: packageBytes }),
     },
   });
@@ -6162,6 +6158,11 @@ test('resumeUploadedAttempt restores uploaded package into a new local attempt',
   assert.equal(savedAttempts.length, 1);
   assert.equal(session.state.status, 'completed');
   assert.equal(session.state.checkResult, null);
+  assert.equal(session.state.savedAttemptName, 'Saved copy (2)');
+  assert.equal(session.state.attemptNameDraft, 'Saved copy (2)');
+  assert.equal(session.state.savedAttemptSubject, '');
+  assert.equal(session.state.sourceSubject, 'Embedded subject');
+  assert.equal(session.state.savedAttemptAccount, 'learner');
 });
 
 test('mapUploadedAttemptCheckResult restores string enum statuses for viewer and print flows', async () => {
@@ -7252,4 +7253,66 @@ test('attempt upload reports missing local media without sending a request or bl
   assert.equal(result.error.code, 'MISSING_PACKAGE_MEDIA');
   assert.equal(session.state.serverActionMessage, 'Required image missing');
   assert.equal(session.state.isUploadingAttemptPackage, false);
+});
+
+for (const nameMode of ['auto', 'custom']) test(`attempt presentation metadata survives local recovery and ZIP import (${nameMode}) without importing a server association`, async () => {
+  const mod = await loadViewerModule();
+  const saved = [];
+  const storage = { resumeFlags: { get: () => null, set() {} }, importedWorksheets: { put: async () => {}, remove: async () => {} },
+    localAssets: { put: async () => {}, get: async () => null, remove: async () => {} }, attempts: { put: async record => { saved.push(record); return record; } } };
+  const session = new mod.ViewerAttemptSession(storage);
+  session.applyAttemptState({ localId: 'original', localAttemptId: 'original', status: 'in_progress', startedAt: '2026-11-03T00:00:00Z',
+    viewerPayload: { worksheetId: 'w', snapshotId: 's', snapshotVersion: 1, title: 'Worksheet', blocks: [{ blockId: 'q', kind: 'question', prompt: { text: 'Q' }, responseConfig: { inputType: 'text' } }] },
+    answers: { q: { value: 'Answer' } }, studentName: '', studentNameResolved: true, attemptNameMode: nameMode, attemptNameDraft: 'Saved name (2)', savedAttemptName: 'Saved name (2)', savedAttemptSubject: 'Subject', savedAttemptAccount: 'account-a' });
+  const recovery = session.createRecoveryRecord();
+  assert.equal(recovery.studentNameResolved, true);
+  assert.equal(recovery.savedAttemptAccount, 'account-a');
+  const pkg = await session.buildUploadedAttemptPackage();
+  assert.deepEqual(pkg.attempt.metadata, { studentName: '', studentNameResolved: true, attemptName: nameMode === 'auto' ? 'Worksheet' : 'Saved name (2)', attemptNameMode: nameMode });
+  assert.equal(recovery.attemptNameMode, nameMode);
+  assert.equal(pkg.worksheet.title, 'Worksheet');
+  assert.equal(JSON.stringify(pkg.attempt).includes('account-a'), false);
+  const restored = new mod.ViewerAttemptSession(storage);
+  restored.validateViewerPayload = async () => {};
+  await restored.restoreAttemptPackageAsLocalAttempt({ manifest: pkg.manifest, worksheet: pkg.worksheet, attempt: pkg.attempt, assets: [] });
+  assert.equal(restored.state.studentNameResolved, true);
+  assert.equal(restored.state.attemptNameDraft, nameMode === 'auto' ? 'Worksheet' : 'Saved name (2)');
+  assert.equal(restored.state.attemptNameMode, nameMode);
+  restored.state.studentName = 'Ann';
+  const updated = await restored.buildUploadedAttemptPackage();
+  assert.equal(updated.attempt.metadata.attemptName, nameMode === 'auto' ? 'Worksheet — Ann' : 'Saved name (2)');
+  assert.equal(restored.state.savedAttemptName, '');
+  assert.equal(restored.state.savedAttemptAccount, null);
+});
+
+test('successful server copy records the actual name and preserves success if local autosave fails', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({ resumeFlags: { get: () => null, set() {} } }, { apiClient: {
+    uploadAttemptPackage: async () => ({ ok: true, data: { uploaded_attempt_id: 'copy', title: 'Chosen name (2)', subject: 'Subject' } }),
+  } });
+  session.state.localAttemptId = 'attempt';
+  session.state.viewerPayload = { title: 'Worksheet title', blocks: [] };
+  session.state.attemptNameDraft = 'Chosen name';
+  session.state.serverSession = { status: 'logged_in', user: { sub: 'account-a' } };
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => ({ bytes: new Uint8Array([1]) });
+  session.autosave = async () => { throw new Error('disk full'); };
+  const result = await session.uploadCurrentAttemptPackage({}, { conflictAction: 'copy' });
+  assert.equal(result.ok, true);
+  assert.equal(session.state.savedAttemptName, 'Chosen name (2)');
+  assert.equal(session.state.attemptNameMode, 'custom');
+  assert.equal(session.state.attemptNameDraft, 'Chosen name (2)');
+  assert.equal(session.state.savedAttemptAccount, 'account-a');
+  assert.equal(session.state.savedAttemptSubject, 'Subject');
+});
+
+test('legacy saved-name-only recovery preserves its name while explicit custom clearing stays empty', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({ resumeFlags: { get: () => null, set() {} } });
+  const record = { localId: 'legacy', status: 'in_progress', viewerPayload: { title: 'Worksheet', blocks: [] }, savedAttemptName: 'My saved work', attemptNameDraft: '' };
+  session.applyAttemptState(record);
+  assert.equal(session.state.attemptNameMode, 'custom');
+  assert.equal(session.createRecoveryRecord().attemptNameDraft, 'My saved work');
+  session.applyAttemptState({ ...record, attemptNameMode: 'custom' });
+  assert.equal(session.createRecoveryRecord().attemptNameDraft, '');
 });

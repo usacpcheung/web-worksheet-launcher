@@ -453,7 +453,7 @@ export function renderPlayerUI({
   const capturingVoice = () => ['requesting_permission', 'recording', 'stopping'].includes(discussionSession?.voice?.active?.state);
   const voiceTranslate = (key, vars) => key === 'viewer.voice.otherQuestion'
     ? translate('player.discussion.voiceOtherScene', vars)
-    : ['locked', 'atEnd', 'atCursor', 'resolveRecovery', 'signInThenRewrite', 'signInTitleRewrite', 'signInPromptVoice', 'signInPromptRewrite', 'signInPromptRecovery'].includes(key.replace('viewer.voice.', ''))
+    : ['locked', 'atEnd', 'atCursor', 'resolveRecovery', 'signInThenRewrite', 'signedInThenRewrite', 'signInTitleRewrite', 'signInPromptVoice', 'signInPromptRewrite', 'signInPromptRecovery'].includes(key.replace('viewer.voice.', ''))
       ? translate('player.discussion.voice.' + key.replace('viewer.voice.', ''), vars) : sharedTranslate(key, vars);
   const viewVoice = id => { if (id === scene?.id) openDiscussion(); else viewDiscussionScene?.(id); };
   const voiceStatus = discussionSession?.voice ? createVoiceStatus({ session: discussionSession, t: voiceTranslate, view: viewVoice }) : null;
@@ -592,8 +592,8 @@ export function renderPlayerUI({
       session: discussionSession, block: discussionSession.state.viewerPayload.blocks.find(b => b.blockId === scene.id),
       control: textarea, t: voiceTranslate, view: viewVoice,
       signal: voiceFormSignal,
-      requestSignIn: ({ isCurrent }) => requestVoiceSignIn(discussionSession, {
-        blockId: scene.id, signal: voiceFormSignal, translate: voiceTranslate,
+      requestSignIn: ({ isCurrent, confirm }) => requestVoiceSignIn(discussionSession, {
+        blockId: scene.id, signal: voiceFormSignal, translate: voiceTranslate, confirm,
         isCurrent: () => isCurrent() && discussionSession.project === voiceProject
           && discussionSession.generation === voiceGeneration,
       }),

@@ -80,3 +80,19 @@ test('aborting while the dialog is open prevents an accepted late result',async(
     controller.abort();assert.equal(p.isCurrent(),false);return true;
   }});assert.equal(f.logins(),0);
 });
+
+for (const ok of [false, true]) test(`only verified login completes recovery (ok=${ok})`, async () => {
+  const f = fixture({ phase:'text', text:'Keep transcript', mode:'voice' });
+  const calls = [];
+  f.session.voice = { settleAuthentication: (...args) => calls.push(args) };
+  f.session.beginServerSignIn = async () => ({ ok });
+  await requestVoiceSignIn(f.session, { ...options, confirm:false, prompt: () => assert.fail('inline login must not prompt again') });
+  assert.equal(calls.length, ok ? 1 : 0);
+  if (ok) assert.deepEqual(calls[0], ['q', f.record, true]);
+});
+test('late successful login cannot clear recovery from another attempt', async () => {
+  const f=fixture();
+  f.session.voice = { settleAuthentication: () => assert.fail('stale completion') };
+  f.session.beginServerSignIn = async () => { f.session.state.localAttemptId='replacement'; return {ok:true}; };
+  await requestVoiceSignIn(f.session, {...options, prompt:async()=>true});
+});

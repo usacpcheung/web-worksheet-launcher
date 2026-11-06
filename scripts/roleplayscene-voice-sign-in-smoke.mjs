@@ -66,10 +66,11 @@ try {
     await page.getByRole('button',{name:locale==='en'?'Rewrite':'重寫',exact:true}).click();await dialog.waitFor();
     assert.match(await dialog.innerText(),locale==='en'?/rewrite your discussion/:/重寫討論內容/);
     await dialog.getByRole('button',{name:cancel,exact:true}).click();await unchanged();
-    assert.equal(await page.evaluate(()=>window.discussion.recovery.one.text),'Earlier discussion');
-    await page.locator('.viewer-voice-recovery-actions button').last().click();
+    assert.equal(await page.evaluate(()=>Boolean(window.discussion.recovery.one)),false);
+    assert.equal(await page.locator('.viewer-voice-recovery').isVisible(),false);
     await add.click();await dialog.waitFor();await dialog.getByRole('button',{name:signIn,exact:true}).click();
-    await page.waitForFunction(()=>window.loginCalls===1);assert.deepEqual(await counts(),[1,0]);await unchanged();
+    await page.waitForFunction(()=>window.loginCalls===1 && !window.discussion.recovery.one);
+    assert.equal(await page.locator('.viewer-voice-recovery').isVisible(),false);assert.deepEqual(await counts(),[1,0]);await unchanged();
     await add.click();await page.waitForFunction(()=>window.discussion.voice.active?.state==='recording');
     assert.equal(await dialog.count(),0);assert.deepEqual(await counts(),[1,1]);
     // Expiry after transcription preserves the segment; login alone never retries.
@@ -79,7 +80,9 @@ try {
     await dialog.waitFor();assert.equal(await page.evaluate(()=>window.discussion.recovery.one.text),'new segment');
     await dialog.getByRole('button',{name:cancel,exact:true}).click();await unchanged();
     await page.locator('.viewer-voice-recovery').getByRole('button',{name:signIn,exact:true}).click();
-    await page.waitForFunction(()=>window.loginCalls===2);assert.deepEqual(await counts(),[2,1]);await unchanged();
+    await page.waitForFunction(()=>window.loginCalls===2 && window.discussion.recovery.one.code==='RECOVERED');
+    assert.equal(await page.locator('.viewer-voice-recovery').getByRole('button',{name:signIn,exact:true}).isVisible(),false);
+    assert.equal(await dialog.count(),0);assert.deepEqual(await counts(),[2,1]);await unchanged();
     await page.getByRole('button',{name:locale==='en'?'Retry rewrite':'重試改寫',exact:true}).click();
     await page.waitForFunction(()=>!window.discussion.voice.active && !window.discussion.recovery.one);
     assert.equal(await field.inputValue(),'Earlier discussion new segment');assert.deepEqual(await counts(),[2,1]);

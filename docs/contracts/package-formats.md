@@ -120,3 +120,20 @@ saved imported-worksheet record. Import rollback only removes staged records and
 new assets, including a write that completes before reporting failure; it must
 not overwrite or remove media owned by existing drafts/attempts. Editor cancelled
 imports discard staged records before exposing an incoming draft.
+
+## Optional attempt presentation metadata
+
+`content/attempt.json.metadata` may contain `studentName` (string),
+`studentNameResolved` (boolean), `attemptName` (string), and optional
+`attemptNameMode` (`auto` or `custom`). Automatic names follow the worksheet title
+and current student name; custom names remain independent. Missing fields retain
+legacy defaults. `studentNameResolved: true` records an explicit decision to
+continue without a name as well as a confirmed name; print and server save share
+that decision. The existing details panel remains editable. These optional fields
+do not change package versions or the embedded worksheet title.
+
+Local ZIP import creates a new local attempt and uses `attemptName` only as an
+editable suggestion. It never imports server ownership, IDs, or replacement
+permission. Server resume uses the authenticated list row's name and subject,
+including a generated copy suffix, in preference to the embedded suggestion.
+The immutable ZIP in a server copy may still contain the original suggestion.

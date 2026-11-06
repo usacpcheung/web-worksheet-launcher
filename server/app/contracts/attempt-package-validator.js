@@ -21,6 +21,16 @@ export function assertAttemptPackage(manifest, worksheet, attempt, { allowLegacy
     assertOptionImages(worksheet.blocks, new Map([...assets].map(([id, asset]) =>
       [id, { ...asset, kind: 'image', usage: 'option_image' }])));
   }
+  // Optional presentation metadata never carries server identity or permissions.
+  if (attempt?.metadata !== undefined) {
+    const metadata = attempt.metadata;
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) throw new Error('Invalid attempt metadata.');
+    for (const key of ['studentName', 'attemptName']) {
+      if (metadata[key] !== undefined && typeof metadata[key] !== 'string') throw new Error(`Invalid attempt metadata ${key}.`);
+    }
+    if (metadata.attemptNameMode !== undefined && !['auto', 'custom'].includes(metadata.attemptNameMode)) throw new Error('Invalid attemptNameMode.');
+    if (metadata.studentNameResolved !== undefined && typeof metadata.studentNameResolved !== 'boolean') throw new Error('Invalid studentNameResolved.');
+  }
   if (allowLegacyEnvelope) return;
 
   if (manifest.schemaVersion !== undefined && manifest.schemaVersion !== 1) throw new Error('Unsupported manifest schemaVersion.');

@@ -15,7 +15,8 @@ for (const wrapped of [false, true]) test(`publication row preserves ${wrapped ?
   let handler;
   const error = { code: 'FORBIDDEN', status: 403 };
   const context = {
-    session: { packageLoad: {}, startFromPublishedPackage: async () => { throw wrapped ? { error } : error; } },
+    VIEWER_SERVER_SESSION_STATES: { LOGGED_OUT: 'logged_out' },
+    session: { state: { serverSession: { status: 'logged_in' } }, packageLoad: {}, startFromPublishedPackage: async () => { throw wrapped ? { error } : error; } },
     item: { published_package_id: 'fixture' }, closing: false, overlay: { isConnected: true },
     openBtn: { isConnected: true, addEventListener: (_, callback) => { handler = callback; } },
     loadError: { hidden: true }, signInBtn: { hidden: true }, updateLoadButtons() {}, t, getApiErrorMessage,
@@ -30,7 +31,8 @@ for (const wrapped of [false, true]) test(`publication row preserves ${wrapped ?
 test('publication row uses a safe localized fallback for an unknown thrown error', async () => {
   let handler;
   const context = {
-    session: { packageLoad: {}, startFromPublishedPackage: async () => { throw new Error('Private diagnostic'); } },
+    VIEWER_SERVER_SESSION_STATES: { LOGGED_OUT: 'logged_out' },
+    session: { state: { serverSession: { status: 'logged_in' } }, packageLoad: {}, startFromPublishedPackage: async () => { throw new Error('Private diagnostic'); } },
     item: {}, closing: false, overlay: { isConnected: true },
     openBtn: { isConnected: true, addEventListener: (_, callback) => { handler = callback; } },
     loadError: {}, signInBtn: { hidden: true }, updateLoadButtons() {}, t, getApiErrorMessage,
@@ -39,4 +41,19 @@ test('publication row uses a safe localized fallback for an unknown thrown error
   await handler();
   assert.equal(context.loadError.textContent, t('apiErrors.openFailed'));
   assert.equal(context.loadError.textContent.includes('Private diagnostic'), false);
+});
+
+// Expired browser reads replace the list with inline recovery, not a second prompt.
+test('publication row renders inline recovery after authentication expiry', async () => {
+  let handler, rendered = 0;
+  const context = {
+    VIEWER_SERVER_SESSION_STATES: { LOGGED_OUT: 'logged_out' },
+    session: { state: { serverSession: { status: 'logged_out' } }, packageLoad: {}, startFromPublishedPackage: async options => ({ ok: false, error: { code: 'AUTH_REQUIRED' } }) },
+    item: { published_package_id: 'fixture' }, closing: false, overlay: { isConnected: true },
+    openBtn: { isConnected: true, addEventListener: (_, fn) => { handler = fn; } },
+    loadError: {}, renderRows: () => rendered++, t, getApiErrorMessage,
+  };
+  vm.runInNewContext(source.slice(start, end), context);
+  await handler();
+  assert.equal(rendered, 1);
 });

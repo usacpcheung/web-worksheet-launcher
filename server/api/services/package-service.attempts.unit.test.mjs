@@ -394,3 +394,42 @@ test('attempt replacement reports a missing row and removes the unused new artif
   assert.equal(db.state.commits, 0);
   await assert.rejects(fs.stat(absolutePath), { code: 'ENOENT' });
 });
+
+for (const [title, allowed] of [['文'.repeat(80), true], ['😀'.repeat(80), true], ['文'.repeat(81), false]]) {
+  test(`new attempt name limit counts Unicode code points: ${Array.from(title).length}/${allowed}`, async () => {
+    const db = createAttemptDb();
+    const result = await createService({ db }).uploadAttempt({ identity: { sub: 'qa' }, title, subject: '', zipBytes: createValidAttemptZip() });
+    assert.equal(result.ok, allowed);
+    if (allowed) assert.equal(result.data.title, title);
+    else { assert.equal(result.error.code, 'INVALID_ATTEMPT_NAME'); assert.equal(db.state.commits, 0); }
+  });
+}
+
+test('copy names reserve suffix space without splitting Unicode; long legacy names can still be replaced', async () => {
+  const title = '😀'.repeat(100);
+  const service = createService({ db: createAttemptDb() });
+  service.findAttemptConflict = async () => null;
+  const copy = await service.findAvailableAttemptCopyTitle({ title, subject: '', identity: { sub: 'qa' }, client: {} });
+  assert.equal(Array.from(copy).length, 80);
+  assert.ok(copy.endsWith(' (2)'));
+  assert.equal(copy.includes('\uFFFD'), false);
+  const db = createAttemptDb({ conflict: { uploaded_attempt_id: 'old', title, subject: '', artifact_sha256: 'old-hash' }, count: 3 });
+  const result = await createService({ db }).uploadAttempt({ identity: { sub: 'qa' }, title, subject: '', zipBytes: createValidAttemptZip(), conflictAction: 'replace', expectedAttemptId: 'old', expectedArtifactHash: 'old-hash' });
+  assert.equal(result.ok, true);
+  assert.equal(result.data.title, title);
+  assert.equal(result.data.uploaded_attempt_id, 'old');
+});
+
+for (const conflict of [null, { uploaded_attempt_id: 'other', artifact_sha256: 'hash' }, { uploaded_attempt_id: 'old', artifact_sha256: 'changed' }]) {
+  test(`replacement rejects a stale selected target: ${JSON.stringify(conflict)}`, async () => {
+    const db = createAttemptDb({ conflict });
+    let stored = false;
+    const result = await createService({ db, artifactStore: { storeArtifact() { stored = true; throw new Error('must not write'); } } }).uploadAttempt({
+      identity: { sub: 'qa' }, title: 'T', subject: '', zipBytes: createValidAttemptZip(), conflictAction: 'replace', expectedAttemptId: 'old', expectedArtifactHash: 'hash',
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'ATTEMPT_REPLACE_TARGET_CHANGED');
+    assert.equal(stored, false);
+    assert.equal(db.state.commits, 0);
+  });
+}

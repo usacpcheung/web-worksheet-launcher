@@ -243,3 +243,14 @@ test('ensure can prepare a provider without prompting or replaying authenticatio
   const result = await auth.ensure({ withContext: true, recoverAuth: false });
   assert.equal(result.ok, false); assert.equal(result.error.code, 'AUTH_REQUIRED');
 });
+
+test('recoverAuth false suppresses login during both preflight and expired reads', async () => {
+  for (const expiredProbe of [true, false]) {
+    const { flow, events } = fixture({ probe: async () => expiredProbe ? auth : ready('a') });
+    let reads = 0;
+    const result = await flow.read(async () => { reads++; return auth; }, { recoverAuth: false });
+    assert.equal(result.ok, false);
+    assert.equal(reads, expiredProbe ? 0 : 1);
+    assert.equal(events.includes('prompt'), false); assert.equal(events.includes('login'), false);
+  }
+});

@@ -49,3 +49,24 @@ Local content conversion remains in existing app code. Existing replacement conf
 Run the full Node suite and retained-product browser smoke suite, including `read-auth-flow-smoke.mjs`. Shared tests cover bounded retry, forbidden/service failures, account changes, concurrent callers, stale success after a newer failure, post-download account changes, cancellation during validation and storage, preservation of existing media, replacement-confirmation races, prompt cancellation, popup retry, persistence ordering and return validation. Browser simulations cover contextual cancel, popup continuation and same-tab return across all three apps in English/Traditional Chinese and desktop/mobile layouts.
 
 Before merge, deployed acceptance must verify the exact revision, real OIDC login, blocked-popup recovery, save/reload preservation, expiry between preflight and the read, both concurrent response orders and existing mutation/provider behavior. Record passing cases as text/JSON; screenshots are needed only for failures or ambiguous visual results.
+
+## Viewer browser entry and expiry
+
+The viewer verifies readiness **before mounting** either the published worksheet
+browser or server-attempt manager. Signed-out users see Sign in / Cancel over
+their current screen. Cancel or failed readiness leaves the browser closed;
+successful sign-in opens the requested list automatically because it is a read.
+Same-tab authentication retains the existing read-return intent. One pending
+opener owns the transition; an aborted or replaced attempt cannot open a stale
+browser after login completes.
+
+Within an open viewer browser, refresh/search/pagination and record reads use
+`recoverAuth: false`: expiry displays the existing inline Sign in and Close
+controls, rather than opening another consent dialog automatically. An expired
+session is not an empty result set. Explicit inline Sign in retains the existing
+popup recovery UI and reloads the list only while that browser remains open.
+The shared read helper applies `recoverAuth` to both the preflight probe and the
+request retry. Default recovery for other consumers remains enabled.
+
+Save/upload and deletion retain their separate mutation confirmation rules.
+Authentication success never authorizes an automatic mutation.

@@ -118,11 +118,14 @@ await page.waitForFunction(()=>!window.viewerSession.voice.active);
 await current.getByRole('button',{name:'Discard',exact:true}).click();
 assert.equal(await current.getByRole('button',{name:'Rewrite',exact:true}).isEnabled(),true);
 assert.equal(await current.getByRole('button',{name:'Add by voice',exact:true}).isEnabled(),true);
-sessionReady=false;
-await page.evaluate(()=>{window.viewerSession.beginServerSignIn=()=>{};});
+// First preserve an actual rewrite failure, then expire authentication on retry.
 await current.getByRole('button',{name:'Rewrite',exact:true}).click();
 await page.waitForFunction(()=>!window.viewerSession.voice.active);
 await current.getByLabel('Recovered text').waitFor();
+sessionReady=false;
+await page.evaluate(()=>{window.viewerSession.beginServerSignIn=()=>{};});
+await current.getByRole('button',{name:'Retry rewrite',exact:true}).click();
+await page.waitForFunction(()=>!window.viewerSession.voice.active);
 await page.locator('.read-auth-prompt').getByRole('button',{name:'Cancel',exact:true}).click();
 assert.equal(await current.getByRole('button',{name:'Rewrite',exact:true}).isDisabled(),true);
 assert.equal(await current.getByRole('button',{name:'Retry rewrite',exact:true}).isVisible(),true);
