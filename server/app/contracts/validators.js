@@ -1,3 +1,4 @@
+import { assertImageQuestions } from '../image-response.js';
 import { getNumberCorrectAnswerConfigViolation, normalizeNumberRules } from './number-input-validator.js';
 import { assertTextFormat } from '../worksheet-text.js';
 
@@ -9,7 +10,7 @@ function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-const CANONICAL_RESPONSE_INPUT_TYPES = new Set(['text', 'number', 'boolean', 'multiple_choice']);
+const CANONICAL_RESPONSE_INPUT_TYPES = new Set(['text', 'number', 'boolean', 'multiple_choice', 'image_response']);
 
 function isIsoTimestamp(value) {
   if (!isNonEmptyString(value)) {
@@ -49,7 +50,7 @@ function collectAllowedOptionValues(options) {
 
 function validateQuestionResponseConfig(responseConfig, path, errors) {
   if (!CANONICAL_RESPONSE_INPUT_TYPES.has(responseConfig.inputType)) {
-    errors.push(`${path}.inputType must be one of: text, number, boolean, multiple_choice`);
+    errors.push(`${path}.inputType must be one of: text, number, boolean, multiple_choice, image_response`);
     return;
   }
 
@@ -151,6 +152,7 @@ function validateBlocks(blocks, path, errors) {
     return;
   }
 
+  try { assertImageQuestions(blocks); } catch (error) { errors.push(error.message); }
   blocks.forEach((block, index) => {
     const blockPath = `${path}[${index}]`;
     try { assertTextFormat(block?.kind === 'question' ? block.prompt : block?.content); }

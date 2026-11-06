@@ -13,6 +13,7 @@ function createRuntimeStorage() {
   const db = createStorageApi();
 
   return {
+    commitAnswerImages: db.commitAnswerImages,
     drafts: withRecovery('localDrafts', {
       put: db.putLocalDraft,
       get: db.getLocalDraft,

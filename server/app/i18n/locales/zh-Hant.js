@@ -1,6 +1,40 @@
 import roleplayscene from './roleplayscene/zh-Hant.js';
 
 export default {
+  imageResponse: {
+    prepareFailed:
+      '無法在保留足夠細節的情況下將圖片縮小至 2 MB。請先縮小圖片或選擇另一張。已儲存的圖片不受影響。',
+    storageFull: '瀏覽器儲存空間不足。請釋放空間或選擇較小的圖片後重試。已儲存的圖片不受影響。',
+    budgetCalculating: '正在計算工作紙與作答圖片的套件預算…',
+    type: '圖片作答',
+    typeCount: '圖片作答 · 已使用 {count}/3 題',
+    questionLimit: '每份工作紙最多可包含 3 題圖片作答。',
+    maxImages: '每題最多圖片數目',
+    rules: 'JPG 或 PNG · 每張最多 10 MB、2,400 萬像素，每邊最多 8192 像素。超過 2 MB 的圖片會自動縮小。',
+    budget: '最大作答套件預算：{size} / 30 MB（包括作答圖片及套件預留空間）。',
+    budgetExceeded: '超出套件預算。發佈前請減少工作紙媒體或每題圖片數目上限。',
+    pending: '儲存、匯出或提交前，請先完成或取消圖片處理。',
+    add: '加入圖片',
+    replace: '更換',
+    remove: '移除',
+    removeTitle: '移除此圖片？',
+    removeHint: '此圖片將從本題答案中移除。',
+    image: '圖片 {number}',
+    enlarge: '放大圖片 {number}',
+    previous: '上一張',
+    next: '下一張',
+    count: '已加入 {count} / {max} 張圖片',
+    empty: '加入作品照片或數碼繪圖。',
+    preparing: '正在處理圖片… 超過 2 MB 的圖片會縮小或壓縮至上限以內。',
+    review: '請確認作品清晰可辨。',
+    use: '使用此圖片',
+    tooLarge: '此檔案超過 10 MB。請先縮小檔案，或選擇另一張圖片。',
+    dimensions: '此圖片超過 2,400 萬像素，或其中一邊超過 8192 像素。請降低圖片尺寸，或選擇另一張圖片。',
+    format: '不支援此格式。請選擇 JPG 或 PNG 圖片。',
+    failed:
+      '未能處理或儲存圖片，現有答案保持不變。請選擇較小的圖片、檢查裝置儲存空間；如另一分頁更改了作答，請重新開啟作答。',
+    unavailable: '無法載入圖片',
+  },
   optionImages: {"imageAlt": "選項 {option} 圖片", "enlarge": "放大選項 {option} 圖片", "unavailable": "圖片無法顯示", "manage": "加入或管理選項圖片", "description": "圖片描述（選填）", "descriptionHelp": "供螢幕閱讀器或圖片無法顯示時使用。不會顯示為選項文字或自動產生音訊。只有圖片的選項，建議填寫。", "count": "{count} / 200 字", "placeholder": "選項文字 — 附有圖片時可留空", "required": "每個選項需要文字或圖片。", "replace": "更換此選項圖片？原有圖片描述將會清除。", "remove": "移除此選項圖片？文字及音訊將會保留。"},
   mutationAuth: {
     generateAudio: '產生語音',

@@ -33,6 +33,7 @@ Contributor instructions, discoverable UI skills, colocated module/font notes an
 - [Move commands and mouse dragging](worksheet/worksheet-block-reordering.md)
 - [Limited Markdown, prompt limits and typography](worksheet/worksheet-limited-markdown.md)
 - [Audio voice choices](worksheet/editor-voice-choice.md)
+- [Image-response questions, limits and persistence](worksheet/image-response-investigation.md)
 - [Learner voice, rewrite, recovery and Undo](worksheet/viewer-voice-workflow.md)
 - [Published loading feedback](worksheet/viewer-package-load-progress.md)
 - [Viewer UI target design and staged implementation plan](worksheet/viewer-ui-refactor-plan.md)

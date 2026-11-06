@@ -76,3 +76,24 @@ Only valid nonempty ranges with intact surrogate boundaries allow replacement.
 Missing/invalid ranges preserve insertion-only legacy behavior. Answer changes
 require explicit recovery; append clears the range. Recovery remains excluded
 from server attempt packages, worksheet/story packages and print.
+
+## Image-response persistence
+
+Image-response answer values are ordered arrays of `{ assetId }`, with their binary
+media stored in `localAssets`. `commitAnswerImages` writes the new binary and answer
+references in one transaction across `localAssets` and `localAttempts`. It compares
+expected old references and rejects stale or completed attempts. Cancellation before
+commit persists no candidate; a failed transaction leaves the previous answer intact.
+
+Normal attempt autosaves and recovery-journal writes cannot replace different saved
+image references. This prevents a stale text autosave from resurrecting a removed
+image, but does not introduce general multi-tab text merging. Image work is serialized
+within a viewer session; pending attachment blocks finalization/export/server save.
+Export holds an image-edit lock while collecting the immutable package snapshot.
+
+New answer assets have `metadata.ownerAttemptId`. Replacing/removing them reclaims
+unreferenced bytes in the same transaction; deleting an attempt also removes its
+owned answer assets. Imported answer-only assets receive the new attempt owner ID.
+Worksheet/shared assets retain their existing lifetime. Import uses fresh identities
+for both binaries and answer references; old packages and local records are unchanged.
+No database version migration is required.

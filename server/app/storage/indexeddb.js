@@ -1,3 +1,4 @@
+import { imageQuestions, imageAnswerRefs } from '../image-response.js';
 const DB_NAME = 'worksheetLauncherStorage';
 const DB_VERSION = 2;
 
@@ -130,7 +131,14 @@ async function putRecord(storeName, record) {
   };
 
   await runTransaction(storeName, 'readwrite', (store) => {
-    store.put(persistedRecord);
+    if (storeName === STORE_NAMES.localAttempts && imageQuestions(persistedRecord.viewerPayload?.blocks).length) {
+      const request=store.get(persistedRecord.localId);
+      request.onsuccess=()=>{
+        const old=request.result;
+        if(old && imageQuestions(old.viewerPayload?.blocks).some(q=>JSON.stringify(old.answers?.[q.blockId]?.value||[])!==JSON.stringify(persistedRecord.answers?.[q.blockId]?.value||[]))) { store.transaction.abort(); return; }
+        store.put(persistedRecord);
+      };
+    } else store.put(persistedRecord);
   });
 
   return persistedRecord;
@@ -153,6 +161,7 @@ async function recoverRecord(storeName, record, expected, isCurrent) {
           recovered = request.result;
           // A newer write or deletion must win over this stale recovery read.
           if (!isCurrent() || JSON.stringify(recovered) !== JSON.stringify(expected)) return;
+          if(storeName===STORE_NAMES.localAttempts && recovered && imageQuestions(recovered.viewerPayload?.blocks).some(q=>JSON.stringify(recovered.answers?.[q.blockId]?.value||[])!==JSON.stringify(pending.answers?.[q.blockId]?.value||[]))) return;
           store.put(pending);
           recovered = pending;
         } catch (error) {
@@ -165,7 +174,30 @@ async function recoverRecord(storeName, record, expected, isCurrent) {
   return recovered;
 }
 
+// Reclaim only answer assets owned by the deleted attempt. Worksheet/shared media
+// has no ownerAttemptId and must survive local attempt deletion.
+async function deleteAttemptsAndOwnedImages(localId) {
+  const db = await openDatabase();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction([STORE_NAMES.localAttempts, STORE_NAMES.localAssets], 'readwrite');
+    tx.oncomplete = () => resolve();
+    tx.onerror = tx.onabort = () => reject(tx.error || new Error('Unable to remove attempt.'));
+    const attempts = tx.objectStore(STORE_NAMES.localAttempts);
+    if (localId === undefined) attempts.clear();
+    else attempts.delete(localId);
+    const request = tx.objectStore(STORE_NAMES.localAssets).openCursor();
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) return;
+      const owner = cursor.value?.metadata?.ownerAttemptId;
+      if (owner && (localId === undefined || owner === localId)) cursor.delete();
+      cursor.continue();
+    };
+  });
+}
+
 async function deleteRecord(storeName, localId) {
+  if (storeName === STORE_NAMES.localAttempts) return deleteAttemptsAndOwnedImages(localId);
   await runTransaction(storeName, 'readwrite', (store) => {
     store.delete(localId);
   });
@@ -176,13 +208,69 @@ async function listRecords(storeName) {
 }
 
 async function clearStore(storeName) {
+  if (storeName === STORE_NAMES.localAttempts) return deleteAttemptsAndOwnedImages();
   await runTransaction(storeName, 'readwrite', (store) => {
     store.clear();
   });
 }
 
+
+// Save bytes and answer references together. A stale tab cannot overwrite a newer image answer.
+async function commitAnswerImages({ attemptId, blockId, expected, next, asset, isCurrent }) {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([STORE_NAMES.localAttempts, STORE_NAMES.localAssets], 'readwrite');
+    const attempts = tx.objectStore(STORE_NAMES.localAttempts),
+      assets = tx.objectStore(STORE_NAMES.localAssets);
+    let result;
+    tx.oncomplete = () => resolve(result);
+    tx.onerror = tx.onabort = () =>
+      reject(tx.error || new Error('Image answer changed or could not be saved.'));
+    const req = attempts.get(attemptId);
+    req.onsuccess = () => {
+      try {
+        const record = req.result,
+          q = record?.viewerPayload?.blocks?.find((b) => b.blockId === blockId);
+        if (
+          !record ||
+          record.status === 'completed' ||
+          q?.responseConfig?.inputType !== 'image_response' ||
+          !isCurrent() ||
+          JSON.stringify(record.answers?.[blockId]?.value || []) !== JSON.stringify(expected)
+        ) {
+          tx.abort();
+          return;
+        }
+        imageAnswerRefs(next, q.responseConfig.maxImages);
+        if (asset) assets.put(asset);
+        const updatedAt = new Date().toISOString();
+        result = {
+          ...record,
+          answers: { ...record.answers, [blockId]: { value: next, answeredAt: updatedAt } },
+          lastSavedAt: updatedAt,
+          metadata: { ...record.metadata, updatedAt },
+        };
+        attempts.put(result);
+        // Only newly owned answer assets can be reclaimed. Imported/shared media remain intact.
+        for (const ref of expected.filter((r) => !next.some((n) => n.assetId === r.assetId))) {
+          const old = assets.get(ref.assetId);
+          old.onsuccess = () => {
+            const referenced = Object.values(result.answers).some(
+              (a) => Array.isArray(a.value) && a.value.some((r) => r?.assetId === ref.assetId)
+            );
+            if (!referenced && old.result?.metadata?.ownerAttemptId === attemptId) assets.delete(ref.assetId);
+          };
+        }
+      } catch {
+        tx.abort();
+      }
+    };
+  });
+}
+
 function createStorageApi() {
   return {
+    commitAnswerImages,
     putLocalDraft: (record) => putRecord(STORE_NAMES.localDrafts, record),
     getLocalDraft: (localId) => getRecord(STORE_NAMES.localDrafts, localId),
     recoverLocalDraft: (record, expected, isCurrent) => recoverRecord(STORE_NAMES.localDrafts, record, expected, isCurrent),

@@ -1,5 +1,8 @@
 export const PRINT_REPORT_CSS = `
     @import url("${new URL('../app/fonts/worksheet-chinese.css', import.meta.url).href}");
+    .print-answer-image{break-inside:avoid;margin:0 0 7mm}
+    .print-answer-image img{display:block;max-width:100%;max-height:100mm;width:auto;height:auto;object-fit:contain;margin:auto}
+    .print-answer-image figcaption{font-size:10pt;color:#52667f}
     @page {
       size: A4 portrait;
       margin: 16mm 14mm 18mm 14mm;

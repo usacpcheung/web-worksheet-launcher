@@ -1,3 +1,4 @@
+import { imageQuestions, assertImageQuestions, imageBudget } from '../app/image-response.js';
 import { mountOptionImageEditor } from './option-image-editor.js';
 import { optionImageRef, optionHasContent, imageDescription } from '../app/option-images.js';
 import { runPublicationFlow, runPublicationAttempt } from '../app/api/publication-flow.js';
@@ -766,6 +767,7 @@ function getAnswerInputTypeLabel(inputType) {
     number: 'editor.question.inputTypes.number',
     boolean: 'editor.question.inputTypes.boolean',
     multiple_choice: 'editor.question.inputTypes.multipleChoice',
+    image_response: 'imageResponse.type',
   };
   return keys[inputType] ? t(keys[inputType]) : toTitleCaseLabel(inputType);
 }
@@ -847,7 +849,7 @@ function createEmptyQuestionBlock(position) {
 }
 
 const TEXT_INPUT_TYPES = new Set(['text']);
-const CANONICAL_RESPONSE_INPUT_TYPES = new Set(['text', 'number', 'boolean', 'multiple_choice']);
+const CANONICAL_RESPONSE_INPUT_TYPES = new Set(['text', 'number', 'boolean', 'multiple_choice', 'image_response']);
 
 function mapOptionsTextToLines(rawText) {
   if (!rawText) return [];
@@ -1509,6 +1511,7 @@ class EditorDraftSession {
       errors.push('draft.blocks must be a non-empty array');
     }
 
+    try { assertImageQuestions(normalizedDraft.blocks); } catch(error) { errors.push(error.message); }
     normalizedDraft.blocks.forEach((block, index) => {
       if (!block.blockId) errors.push(`draft.blocks[${index}].blockId must be a non-empty string`);
       if (!Number.isInteger(block.position) || block.position < 0) {
@@ -1520,7 +1523,7 @@ class EditorDraftSession {
         if (!isRecord(block.responseConfig)) errors.push(`draft.blocks[${index}].responseConfig is required for question blocks`);
         if (!CANONICAL_RESPONSE_INPUT_TYPES.has(block.responseConfig?.inputType)) {
           errors.push(
-            `draft.blocks[${index}].responseConfig.inputType must be one of: text, number, boolean, multiple_choice`
+            `draft.blocks[${index}].responseConfig.inputType must be one of: text, number, boolean, multiple_choice, image_response`
           );
         }
         if (block.responseConfig?.inputType === 'multiple_choice') {
@@ -2550,7 +2553,8 @@ class EditorDraftSession {
 
   updateQuestionInputType(blockId, inputType) {
     if (!this.state.draft || !blockId) return;
-    const normalizedInputType = ['text', 'number', 'boolean', 'multiple_choice'].includes(inputType)
+    if (inputType === 'image_response' && this.state.draft.blocks.find(b=>b.blockId===blockId)?.responseConfig?.inputType !== inputType && imageQuestions(this.state.draft.blocks).length >= 3) return;
+    const normalizedInputType = ['text', 'number', 'boolean', 'multiple_choice', 'image_response'].includes(inputType)
       ? inputType
       : 'text';
 
@@ -5051,6 +5055,7 @@ function renderEditorShell(session) {
     { value: 'number', label: getAnswerInputTypeLabel('number') },
     { value: 'boolean', label: getAnswerInputTypeLabel('boolean') },
     { value: 'multiple_choice', label: getAnswerInputTypeLabel('multiple_choice') },
+    { value: 'image_response', label: t('imageResponse.type') },
   ].forEach(({ value, label }) => {
     const option = document.createElement('option');
     option.value = value;
@@ -7647,6 +7652,29 @@ function renderEditorShell(session) {
     answerGrid.appendChild(inputTypeField);
 
     const activeInputType = selectedBlock.responseConfig?.inputType || 'text';
+    const imageCount = imageQuestions(session.state.draft.blocks).length;
+    const imageTypeOption = questionInputType.querySelector('[value="image_response"]');
+    imageTypeOption.textContent = t('imageResponse.typeCount', { count: imageCount });
+    imageTypeOption.disabled = imageCount >= 3 && activeInputType !== 'image_response';
+    const imageNotice = document.createElement('p'); imageNotice.className='muted';
+    imageNotice.textContent=t(imageCount >= 3 ? 'imageResponse.questionLimit' : 'imageResponse.typeCount', {count:imageCount});
+    answerSection.append(imageNotice);
+    if (activeInputType === 'image_response') {
+      const field=document.createElement('div');field.className='editor-field';
+      const label=document.createElement('label');label.htmlFor='editor-max-images';label.textContent=t('imageResponse.maxImages');
+      const select=document.createElement('select');select.id='editor-max-images';select.className='control';
+      for(const n of [1,2,3])select.add(new Option(String(n),String(n),false,n===selectedBlock.responseConfig.maxImages));
+      select.onchange=()=>{selectedBlock.responseConfig.maxImages=Number(select.value);session.touchDraft();updateSummary();};
+      const hint=document.createElement('p');hint.className='muted';hint.textContent=t('imageResponse.rules');
+      field.append(label,select,hint);answerSection.append(field);
+    }
+    if (imageCount) {
+      const budget = document.createElement('p');
+      budget.className = 'muted';
+      budget.dataset.imageBudget = '';
+      answerSection.append(budget);
+    }
+
     if (activeInputType === 'multiple_choice') {
       const selectionModeLabel = document.createElement('label');
       selectionModeLabel.textContent = t('editor.question.selectionMode');
@@ -8409,6 +8437,38 @@ function renderEditorShell(session) {
     if (!hasForegroundDialog) closeBtn.focus();
   }
 
+  const refreshImageBudget = () => {
+    const budget = rightPanel.querySelector('[data-image-budget]');
+    const draft = session.state.draft;
+    if (!budget || !draft) return;
+    const blocks = structuredClone(draft.blocks);
+    const key = JSON.stringify([blocks, draft.assets]);
+    if (budget.dataset.budgetKey === key) return;
+    budget.dataset.budgetKey = key;
+    budget.textContent = t('imageResponse.budgetCalculating');
+    session.imageBudgetSizes ??= new Map();
+    const sizes = (draft.assets || []).map(a => {
+      if (!session.imageBudgetSizes.has(a.assetId)) {
+        session.imageBudgetSizes.set(a.assetId, Promise.resolve(session.storage.localAssets.get(a.assetId)).then(r => {
+          if (!r?.binary) throw new Error('Missing media');
+          return r.binary.byteLength;
+        }).catch(error => { session.imageBudgetSizes.delete(a.assetId); throw error; }));
+      }
+      return session.imageBudgetSizes.get(a.assetId);
+    });
+    Promise.all(sizes).then(values => {
+      if (!budget.isConnected || budget.dataset.budgetKey !== key) return;
+      const b = imageBudget(blocks, values.reduce((n, v) => n + v, 0), new TextEncoder().encode(JSON.stringify(blocks)).length * 4);
+      budget.className = b.ok ? 'muted' : 'control-error';
+      budget.textContent = t('imageResponse.budget', { size: (b.total / 1048576).toFixed(1) })
+        + (b.ok ? '' : ' ' + t('imageResponse.budgetExceeded'));
+    }).catch(() => {
+      if (budget.isConnected && budget.dataset.budgetKey === key) {
+        budget.className = 'control-error'; budget.textContent = t('imageResponse.unavailable');
+      }
+    });
+  };
+
   const updateSummary = ({ preserveDetailEditor = false } = {}) => {
     session.pruneExpiredNotifications();
     session.validateCurrentDraft();
@@ -8417,6 +8477,7 @@ function renderEditorShell(session) {
     if (!preserveDetailEditor) {
       renderDetailEditor();
     }
+    refreshImageBudget();
 
     const saveState = session.state.lastPersistenceError
       ? 'error'
@@ -9216,6 +9277,8 @@ function normalizeQuestionResponseConfig(responseConfig, options = {}) {
     inputType,
   };
 
+  if (inputType === 'image_response') return { inputType, maxImages: source.maxImages ?? 3 };
+  delete normalized.maxImages;
   if (inputType === 'text') {
     normalized.maxLength = Number.isFinite(source.maxLength) ? Number(source.maxLength) : 200;
     normalized.displayMode = source.displayMode === 'single_line' ? 'single_line' : 'multi_line';

@@ -328,7 +328,7 @@ test('uploadAttempt validator accepts checking block ids from worksheet.blockId 
   assert.equal(result.statusCode, 201);
 });
 test('unsupported text formats and disguised Markdown attempts reject before database or artifact writes', async () => {
-  for (const [packageVersion, format] of [[1, 'limited-markdown-v1'], [2, 'future'], [4, 'plain_text']]) {
+  for (const [packageVersion, format] of [[1, 'limited-markdown-v1'], [2, 'future'], [5, 'plain_text']]) {
     let writes = 0;
     const service = createService({ db: { connect: async () => { writes += 1; throw new Error('Unexpected database access'); } },
       artifactStore: { storeArtifact: async () => { writes += 1; } } });
@@ -433,3 +433,25 @@ for (const conflict of [null, { uploaded_attempt_id: 'other', artifact_sha256: '
     assert.equal(db.state.commits, 0);
   });
 }
+
+test('image-answer uploads validate media before slots and retain the three-slot limit', async () => {
+  const image = new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'));
+  for (const [missing, count] of [[false, 0], [false, 3], [true, 0]]) {
+    const db = createAttemptDb({ count });
+    let writes = 0;
+    const service = createService({ db, artifactStore: { async storeArtifact() {
+      writes++; return {artifactPath:'image-attempt.zip', artifactSha256:'hash', artifactSizeBytes:100};
+    } } });
+    const zipBytes = createStoredZip([
+      {path:'manifest.json',data:JSON.stringify({format:'worksheet-attempt-package',packageVersion:4,schemaVersion:1,assets:[{assetId:'answer',path:'media/answer.png',mimeType:'image/png',byteLength:image.length}]})},
+      {path:'content/worksheet.json',data:JSON.stringify({blocks:[{blockId:'q',kind:'question',prompt:{text:'Draw'},responseConfig:{inputType:'image_response',maxImages:3}}]})},
+      {path:'content/attempt.json',data:JSON.stringify({schemaVersion:1,kind:'worksheet-attempt',status:'in_progress',answers:{q:{value:[{assetId:'answer'}]}}})},
+      ...missing ? [] : [{path:'media/answer.png',data:image}],
+    ]);
+    const result = await service.uploadAttempt({identity:{sub:'fixture'},title:'Drawing',zipBytes});
+    assert.equal(result.ok, !missing && count===0);
+    assert.equal(writes, !missing && count===0 ? 1 : 0);
+    if(missing) { assert.equal(result.error.code,'INVALID_ATTEMPT_PACKAGE'); assert.equal(db.state.queries.length,0); }
+    else if(count===3) assert.equal(result.error.code,'ATTEMPT_SLOT_LIMIT_REACHED');
+  }
+});

@@ -1180,3 +1180,13 @@ test('publishFromDraft preserves its artifact if COMMIT acknowledgment is lost',
   await assert.rejects(service.publishFromDraft({ identity: { sub: 'oidc-sub' }, uploadedDraftId: 'u' }), /lost COMMIT acknowledgment/);
   assert.equal(await fs.readFile(absolutePath, 'utf8'), 'committed artifact');
 });
+
+test('image-response worksheet v5 passes the actual publication boundary', async () => {
+  const bytes = createWorksheetPackageFromDraft({title:'Drawing',blocks:[{blockId:'q',kind:'question',prompt:{text:'Draw a tree'},responseConfig:{inputType:'image_response',maxImages:3}}]}).bytes;
+  let writes = 0;
+  const service = createService({db:createFakeDb(),artifactStore:{readArtifact:async()=>bytes,storeArtifact:async()=>{
+    writes++;return {artifactPath:'published/drawing.zip',artifactSha256:'new',artifactSizeBytes:bytes.length};
+  }}});
+  const result = await service.publishFromDraft({identity:{sub:'oidc-sub'},uploadedDraftId:'u'});
+  assert.equal(result.ok,true);assert.equal(writes,1);
+});

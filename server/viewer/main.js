@@ -1,3 +1,5 @@
+import { createImageResponseControls } from './image-response-ui.js';
+import { hasImageResponses, imageAnswerRefs, ATTEMPT_BYTES } from '../app/image-response.js';
 import { prepareBrowserEntry } from './browser-entry.js';
 import { attemptDialog, createAttemptMenu, attemptNameMode, currentAttemptName } from './attempt-menu.js';
 import { createChoiceButtonGroup as renderChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, getChoicePrefix } from './choice-button-group.js';
@@ -839,7 +841,7 @@ function parseUploadedAttemptPackage(zipBytes) {
     throw new Error('Uploaded attempt package is missing required files.');
   }
   const manifest = JSON.parse(decodeUtf8(manifestEntry));
-  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3].includes(manifest?.packageVersion)) {
+  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3, 4].includes(manifest?.packageVersion)) {
     throw new Error('Uploaded attempt package format is not supported.');
   }
   const worksheet = JSON.parse(decodeUtf8(worksheetEntry));
@@ -890,7 +892,7 @@ function parseLocalAttemptPackage(zipBytes) {
   if (manifest?.format === 'worksheet-package') {
     throw new Error(t('viewer.notifications.localAttemptImport.worksheetPackageNotAttempt'));
   }
-  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3].includes(manifest?.packageVersion)) {
+  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3, 4].includes(manifest?.packageVersion)) {
     throw new Error(t('viewer.notifications.localAttemptImport.invalidPackage'));
   }
 
@@ -1028,6 +1030,7 @@ function computeViewerPayloadFingerprint(payload) {
       responseConfig: isRecord(block.responseConfig)
         ? {
           inputType: block.responseConfig.inputType || 'text',
+          ...(block.responseConfig.inputType === 'image_response' ? {maxImages:block.responseConfig.maxImages} : {}),
           selectionMode: block.responseConfig.selectionMode || null,
           options: Array.isArray(block.responseConfig.options)
             ? block.responseConfig.options.map((option, index) => ({
@@ -1093,6 +1096,7 @@ function normalizeViewerBlock(block, index) {
       inputType,
     };
 
+    if (inputType === 'image_response') normalizedResponseConfig.maxImages = responseConfigSource.maxImages;
     if (inputType === 'text') {
       normalizedResponseConfig.maxLength = Number.isFinite(responseConfigSource.maxLength)
         ? responseConfigSource.maxLength
@@ -1341,6 +1345,7 @@ function coerceAnswerValueForQuestion(questionBlock, rawValue, options = {}) {
   const inputType = questionBlock?.responseConfig?.inputType || 'text';
   const responseConfig = isRecord(questionBlock?.responseConfig) ? questionBlock.responseConfig : {};
   const phase = options.phase || 'save';
+  if (inputType === 'image_response') return rawValue == null ? [] : imageAnswerRefs(rawValue, responseConfig.maxImages);
   if (inputType === 'number') {
     // Already-normalized finite numbers (e.g. 1e-7) are returned directly to
     // avoid re-running string-based regex validation that rejects scientific
@@ -1893,7 +1898,9 @@ async function buildWorksheetPrintReportModel({
     const questionImage = await resolvePrintQuestionImage(getQuestionImageRefForPrint(block), storage);
     const flowChoices = choices.some(choice => choice.image) || choices.length > 8 || choices.some(choice => choice.label.length > 500)
       || choices.reduce((length, choice) => length + choice.label.length, 0) > 850;
+    const answerImages = config.inputType === 'image_response' ? await Promise.all(imageAnswerRefs(learnerValue || [], config.maxImages).map(ref=>resolvePrintQuestionImage(ref,storage))) : [];
     const question = {
+      answerImages,
       kind: 'question',
       blockId: block.blockId,
       questionNumber: index + 1,
@@ -1901,7 +1908,7 @@ async function buildWorksheetPrintReportModel({
       choices,
       promptText: String(block?.prompt?.text || ''),
       promptFormat: block?.prompt?.format || 'plain_text',
-      answerText: formatAnswerValueForPrint(displayBlock, learnerValue),
+      answerText: config.inputType === 'image_response' ? (answerImages.length ? '' : t('viewer.print.notAnswered')) : formatAnswerValueForPrint(displayBlock, learnerValue),
       result: buildPrintQuestionResult(displayBlock, checkResult),
       image: questionImage,
     };
@@ -1925,10 +1932,10 @@ async function buildWorksheetPrintReportModel({
       : null;
     return {
       ...question,
-      layoutMode: flowChoices ? 'flow' : classifyPrintQuestionLayout(question),
+      layoutMode: (flowChoices || answerImages.length) ? 'flow' : classifyPrintQuestionLayout(question),
       sectionBreakModes: {
         prompt: promptSectionMode,
-        answer: flowChoices ? 'flow' : answerSectionMode,
+        answer: (flowChoices || answerImages.length) ? 'flow' : answerSectionMode,
         checkedAnswer: checkedAnswerSectionMode,
       },
     };
@@ -2047,7 +2054,8 @@ function buildWorksheetPrintReportHtml(reportModel) {
         <section class="print-question-section print-question-section--answer print-question-section--${escapeHtml(question.sectionBreakModes?.answer || 'keep')}">
           <h3>${escapeHtml(t('viewer.print.answerHeading'))}</h3>
           ${choicesHtml}
-          <p class="print-answer-text">${escapeHtml(t('viewer.print.answerPrefix'))} ${formatMultilineTextForHtml(question.answerText)}</p>
+          ${(question.answerImages || []).map((img,i)=>`<figure class="print-answer-image"><img data-answer-image src="${escapeHtml(img.src || '')}" alt="${escapeHtml(t('imageResponse.image',{number:i+1}))}"><figcaption>${i+1} / ${question.answerImages.length}</figcaption></figure>`).join('')}
+          ${question.answerImages?.length ? '' : `<p class="print-answer-text">${escapeHtml(t('viewer.print.answerPrefix'))} ${formatMultilineTextForHtml(question.answerText)}</p>`}
         </section>
         ${resultHtml}
         </div>
@@ -2102,6 +2110,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
         if (typeof window.focus === 'function') {
           window.focus();
         }
+        if ([...document.querySelectorAll('[data-answer-image]')].some(img => !img.naturalWidth)) { const error=document.createElement('p');error.textContent=${JSON.stringify(t('imageResponse.unavailable'))};error.setAttribute('role','alert');document.body.prepend(error);return; }
         if (typeof window.print === 'function') {
           window.print();
         }
@@ -2167,6 +2176,9 @@ async function startWorksheetPrintFlow({
     };
   }
 
+  if (reportModel.questions?.some(q=>q.answerImages?.some(img=>img?.status!=='ready')) || reportModel.sections?.some(q=>q.answerImages?.some(img=>img?.status!=='ready'))) {
+    printWindow.close?.(); return {ok:false,message:t('imageResponse.unavailable')};
+  }
   const html = buildWorksheetPrintReportHtml(reportModel);
   try {
     printWindow.document.open();
@@ -2233,6 +2245,7 @@ function computeResumeStartBlockIndex(viewerPayload, answers = {}, attemptRecord
 }
 
 function getInputHelperText(inputType, responseConfig = {}) {
+  if (inputType === 'image_response') return t('imageResponse.type');
   if (inputType === 'text') return t('viewer.inputHelper.text');
   if (inputType === 'number') {
     const constraints = [];
@@ -2394,7 +2407,7 @@ function isolateReadPackageAssets(packageModel) {
     return Object.fromEntries(Object.entries(value).map(([key, item]) =>
       [key, key === 'assetId' && ids.has(item) ? ids.get(item) : remap(item)]));
   };
-  return { ...packageModel, worksheet: remap(packageModel.worksheet),
+  return { ...packageModel, worksheet: remap(packageModel.worksheet), attempt: remap(packageModel.attempt),
     assets: assets.map(asset => ({ ...asset, assetId: ids.get(asset.assetId) || asset.assetId })) };
 }
 
@@ -3168,6 +3181,7 @@ class ViewerAttemptSession {
   }
 
   async completeLocalAttempt() {
+    if (this.imagePending) { this.pushNotification({kind:'warn',text:t('imageResponse.pending')}); return null; }
     if (!this.state.localAttemptId || this.state.isFinalizing || this.voice.active || this.state.status === 'completed') {
       return null;
     }
@@ -3633,94 +3647,107 @@ class ViewerAttemptSession {
   }
 
   async buildUploadedAttemptPackage() {
+    if (this.imagePending) throw new Error(t('imageResponse.pending'));
     if (!this.state.viewerPayload) {
       throw new Error('No active worksheet is loaded.');
     }
-    const worksheetSubject = firstNonBlankString(
-      this.state.sourceSubject,
-      this.state.viewerPayload?.subject,
-      this.state.viewerPayload?.metadata?.subject
-    );
-    const worksheetOwner = firstNonBlankString(
-      this.state.sourceOwner,
-      this.state.viewerPayload?.owner,
-      this.state.viewerPayload?.owner_email,
-      this.state.viewerPayload?.owner_name,
-      this.state.viewerPayload?.owner_sub,
-      this.state.viewerPayload?.metadata?.owner,
-      this.state.viewerPayload?.metadata?.owner_email,
-      this.state.viewerPayload?.metadata?.owner_name,
-      this.state.viewerPayload?.metadata?.owner_sub,
-      this.state.serverSession?.user?.email,
-      this.state.serverSession?.user?.name,
-      this.state.serverSession?.user?.sub
-    );
-    const worksheet = {
-      title: String(this.state.viewerPayload.title || 'Untitled worksheet'),
-      subject: worksheetSubject,
-      owner: worksheetOwner,
-      blocks: Array.isArray(this.state.viewerPayload.blocks) ? this.state.viewerPayload.blocks : [],
-      metadata: {
-        modelVersion: 'attempt-package-v1',
-        worksheetId: this.state.viewerPayload.worksheetId || null,
-        snapshotId: this.state.viewerPayload.snapshotId || null,
+    this.imageExportPending = (this.imageExportPending || 0) + 1;
+    this.notifyStateChange();
+    try {
+      const worksheetSubject = firstNonBlankString(
+        this.state.sourceSubject,
+        this.state.viewerPayload?.subject,
+        this.state.viewerPayload?.metadata?.subject
+      );
+      const worksheetOwner = firstNonBlankString(
+        this.state.sourceOwner,
+        this.state.viewerPayload?.owner,
+        this.state.viewerPayload?.owner_email,
+        this.state.viewerPayload?.owner_name,
+        this.state.viewerPayload?.owner_sub,
+        this.state.viewerPayload?.metadata?.owner,
+        this.state.viewerPayload?.metadata?.owner_email,
+        this.state.viewerPayload?.metadata?.owner_name,
+        this.state.viewerPayload?.metadata?.owner_sub,
+        this.state.serverSession?.user?.email,
+        this.state.serverSession?.user?.name,
+        this.state.serverSession?.user?.sub
+      );
+      const worksheet = {
+        title: String(this.state.viewerPayload.title || 'Untitled worksheet'),
         subject: worksheetSubject,
         owner: worksheetOwner,
-      },
-    };
-    const attempt = this.buildAttemptRecordForPackage();
-    assertWorksheetTextFormats(worksheet.blocks);
-    const manifest = {
-      format: 'worksheet-attempt-package',
-      packageVersion: hasOptionImages(worksheet.blocks) ? 3 : hasMarkdown(worksheet.blocks) ? 2 : 1,
-      schemaVersion: 1,
-      generatedAt: nowIso(),
-      worksheet: {
-        title: worksheet.title,
-        subject: worksheetSubject,
-      },
-      attempt: {
-        localAttemptId: this.state.localAttemptId || null,
-        status: attempt.status,
-      },
-      assets: [],
-    };
-    const entries = [
-      { path: 'manifest.json', data: JSON.stringify(manifest, null, 2) },
-      { path: 'content/worksheet.json', data: JSON.stringify(worksheet, null, 2) },
-      { path: 'content/attempt.json', data: JSON.stringify(attempt, null, 2) },
-    ];
-    const assetIds = this.collectAttemptPackageAssetIds(this.state.viewerPayload);
-    for (const assetId of assetIds) {
-      const assetRecord = await this.storage.localAssets?.get?.(assetId);
-      const binary = ensureUint8Array(assetRecord?.binary);
-      if (!binary || binary.byteLength <= 0) {
-        throw Object.assign(new Error(t('viewer.notifications.localAttemptExport.missingMedia')), { code: 'MISSING_PACKAGE_MEDIA' });
+        blocks: structuredClone(Array.isArray(this.state.viewerPayload.blocks) ? this.state.viewerPayload.blocks : []),
+        metadata: {
+          modelVersion: 'attempt-package-v1',
+          worksheetId: this.state.viewerPayload.worksheetId || null,
+          snapshotId: this.state.viewerPayload.snapshotId || null,
+          subject: worksheetSubject,
+          owner: worksheetOwner,
+        },
+      };
+      const attempt = structuredClone(this.buildAttemptRecordForPackage());
+      assertWorksheetTextFormats(worksheet.blocks);
+      const manifest = {
+        format: 'worksheet-attempt-package',
+        packageVersion: hasImageResponses(worksheet.blocks) ? 4 : hasOptionImages(worksheet.blocks) ? 3 : hasMarkdown(worksheet.blocks) ? 2 : 1,
+        schemaVersion: 1,
+        generatedAt: nowIso(),
+        worksheet: {
+          title: worksheet.title,
+          subject: worksheetSubject,
+        },
+        attempt: {
+          localAttemptId: this.state.localAttemptId || null,
+          status: attempt.status,
+        },
+        assets: [],
+      };
+      const entries = [
+        { path: 'manifest.json', data: JSON.stringify(manifest, null, 2) },
+        { path: 'content/worksheet.json', data: JSON.stringify(worksheet, null, 2) },
+        { path: 'content/attempt.json', data: JSON.stringify(attempt, null, 2) },
+      ];
+      const assetIds = this.collectAttemptPackageAssetIds(worksheet);
+      for (const block of worksheet.blocks) {
+        if (block.responseConfig?.inputType === 'image_response') for (const ref of imageAnswerRefs(attempt.answers?.[block.blockId]?.value || [], block.responseConfig.maxImages)) { if (!assetIds.includes(ref.assetId)) assetIds.push(ref.assetId); }
       }
-      const assetPath = `media/${assetId}`;
-      manifest.assets.push({
-        assetId,
-        path: assetPath,
-        mimeType: typeof assetRecord?.metadata?.mimeType === 'string'
-          ? assetRecord.metadata.mimeType
-          : null,
-        byteLength: binary.byteLength,
-        crc32: crc32(binary).toString(16).padStart(8, '0'),
-      });
-      entries.push({ path: assetPath, data: binary });
+      for (const assetId of assetIds) {
+        const assetRecord = await this.storage.localAssets?.get?.(assetId);
+        const binary = ensureUint8Array(assetRecord?.binary);
+        if (!binary || binary.byteLength <= 0) {
+          throw Object.assign(new Error(t('viewer.notifications.localAttemptExport.missingMedia')), { code: 'MISSING_PACKAGE_MEDIA' });
+        }
+        const assetPath = `media/${assetId}`;
+        manifest.assets.push({
+          assetId,
+          path: assetPath,
+          mimeType: typeof assetRecord?.metadata?.mimeType === 'string'
+            ? assetRecord.metadata.mimeType
+            : null,
+          byteLength: binary.byteLength,
+          crc32: crc32(binary).toString(16).padStart(8, '0'),
+        });
+        entries.push({ path: assetPath, data: binary });
+      }
+      try {
+        assertAttemptPackage(manifest, worksheet, attempt, { files: new Map(entries.map(entry => [entry.path, entry.data])) });
+      } catch (error) {
+        throw Object.assign(new Error(t('apiErrors.invalidPackage')), { code: 'INVALID_ATTEMPT_PACKAGE', cause: error });
+      }
+      entries[0] = { path: 'manifest.json', data: JSON.stringify(manifest, null, 2) };
+      const bytes = createStoredZip(entries);
+      if (hasImageResponses(worksheet.blocks) && bytes.length > ATTEMPT_BYTES) throw new Error(t('imageResponse.budgetExceeded'));
+      return {
+        bytes,
+        manifest,
+        worksheet,
+        attempt,
+      };
+    } finally {
+      this.imageExportPending--;
+      this.notifyStateChange();
     }
-    try {
-      assertAttemptPackage(manifest, worksheet, attempt, { files: new Map(entries.map(entry => [entry.path, entry.data])) });
-    } catch (error) {
-      throw Object.assign(new Error(t('apiErrors.invalidPackage')), { code: 'INVALID_ATTEMPT_PACKAGE', cause: error });
-    }
-    entries[0] = { path: 'manifest.json', data: JSON.stringify(manifest, null, 2) };
-    return {
-      bytes: createStoredZip(entries),
-      manifest,
-      worksheet,
-      attempt,
-    };
   }
 
 
@@ -4246,6 +4273,9 @@ class ViewerAttemptSession {
       },
     };
 
+    const worksheetAssetIds = new Set(this.collectAttemptPackageAssetIds(packageModel.worksheet));
+    const answerAssetIds = new Set(payload.blocks.flatMap(block => block.responseConfig?.inputType === 'image_response'
+      ? imageAnswerRefs(rawAttempt.answers?.[block.blockId]?.value || [], block.responseConfig.maxImages).map(ref => ref.assetId) : []));
     const persistedAssetIds = [];
     let didPersistImportedWorksheet = false;
     let didAttemptPersistAttempt = false;
@@ -4263,6 +4293,7 @@ class ViewerAttemptSession {
           binary: asset.binary,
           metadata: {
             localId: asset.assetId,
+            ...(answerAssetIds.has(asset.assetId) && !worksheetAssetIds.has(asset.assetId) ? { ownerAttemptId: restoredLocalAttemptId } : {}),
             origin: options.assetOrigin || 'uploaded_attempt_restore',
             updatedAt: importedAt,
             mimeType: asset.mimeType || null,
@@ -6572,7 +6603,9 @@ function renderViewerShell(session) {
       }
 
 
-      if (inputType === 'text' && block.responseConfig?.displayMode === 'single_line') {
+      if (inputType === 'image_response') {
+        control = createImageResponseControls({ session, block, signal: scope.signal });
+      } else if (inputType === 'text' && block.responseConfig?.displayMode === 'single_line') {
         control = document.createElement('input');
         control.type = 'text';
         control.addEventListener('input', () => {
@@ -6840,7 +6873,7 @@ function renderViewerShell(session) {
       const controlState = JSON.stringify([
         session.state.answers?.[block.blockId]?.value, localInputCache.get(block.blockId),
         numberInputErrors.get(block.blockId), session.state.status,
-        Boolean(session.voice.active), session.voice.active?.blockId === block.blockId,
+        Boolean(session.imagePending || session.imageExportPending), Boolean(session.voice.active), session.voice.active?.blockId === block.blockId,
         session.state.isRewriting && session.state.rewritingBlockId === block.blockId,
         Object.hasOwn(session.state.undoBuffer || {}, block.blockId),
         Object.hasOwn(session.state.rewriteMessageByBlock || {}, block.blockId) ? session.state.rewriteMessageByBlock[block.blockId] : null,
@@ -6863,6 +6896,7 @@ function renderViewerShell(session) {
       const nextValue = isControlFocused && cachedRawValue !== undefined
         ? String(cachedRawValue)
         : stateValue;
+      if (inputType === 'image_response') control.update();
       if (inputType === 'multiple_choice') {
         applyChoiceButtonGroupState(
           control,
@@ -6940,7 +6974,7 @@ function renderViewerShell(session) {
       }
       const answerCard = control.closest('.question-card');
       const errorNode = answerCard?.querySelector('.input-error');
-      if (errorNode) {
+      if (errorNode && inputType !== 'image_response') {
         errorNode.textContent = inputType === 'number' ? (numberInputErrors.get(block.blockId) || '') : '';
       }
     };
