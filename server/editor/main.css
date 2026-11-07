@@ -2017,3 +2017,11 @@ textarea.control {
 .editor-option-image-description span{text-align:right;grid-column:2}
 .editor-option-image-description p{margin:0}
 @media(max-width:640px){.option-row{grid-template-columns:38px minmax(0,1fr) 38px auto 38px}}
+
+.editor-long-text-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+.editor-long-text-toggle input { width: 18px; height: 18px; }

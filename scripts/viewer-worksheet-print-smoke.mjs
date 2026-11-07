@@ -29,7 +29,7 @@ try {
         { blockId: 'number', kind: 'question', prompt: { text: 'A number 數字' }, responseConfig: { inputType: 'number' } },
         { blockId: 'blank', kind: 'question', prompt: { text: 'Unanswered question 未作答' }, responseConfig: { inputType: 'text' } },
         { blockId: 'long-reading', kind: 'content', content: { text: '## Extended reading\n' + Array.from({length:80}, (_,i) => `Paragraph ${i+1}: Read and reflect. 閱讀並思考。`).join('\n\n') + '\n\nREADING-END', format: 'limited-markdown-v1' } },
-        { blockId: 'long-answer', kind: 'question', prompt: { text: 'Explain your thoughts. 解釋你的想法。' }, responseConfig: { inputType: 'text', maxLength: 10000 } },
+        { blockId: 'long-answer', kind: 'question', prompt: { text: 'Explain your thoughts. 解釋你的想法。' }, responseConfig: { inputType: 'text', textMode: 'long', maxLength: 20000, displayMode: 'multi_line' } },
         { blockId: 'end', kind: 'content', content: { text: 'WORKSHEET-END 最後閱讀內容' } },
       ].map((block, position) => ({ ...block, position }));
       const canvas = document.createElement('canvas');
@@ -44,7 +44,7 @@ try {
         studentName: 'Test learner', lastActiveBlockId: 'intro', lastActiveIndex: 0,
         viewerPayload: { worksheetId: 'fixture', snapshotId: 'fixture', snapshotVersion: 1, title: 'Worksheet print 工作紙列印', blocks },
         answers: { text: { value: 'In the library. 在圖書館。 **Literal answer**' }, choices: { value: ['v1', 'v3'] }, bool: { value: false }, number: { value: 0 },
-          'long-answer': { value: Array.from({length:65}, (_,i) => `Answer line ${i+1}: My explanation. 我的解釋。`).join('\n') + '\nANSWER-END' } },
+          'long-answer': { value: Array.from({length:350}, (_,i) => `Answer line ${i+1}: My explanation. 我的解釋。`).join('\n') + '\nANSWER-END' } },
         metadata: { localId: 'print-fixture', origin: 'local_source', updatedAt: now } });
     }, locale);
     await page.goto(base + '/server/viewer/?localAttemptId=print-fixture');

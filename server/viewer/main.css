@@ -3556,3 +3556,18 @@ html:has(.viewer-attempt-dialog[open]) { overflow:hidden; overflow-anchor:none; 
 .image-response-confirm::backdrop {
   background: rgb(15 23 42 / 55%);
 }
+
+/* Long pasted answers need the worksheet width and their original whitespace. */
+.viewer-shell--continuous .question-card.question-card--long-text {
+  grid-template-columns: minmax(0, 1fr);
+}
+.viewer-shell--continuous .question-card--long-text .viewer-answer-area {
+  grid-column: 1;
+  grid-row: auto;
+}
+.viewer-shell--continuous .question-card--long-text textarea {
+  min-height: 18rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  resize: vertical;
+}

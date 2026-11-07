@@ -6,12 +6,16 @@ Reviewed against main `7bb19de` on 2026-10-06. Code authorities: `server/editor/
 
 | Content | Manifest `format` | Current export version / schema | Accepted compatibility |
 | --- | --- | --- | --- |
-| Plain worksheet with audio tracks | `worksheet-package` | 2 / 2 | Worksheet versions 1, 2, 3 and 4 are read; legacy JSON remains a separate import adapter. |
+| Plain worksheet with audio tracks | `worksheet-package` | 2 / 2 | Worksheet versions 1–6 are read; legacy JSON remains a separate import adapter. |
 | Worksheet containing limited Markdown | `worksheet-package` | 3 / 3 | Markdown in version 1/2 envelopes is rejected. |
-| Plain worksheet attempt | `worksheet-attempt-package` | 1 / 1 | Attempt versions 1, 2 and 3 are read. |
+| Plain worksheet attempt | `worksheet-attempt-package` | 1 / 1 | Attempt versions 1–5 are read. |
 | Attempt containing limited Markdown | `worksheet-attempt-package` | 2 / 1 | Markdown in version 1 attempt envelopes is rejected. |
 | Worksheet containing option images | `worksheet-package` | 4 / 4 | Also supports limited Markdown; older readers reject this envelope. |
 | Attempt containing option images | `worksheet-attempt-package` | 3 / 1 | Also supports limited Markdown; older readers reject this envelope. |
+| Worksheet containing image responses | `worksheet-package` | 5 / 5 | Also supports Markdown and option images. |
+| Attempt containing image responses | `worksheet-attempt-package` | 4 / 1 | Includes answer images. |
+| Worksheet containing long text | `worksheet-package` | 6 / 6 | Also supports image responses, Markdown and option images; older readers reject it. |
+| Attempt containing long text | `worksheet-attempt-package` | 5 / 1 | Includes all earlier features; older readers reject it. |
 | RolePlayScene | `roleplayscene-package` | 1 | Browser imports also accept plain project JSON and legacy root `project.json` ZIPs; server draft upload requires the current package envelope. |
 
 Worksheet/attempt ZIP helpers support stored (uncompressed) entries and validate entry sizes, CRCs and duplicate names. RolePlayScene uses bundled `fflate` archive reading and has separate API decompression resource limits; do not generalize its compression support to worksheet ZIP import.
@@ -163,3 +167,28 @@ image replacement; missing bytes fail export. Existing prepared upload bytes and
 slot/conflict retry rules remain unchanged. Import allocates new IDs and remaps
 both worksheet references and answer references, preserving order and isolation.
 See [image-response behavior and limits](../worksheet/image-response-investigation.md).
+
+
+## Long text responses
+
+Text questions may set `responseConfig.textMode` to `standard` or `long`.
+New standard questions default to `maxLength: 200`, with an authoring ceiling of
+1,200. Long text defaults to 20,000, requires multiline display, and supports a
+configured integer limit from 1 to 20,000. Missing `textMode` remains legacy text;
+existing packages are readable without rewriting their configuration or answers.
+An editor opening a legacy limit above 1,200 requires the author to enable Long
+text or explicitly reduce the limit before exporting/publishing.
+
+Long text requires worksheet package/schema **6/6** and attempt package/schema
+**5/1**. The newest envelope wins when mixed with Markdown, option images or
+image-response questions. Attempt v5 keeps v4's strict envelope and media checks.
+It does not raise the server's 30 MiB upload limit; image-answer budget estimates
+already include each text question's configured capacity.
+
+Answers remain plain strings in `answers[blockId].value`. Editing checks the
+resulting string, including selected-text replacement, in UTF-16 code units
+(the established answer counter convention). Oversized edits are rejected whole,
+not cut to fit. Already saved/imported oversized answers remain complete through
+local recovery, resume, export, server upload and printing; shortening them in
+stages is allowed. Long text never invokes voice/rewrite. The shared rewrite
+provider input ceiling remains 2,000 Unicode code points for eligible questions.

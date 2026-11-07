@@ -12,7 +12,8 @@ export const isInitialAuthRecovery = record => record?.code === 'AUTH_REQUIRED'
     && record.candidate === undefined && record.text === record.snapshot?.trim()));
 export const hasPendingRecovery = record => Boolean(record && record.phase !== 'preflight' && !isInitialAuthRecovery(record));
 export const isVoiceQuestion = (block) => block?.kind === 'question'
-  && (block.responseConfig?.inputType || 'text') === 'text';
+  && (block.responseConfig?.inputType || 'text') === 'text'
+  && block.responseConfig?.textMode !== 'long';
 
 export function insertionIndex(text, intent) {
   const index = intent?.index;
@@ -120,8 +121,8 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
     if (!fresh(op)) { keep(op, 'STALE_CONTEXT', candidate); return false; }
     const value = op.mode === 'rewrite' ? { text: candidate, caret: candidate.length }
       : insertVoiceSegment(op.snapshot, candidate, op.index, op.replaceStart);
-    // Match the viewer's UTF-16 maxLength/save semantics, independently of the
-    // bridge's Unicode-code-point input limit. Never let autosave truncate voice.
+    // Match the viewer's UTF-16 maxLength semantics, independently of the
+    // bridge's Unicode-code-point input limit. Never apply an oversized voice result.
     if (value.text.length > (read(op.blockId).block.responseConfig?.maxLength || 200)) {
       keep(op, 'ANSWER_TOO_LONG', candidate); return false;
     }

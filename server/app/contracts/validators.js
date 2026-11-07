@@ -1,3 +1,4 @@
+import { textConfigError } from '../text-answer.js';
 import { assertImageQuestions } from '../image-response.js';
 import { getNumberCorrectAnswerConfigViolation, normalizeNumberRules } from './number-input-validator.js';
 import { assertTextFormat } from '../worksheet-text.js';
@@ -53,6 +54,9 @@ function validateQuestionResponseConfig(responseConfig, path, errors) {
     errors.push(`${path}.inputType must be one of: text, number, boolean, multiple_choice, image_response`);
     return;
   }
+
+  const textError = textConfigError(responseConfig);
+  if (textError) errors.push(`${path}: ${textError}`);
 
   if (responseConfig.numberRules !== undefined && responseConfig.inputType !== 'number') {
     errors.push(`${path}.numberRules is only supported for number inputType`);

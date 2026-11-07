@@ -1,3 +1,5 @@
+import { isLongText, hasLongText, acceptsTextEdit, LONG_TEXT_LIMIT } from '../app/text-answer.js';
+import { bindTextAnswerInput } from './text-answer-input.js';
 import { createImageResponseControls } from './image-response-ui.js';
 import { hasImageResponses, imageAnswerRefs, ATTEMPT_BYTES } from '../app/image-response.js';
 import { prepareBrowserEntry } from './browser-entry.js';
@@ -841,7 +843,7 @@ function parseUploadedAttemptPackage(zipBytes) {
     throw new Error('Uploaded attempt package is missing required files.');
   }
   const manifest = JSON.parse(decodeUtf8(manifestEntry));
-  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3, 4].includes(manifest?.packageVersion)) {
+  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3, 4, 5].includes(manifest?.packageVersion)) {
     throw new Error('Uploaded attempt package format is not supported.');
   }
   const worksheet = JSON.parse(decodeUtf8(worksheetEntry));
@@ -892,7 +894,7 @@ function parseLocalAttemptPackage(zipBytes) {
   if (manifest?.format === 'worksheet-package') {
     throw new Error(t('viewer.notifications.localAttemptImport.worksheetPackageNotAttempt'));
   }
-  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3, 4].includes(manifest?.packageVersion)) {
+  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3, 4, 5].includes(manifest?.packageVersion)) {
     throw new Error(t('viewer.notifications.localAttemptImport.invalidPackage'));
   }
 
@@ -1030,6 +1032,7 @@ function computeViewerPayloadFingerprint(payload) {
       responseConfig: isRecord(block.responseConfig)
         ? {
           inputType: block.responseConfig.inputType || 'text',
+          ...(isLongText(block.responseConfig) ? { textMode: 'long', maxLength: block.responseConfig.maxLength } : {}),
           ...(block.responseConfig.inputType === 'image_response' ? {maxImages:block.responseConfig.maxImages} : {}),
           selectionMode: block.responseConfig.selectionMode || null,
           options: Array.isArray(block.responseConfig.options)
@@ -1098,10 +1101,11 @@ function normalizeViewerBlock(block, index) {
 
     if (inputType === 'image_response') normalizedResponseConfig.maxImages = responseConfigSource.maxImages;
     if (inputType === 'text') {
+      if (responseConfigSource.textMode !== undefined) normalizedResponseConfig.textMode = responseConfigSource.textMode;
       normalizedResponseConfig.maxLength = Number.isFinite(responseConfigSource.maxLength)
         ? responseConfigSource.maxLength
-        : 200;
-      normalizedResponseConfig.displayMode = responseConfigSource.displayMode === 'single_line'
+        : isLongText(responseConfigSource) ? LONG_TEXT_LIMIT : 200;
+      normalizedResponseConfig.displayMode = !isLongText(responseConfigSource) && responseConfigSource.displayMode === 'single_line'
         ? 'single_line'
         : 'multi_line';
     }
@@ -1246,18 +1250,8 @@ function coerceAnswerValueByInputType(inputType, rawValue) {
   return String(rawValue ?? '');
 }
 
-function clampTextAnswer(rawValue, maxLength) {
-  const value = String(rawValue ?? '');
-  const max = Number.isFinite(maxLength) && maxLength > 0 ? Math.trunc(maxLength) : 0;
-  if (max <= 0) return value;
-  return value.slice(0, max);
-}
-
 function normalizeTextForRewriteSnapshotCompare(questionBlock, rawValue) {
-  // Match save semantics: clamp first, then trim for comparison.
-  const value = String(rawValue ?? '');
-  const responseConfig = isRecord(questionBlock?.responseConfig) ? questionBlock.responseConfig : {};
-  return clampTextAnswer(value, responseConfig.maxLength).trim();
+  return String(rawValue ?? '').trim();
 }
 
 function computeTextLengthFeedback(rawValue, maxLength, warningThresholdRatio = TEXT_WARNING_THRESHOLD_RATIO) {
@@ -1282,7 +1276,7 @@ function computeTextLengthFeedback(rawValue, maxLength, warningThresholdRatio = 
       max,
       remaining,
       state: 'over',
-      statusText: `Over by ${absOver} ${absOver === 1 ? 'character' : 'characters'}. On save, text will be truncated to ${max}.`,
+      statusText: t('textAnswer.over', { count: absOver, max }),
       counterText: `${current}/${max}`,
     };
   }
@@ -1292,7 +1286,7 @@ function computeTextLengthFeedback(rawValue, maxLength, warningThresholdRatio = 
       max,
       remaining,
       state: 'warning',
-      statusText: `${remaining} ${remaining === 1 ? 'character' : 'characters'} remaining.`,
+      statusText: t(remaining === 1 ? 'textAnswer.remainingOne' : 'textAnswer.remaining', { count: remaining }),
       counterText: `${current}/${max}`,
     };
   }
@@ -1344,7 +1338,6 @@ function createChoiceButtonGroup(options) {
 function coerceAnswerValueForQuestion(questionBlock, rawValue, options = {}) {
   const inputType = questionBlock?.responseConfig?.inputType || 'text';
   const responseConfig = isRecord(questionBlock?.responseConfig) ? questionBlock.responseConfig : {};
-  const phase = options.phase || 'save';
   if (inputType === 'image_response') return rawValue == null ? [] : imageAnswerRefs(rawValue, responseConfig.maxImages);
   if (inputType === 'number') {
     // Already-normalized finite numbers (e.g. 1e-7) are returned directly to
@@ -1370,10 +1363,8 @@ function coerceAnswerValueForQuestion(questionBlock, rawValue, options = {}) {
     return options.includes(single) ? single : '';
   }
   if (inputType === 'text') {
-    if (phase === 'edit') {
-      return String(rawValue ?? '');
-    }
-    return clampTextAnswer(rawValue, responseConfig.maxLength);
+    // Limits apply to new edits, never to saved/imported answer content.
+    return String(rawValue ?? '');
   }
   return coerceAnswerValueByInputType(inputType, rawValue);
 }
@@ -2246,7 +2237,7 @@ function computeResumeStartBlockIndex(viewerPayload, answers = {}, attemptRecord
 
 function getInputHelperText(inputType, responseConfig = {}) {
   if (inputType === 'image_response') return t('imageResponse.type');
-  if (inputType === 'text') return t('viewer.inputHelper.text');
+  if (inputType === 'text') return isLongText(responseConfig) ? t('textAnswer.viewerLong') : t('viewer.inputHelper.text');
   if (inputType === 'number') {
     const constraints = [];
     if (Number.isFinite(responseConfig.min)) {
@@ -3153,7 +3144,7 @@ class ViewerAttemptSession {
     }
   }
 
-  setAnswer(blockId, value) {
+  setAnswer(blockId, value, { restoreUndo = false } = {}) {
     if (!blockId || this.state.status === 'completed') {
       return;
     }
@@ -3164,6 +3155,9 @@ class ViewerAttemptSession {
     if (!questionBlock) {
       return;
     }
+    if (questionBlock.responseConfig?.inputType === 'text'
+      && !acceptsTextEdit(this.state.answers?.[blockId]?.value, value, questionBlock.responseConfig)
+      && !(restoreUndo && Object.hasOwn(this.state.undoBuffer || {}, blockId) && this.state.undoBuffer[blockId] === value)) return false;
     const coercedValue = coerceAnswerValueForQuestion(questionBlock, value, { phase: 'edit' });
 
     this.state.answers = {
@@ -3690,7 +3684,7 @@ class ViewerAttemptSession {
       assertWorksheetTextFormats(worksheet.blocks);
       const manifest = {
         format: 'worksheet-attempt-package',
-        packageVersion: hasImageResponses(worksheet.blocks) ? 4 : hasOptionImages(worksheet.blocks) ? 3 : hasMarkdown(worksheet.blocks) ? 2 : 1,
+        packageVersion: hasLongText(worksheet.blocks) ? 5 : hasImageResponses(worksheet.blocks) ? 4 : hasOptionImages(worksheet.blocks) ? 3 : hasMarkdown(worksheet.blocks) ? 2 : 1,
         schemaVersion: 1,
         generatedAt: nowIso(),
         worksheet: {
@@ -3731,13 +3725,14 @@ class ViewerAttemptSession {
         entries.push({ path: assetPath, data: binary });
       }
       try {
-        assertAttemptPackage(manifest, worksheet, attempt, { files: new Map(entries.map(entry => [entry.path, entry.data])) });
+        assertAttemptPackage(manifest, worksheet, attempt, { files: new Map(entries.map(entry => [entry.path,
+          typeof entry.data === 'string' ? new TextEncoder().encode(entry.data) : entry.data])) });
       } catch (error) {
         throw Object.assign(new Error(t('apiErrors.invalidPackage')), { code: 'INVALID_ATTEMPT_PACKAGE', cause: error });
       }
       entries[0] = { path: 'manifest.json', data: JSON.stringify(manifest, null, 2) };
       const bytes = createStoredZip(entries);
-      if (hasImageResponses(worksheet.blocks) && bytes.length > ATTEMPT_BYTES) throw new Error(t('imageResponse.budgetExceeded'));
+      if (manifest.packageVersion >= 4 && bytes.length > ATTEMPT_BYTES) throw new Error(t('textAnswer.packageTooLarge'));
       return {
         bytes,
         manifest,
@@ -4412,7 +4407,7 @@ class ViewerAttemptSession {
     const matchingBlock = intentBlockId
       ? blocks.find((block) => block?.blockId === intentBlockId)
       : null;
-    if (!intentBlockId || !matchingBlock) {
+    if (!intentBlockId || !matchingBlock || isLongText(matchingBlock.responseConfig)) {
       return {
         ok: false,
         message: 'Rewrite recovery target is no longer available for this worksheet.',
@@ -6346,6 +6341,7 @@ function renderViewerShell(session) {
       questionBlock
       && questionBlock.kind === 'question'
       && questionBlock.responseConfig?.inputType === 'text'
+      && !isLongText(questionBlock.responseConfig)
       && blockId
     );
     if (!localAttemptId || !isTextQuestion) {
@@ -6381,6 +6377,8 @@ function renderViewerShell(session) {
       contentFormat: currentBlock?.content?.format || 'plain_text',
       inputType: currentBlockInputType,
       maxLength: currentBlock?.responseConfig?.maxLength || null,
+      textMode: currentBlock?.responseConfig?.textMode || 'standard',
+      displayMode: currentBlock?.responseConfig?.displayMode || 'multi_line',
       options: Array.isArray(currentBlock?.responseConfig?.options)
         ? currentBlock.responseConfig.options.map((opt) => [
           opt?.id ?? '',
@@ -6605,21 +6603,10 @@ function renderViewerShell(session) {
 
       if (inputType === 'image_response') {
         control = createImageResponseControls({ session, block, signal: scope.signal });
-      } else if (inputType === 'text' && block.responseConfig?.displayMode === 'single_line') {
+      } else if (inputType === 'text' && !isLongText(block.responseConfig) && block.responseConfig?.displayMode === 'single_line') {
         control = document.createElement('input');
         control.type = 'text';
-        control.addEventListener('input', () => {
-          cacheRawControlValue(block.blockId, control.value);
-          if (Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId)) {
-            const nextUndoBuffer = { ...(session.state.undoBuffer || {}) };
-            delete nextUndoBuffer[block.blockId];
-            session.state.undoBuffer = nextUndoBuffer;
-          }
-          session.setAnswer(block.blockId, control.value);
-          const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
-          updateTextCounterUI(textCounter, textStatus, feedback);
-          renderUI();
-        }, { signal: scope.signal });
+
       } else if (inputType === 'number') {
         control = document.createElement('input');
         control.type = 'text';
@@ -6727,18 +6714,30 @@ function renderViewerShell(session) {
       } else {
         control = document.createElement('textarea');
         control.rows = 5;
-        control.addEventListener('input', () => {
-          cacheRawControlValue(block.blockId, control.value);
-          if (Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId)) {
-            const nextUndoBuffer = { ...(session.state.undoBuffer || {}) };
-            delete nextUndoBuffer[block.blockId];
-            session.state.undoBuffer = nextUndoBuffer;
-          }
-          session.setAnswer(block.blockId, control.value);
-          const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
-          updateTextCounterUI(textCounter, textStatus, feedback);
-          renderUI();
-        }, { signal: scope.signal });
+
+      }
+
+      if (inputType === 'text') {
+        if (isLongText(block.responseConfig)) {
+          card.classList.add('question-card--long-text');
+          control.rows = 12;
+        }
+        bindTextAnswerInput(control, {
+          config: block.responseConfig, signal: scope.signal,
+          getValue: () => session.state.answers?.[block.blockId]?.value,
+          rejected: () => {
+            inputError.textContent = t('textAnswer.rejected', { max: block.responseConfig.maxLength });
+          },
+          accepted: value => {
+            inputError.textContent = '';
+            cacheRawControlValue(block.blockId, value);
+            if (Object.hasOwn(session.state.undoBuffer || {}, block.blockId)) {
+              const next = { ...session.state.undoBuffer }; delete next[block.blockId]; session.state.undoBuffer = next;
+            }
+            session.setAnswer(block.blockId, value);
+            renderUI();
+          },
+        });
       }
 
       if (typeof HTMLElement !== 'undefined' && control instanceof HTMLElement) {
@@ -6767,68 +6766,73 @@ function renderViewerShell(session) {
         const rewriteMessages = document.createElement('div');
         rewriteMessages.className = 'question-card__rewrite-messages';
 
-        const voiceUi = createVoiceControls({ session, block, control, t, signal,
-          sharedStatusId: crossQuestionStatus.root.id,
-          requestSignIn: ({ isCurrent, confirm }) => requestVoiceSignIn(session, {
-            blockId: block.blockId, signal: scope.signal, isCurrent, confirm,
-          }),
-          canRestoreFocus: () => {
-            const rect = control.getBoundingClientRect();
-            return rect.bottom > 0 && rect.top < window.innerHeight
-              && (card.contains(document.activeElement) || crossQuestionStatus.root.contains(document.activeElement));
-          },
-          view: blockId => navigateToBlockIndex(getOrderedBlocks().findIndex(item => item.blockId === blockId)),
-          applied: value => {
-            cacheRawControlValue(block.blockId, value.text);
-            control.value = value.text;
-          },
-        });
-        voiceControl = voiceUi;
-        const rewriteButton = document.createElement('button');
-        rewriteButton.type = 'button';
-        rewriteButton.className = 'question-card__rewrite-btn icon-nav-btn';
-        rewriteButton.textContent = t('viewer.rewrite.action');
-        rewriteButton.setAttribute('aria-describedby', crossQuestionStatus.root.id);
-        rewriteButton.addEventListener('click', () => {
-          if (!rewriteButton.disabled) voiceUi.rewrite();
-        }, { signal: scope.signal });
+        if (!isLongText(block.responseConfig)) {
+          const voiceUi = createVoiceControls({ session, block, control, t, signal,
+            sharedStatusId: crossQuestionStatus.root.id,
+            requestSignIn: ({ isCurrent, confirm }) => requestVoiceSignIn(session, {
+              blockId: block.blockId, signal: scope.signal, isCurrent, confirm,
+            }),
+            canRestoreFocus: () => {
+              const rect = control.getBoundingClientRect();
+              return rect.bottom > 0 && rect.top < window.innerHeight
+                && (card.contains(document.activeElement) || crossQuestionStatus.root.contains(document.activeElement));
+            },
+            view: blockId => navigateToBlockIndex(getOrderedBlocks().findIndex(item => item.blockId === blockId)),
+            applied: value => {
+              cacheRawControlValue(block.blockId, value.text);
+              control.value = value.text;
+            },
+          });
+          voiceControl = voiceUi;
+          const rewriteButton = document.createElement('button');
+          rewriteButton.type = 'button';
+          rewriteButton.className = 'question-card__rewrite-btn icon-nav-btn';
+          rewriteButton.textContent = t('viewer.rewrite.action');
+          rewriteButton.setAttribute('aria-describedby', crossQuestionStatus.root.id);
+          rewriteButton.addEventListener('click', () => {
+            if (!rewriteButton.disabled) voiceUi.rewrite();
+          }, { signal: scope.signal });
 
-        const undoButton = document.createElement('button');
-        undoButton.type = 'button';
-        undoButton.className = 'question-card__undo-btn icon-nav-btn';
-        undoButton.textContent = t('viewer.rewrite.undo');
-        undoButton.addEventListener('click', () => {
-          const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;
-          if (undoButton.disabled || isRewriteInFlight) {
-            return;
-          }
-          const savedUndoAnswer = session.state.undoBuffer?.[block.blockId];
-          if (savedUndoAnswer === undefined) {
-            return;
-          }
-          session.setAnswer(block.blockId, savedUndoAnswer);
-          cacheRawControlValue(block.blockId, String(savedUndoAnswer ?? ''));
-          const nextUndoBuffer = { ...(session.state.undoBuffer || {}) };
-          delete nextUndoBuffer[block.blockId];
-          session.state.undoBuffer = nextUndoBuffer;
-          renderUI();
-        }, { signal: scope.signal });
+          const undoButton = document.createElement('button');
+          undoButton.type = 'button';
+          undoButton.className = 'question-card__undo-btn icon-nav-btn';
+          undoButton.textContent = t('viewer.rewrite.undo');
+          undoButton.addEventListener('click', () => {
+            const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;
+            if (undoButton.disabled || isRewriteInFlight) {
+              return;
+            }
+            const savedUndoAnswer = session.state.undoBuffer?.[block.blockId];
+            if (savedUndoAnswer === undefined) {
+              return;
+            }
+            session.setAnswer(block.blockId, savedUndoAnswer, { restoreUndo: true });
+            cacheRawControlValue(block.blockId, String(savedUndoAnswer ?? ''));
+            const nextUndoBuffer = { ...(session.state.undoBuffer || {}) };
+            delete nextUndoBuffer[block.blockId];
+            session.state.undoBuffer = nextUndoBuffer;
+            renderUI();
+          }, { signal: scope.signal });
 
-        const rewriteHint = document.createElement('p');
-        rewriteHint.className = 'question-card__rewrite-hint';
-        const rewriteError = document.createElement('p');
-        rewriteError.className = 'question-card__rewrite-error';
-        for (const [button, icon] of [[voiceUi.add, 'voice'], [rewriteButton, 'rewrite'], [undoButton, 'undo']]) {
-          const caption = document.createElement('span');
-          caption.className = 'viewer-action-label';
-          caption.textContent = button.textContent;
-          button.replaceChildren(caption);
-          button.insertAdjacentHTML('afterbegin', createViewerIcon(icon));
+          const rewriteHint = document.createElement('p');
+          rewriteHint.className = 'question-card__rewrite-hint';
+          const rewriteError = document.createElement('p');
+          rewriteError.className = 'question-card__rewrite-error';
+          for (const [button, icon] of [[voiceUi.add, 'voice'], [rewriteButton, 'rewrite'], [undoButton, 'undo']]) {
+            const caption = document.createElement('span');
+            caption.className = 'viewer-action-label';
+            caption.textContent = button.textContent;
+            button.replaceChildren(caption);
+            button.insertAdjacentHTML('afterbegin', createViewerIcon(icon));
+          }
+          rewriteRow.append(voiceUi.add, rewriteButton, undoButton);
+          rewriteMessages.append(textStatus, rewriteHint, rewriteError);
+          textActionsRow.append(textCounter, rewriteRow);
+          textFooter.append(textActionsRow, rewriteMessages, voiceUi.root);
+        } else {
+          textActionsRow.append(textCounter);
+          textFooter.append(textActionsRow, textStatus);
         }
-        rewriteRow.append(voiceUi.add, rewriteButton, undoButton);
-        rewriteMessages.append(textStatus, rewriteHint, rewriteError);
-        textActionsRow.append(textCounter, rewriteRow);
-        textFooter.append(textActionsRow, rewriteMessages, voiceUi.root);
         // Presentation-only control: no answer event handlers or storage binding.
         // Clone the input shape so blank and answered reviews have identical sizing.
         const reviewStatus = control.cloneNode(false);
@@ -6974,7 +6978,7 @@ function renderViewerShell(session) {
       }
       const answerCard = control.closest('.question-card');
       const errorNode = answerCard?.querySelector('.input-error');
-      if (errorNode && inputType !== 'image_response') {
+      if (errorNode && inputType !== 'image_response' && inputType !== 'text') {
         errorNode.textContent = inputType === 'number' ? (numberInputErrors.get(block.blockId) || '') : '';
       }
     };
@@ -8248,7 +8252,6 @@ export {
   getInputHelperText,
   getNumberInputErrorMessage,
   coerceAnswerValueForQuestion,
-  clampTextAnswer,
   computeTextLengthFeedback,
   updateTextCounterUI,
   getBooleanSelectionState,

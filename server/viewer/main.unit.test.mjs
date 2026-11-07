@@ -114,7 +114,7 @@ test('active voice operation blocks submission, releases on cancel, and cannot m
 
 async function loadViewerModule(overrides = {}) {
   const filePath = path.resolve('server/viewer/main.js');
-  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'./image-response-ui.js'", JSON.stringify(new NodeURL('./image-response-ui.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./text-preview.js'", JSON.stringify(new NodeURL('./text-preview.js', import.meta.url).href)).replaceAll("'../app/contracts/attempt-package-validator.js'", JSON.stringify(new NodeURL('../app/contracts/attempt-package-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
+  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'./text-answer-input.js'", JSON.stringify(new NodeURL('./text-answer-input.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'./image-response-ui.js'", JSON.stringify(new NodeURL('./image-response-ui.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./text-preview.js'", JSON.stringify(new NodeURL('./text-preview.js', import.meta.url).href)).replaceAll("'../app/contracts/attempt-package-validator.js'", JSON.stringify(new NodeURL('../app/contracts/attempt-package-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
   const bagName = `__viewerTestBag_${Math.random().toString(16).slice(2)}`;
 
   globalThis[bagName] = {
@@ -302,7 +302,7 @@ async function loadViewerModule(overrides = {}) {
     {
       name: 'replace bootstrap invocation with explicit test exports',
       pattern: /bootstrapViewer\(\)\.catch\([\s\S]*?\);\s*export\s*\{[\s\S]*?\};/,
-      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, resolveViewerAudioSources, createViewerAudioControl, createChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, getDefaultViewerPrintSchoolName, readViewerPrintSchoolNamePreferenceState, readViewerPrintSchoolNamePreference, writeViewerPrintSchoolNamePreference, computeResumeStartBlockIndex, buildTechnicalDetailsRows, classifyPrintQuestionLayout, buildWorksheetPrintReportModel, buildWorksheetPrintReportHtml, startWorksheetPrintFlow, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
+      replacement: 'export { parseLocalAttemptPackage, ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, resolveViewerAudioSources, createViewerAudioControl, createChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, getDefaultViewerPrintSchoolName, readViewerPrintSchoolNamePreferenceState, readViewerPrintSchoolNamePreference, writeViewerPrintSchoolNamePreference, computeResumeStartBlockIndex, buildTechnicalDetailsRows, classifyPrintQuestionLayout, buildWorksheetPrintReportModel, buildWorksheetPrintReportHtml, startWorksheetPrintFlow, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
     },
   ]);
 
@@ -1959,13 +1959,13 @@ test('coerceAnswerValueForQuestion validates number format rules (integer/decima
   assert.equal(mod.coerceAnswerValueForQuestion(question, '1.23'), '');
 });
 
-test('coerceAnswerValueForQuestion keeps over-limit text during edit and truncates on save', async () => {
+test('coerceAnswerValueForQuestion preserves existing over-limit text during normalization and save', async () => {
   const mod = await loadViewerModule();
   const question = {
     responseConfig: { inputType: 'text', maxLength: 5 },
   };
   assert.equal(mod.coerceAnswerValueForQuestion(question, 'abcdefghij', { phase: 'edit' }), 'abcdefghij');
-  assert.equal(mod.coerceAnswerValueForQuestion(question, 'abcdefghij', { phase: 'save' }), 'abcde');
+  assert.equal(mod.coerceAnswerValueForQuestion(question, 'abcdefghij', { phase: 'save' }), 'abcdefghij');
 });
 
 test('coerceAnswerValueForQuestion supports multiple_choice single and multi answers', async () => {
@@ -2698,7 +2698,7 @@ test('viewer autosave emits state transitions and clears pending state without e
   assert.ok(emissions >= 3, 'expected pending, success, and final state emissions');
 });
 
-test('viewer stores raw over-limit text in edit state and truncates in autosave/manual/finalize persistence', async () => {
+test('viewer rejects oversize edits and preserves existing answers in autosave/manual/finalize persistence', async () => {
   const mod = await loadViewerModule();
   const savedPayloads = [];
   const session = new mod.ViewerAttemptSession({
@@ -2726,17 +2726,19 @@ test('viewer stores raw over-limit text in edit state and truncates in autosave/
   session.state.attemptRevision = 1;
 
   session.setAnswer('q1', 'abcdefghij');
-  assert.equal(session.state.answers.q1.value, 'abcdefghij');
+  assert.equal(session.state.answers.q1, undefined);
+  // An existing attempt from an older viewer must never be shortened on save.
+  session.state.answers = { q1: { value: 'abcdefghij' } };
 
   clearTimeout(session.autosaveTimer);
   await session.autosave();
-  assert.equal(savedPayloads[0].answers.q1.value, 'abcde');
+  assert.equal(savedPayloads[0].answers.q1.value, 'abcdefghij');
 
   await session.saveNow();
-  assert.equal(savedPayloads[1].answers.q1.value, 'abcde');
+  assert.equal(savedPayloads[1].answers.q1.value, 'abcdefghij');
 
   await session.completeLocalAttempt();
-  assert.equal(savedPayloads[2].answers.q1.value, 'abcde');
+  assert.equal(savedPayloads[2].answers.q1.value, 'abcdefghij');
 });
 
 test('viewer autosave keeps newest save status when older save finishes later', async () => {
@@ -3533,21 +3535,6 @@ test('ensureControlDescribedBy links control to existing error id without duplic
   assert.equal(control.getAttribute('aria-describedby'), 'answer-q1-error');
 });
 
-test('clampTextAnswer enforces hard max length truncation', async () => {
-  const mod = await loadViewerModule();
-  assert.equal(mod.clampTextAnswer('abcdef', 4), 'abcd');
-  assert.equal(mod.clampTextAnswer('abc', 10), 'abc');
-  assert.equal(mod.clampTextAnswer('abc', null), 'abc');
-});
-
-test('clampTextAnswer handles non-integer finite maxLength via Math.trunc', async () => {
-  const mod = await loadViewerModule();
-  assert.equal(mod.clampTextAnswer('abcdef', 4.9), 'abcd');
-  assert.equal(mod.clampTextAnswer('abcdef', 4.1), 'abcd');
-  // Math.trunc(0.9) === 0, so no clamping occurs (treated as no valid limit)
-  assert.equal(mod.clampTextAnswer('abcdef', 0.9), 'abcdef');
-});
-
 test('computeTextLengthFeedback returns normal, warning, and over-limit states', async () => {
   const mod = await loadViewerModule();
   assert.deepEqual(mod.computeTextLengthFeedback('abcd', 50), {
@@ -3563,7 +3550,7 @@ test('computeTextLengthFeedback returns normal, warning, and over-limit states',
     max: 50,
     remaining: 5,
     state: 'warning',
-    statusText: '5 characters remaining.',
+    statusText: 'textAnswer.remaining',
     counterText: '45/50',
   });
   assert.deepEqual(mod.computeTextLengthFeedback('x'.repeat(55), 50), {
@@ -3571,7 +3558,7 @@ test('computeTextLengthFeedback returns normal, warning, and over-limit states',
     max: 50,
     remaining: -5,
     state: 'over',
-    statusText: 'Over by 5 characters. On save, text will be truncated to 50.',
+    statusText: 'textAnswer.over',
     counterText: '55/50',
   });
 });
@@ -3588,20 +3575,20 @@ test('computeTextLengthFeedback uses singular character when count is 1', async 
   const mod = await loadViewerModule();
   const warningResult = mod.computeTextLengthFeedback('x'.repeat(49), 50);
   assert.equal(warningResult.state, 'warning');
-  assert.equal(warningResult.statusText, '1 character remaining.');
+  assert.equal(warningResult.statusText, 'textAnswer.remainingOne');
 
   const overResult = mod.computeTextLengthFeedback('x'.repeat(51), 50);
   assert.equal(overResult.state, 'over');
-  assert.equal(overResult.statusText, 'Over by 1 character. On save, text will be truncated to 50.');
+  assert.equal(overResult.statusText, 'textAnswer.over');
 });
 
 test('computeTextLengthFeedback uses plural characters when count is not 1', async () => {
   const mod = await loadViewerModule();
   const warningResult = mod.computeTextLengthFeedback('x'.repeat(45), 50);
-  assert.equal(warningResult.statusText, '5 characters remaining.');
+  assert.equal(warningResult.statusText, 'textAnswer.remaining');
 
   const overResult = mod.computeTextLengthFeedback('x'.repeat(55), 50);
-  assert.equal(overResult.statusText, 'Over by 5 characters. On save, text will be truncated to 50.');
+  assert.equal(overResult.statusText, 'textAnswer.over');
 });
 
 test('updateTextCounterUI sets text and semantic classes', async () => {
@@ -3610,12 +3597,12 @@ test('updateTextCounterUI sets text and semantic classes', async () => {
   const statusNode = { textContent: '', className: '' };
   mod.updateTextCounterUI(counterNode, statusNode, {
     counterText: '99/100',
-    statusText: '1 character remaining.',
+    statusText: 'textAnswer.remainingOne',
     state: 'warning',
   });
   assert.equal(counterNode.textContent, '99/100');
   assert.equal(counterNode.className, 'text-counter text-counter--warning');
-  assert.equal(statusNode.textContent, '1 character remaining.');
+  assert.equal(statusNode.textContent, 'textAnswer.remainingOne');
   assert.equal(statusNode.className, 'text-counter-status text-counter-status--warning');
 });
 
@@ -6355,7 +6342,7 @@ test('replayViewerRewriteIntent stores raw click snapshot for undo when provided
     }],
   };
   session.state.answers = {
-    q1: { value: '01234567890123456789', answeredAt: '2026-04-01T00:00:00.000Z' },
+    q1: { value: '01234567890123456789EXTRA', answeredAt: '2026-04-01T00:00:00.000Z' },
   };
 
   session._readAuth = { ensure: async () => ({ ok: true, isCurrent: () => true }) };
@@ -6403,7 +6390,7 @@ test('replayViewerRewriteIntent accepts unchanged answers that differ only by su
   assert.equal(session.state.answers.q1.value, 'clean rewrite');
 });
 
-test('replayViewerRewriteIntent accepts auth-restore maxLength truncation when snapshot otherwise matches', async () => {
+test('replayViewerRewriteIntent rejects a truncated auth-restore snapshot as stale', async () => {
   const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({
     resumeFlags: { get: () => null, set: () => {} },
@@ -6438,11 +6425,11 @@ test('replayViewerRewriteIntent accepts auth-restore maxLength truncation when s
   });
 
   assert.equal(result.ok, false);
-  assert.equal(session.state.voiceRecovery.q1.code, 'ANSWER_TOO_LONG');
-  assert.ok(session.state.voiceRecovery.q1.candidate.length > session.state.viewerPayload.blocks[0].responseConfig.maxLength);
+  assert.equal(result.status, 'rewrite_stale_context');
+  assert.equal(session.state.voiceRecovery.q1, undefined);
 });
 
-test('replayViewerRewriteIntent stale-check prefers raw snapshot and save-equivalent clamp-then-trim normalization', async () => {
+test('replayViewerRewriteIntent stale-check rejects a truncated raw snapshot without provider work', async () => {
   const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({
     resumeFlags: { get: () => null, set: () => {} },
@@ -6480,8 +6467,8 @@ test('replayViewerRewriteIntent stale-check prefers raw snapshot and save-equiva
   });
 
   assert.equal(result.ok, false);
-  assert.equal(session.state.voiceRecovery.q1.code, 'ANSWER_TOO_LONG');
-  assert.ok(session.state.voiceRecovery.q1.candidate.length > session.state.viewerPayload.blocks[0].responseConfig.maxLength);
+  assert.equal(result.status, 'rewrite_stale_context');
+  assert.equal(session.state.voiceRecovery.q1, undefined);
 });
 
 test('viewer replayProtectedAction receives payload and avoids mutation on stale context', async () => {
@@ -6559,7 +6546,7 @@ test('undo lifecycle wiring exists for post-rewrite visibility, restore, and man
   assert.equal(source.includes("undoButton.textContent = t('viewer.rewrite.undo');"), true);
   assert.equal(source.includes('if (undoButton.disabled || isRewriteInFlight) {'), true);
   assert.equal(source.includes("cacheRawControlValue(block.blockId, String(savedUndoAnswer ?? ''));"), true);
-  assert.equal(source.includes('session.setAnswer(block.blockId, savedUndoAnswer);'), true);
+  assert.equal(source.includes('session.setAnswer(block.blockId, savedUndoAnswer, { restoreUndo: true });'), true);
   assert.equal(source.includes('delete nextUndoBuffer[block.blockId];'), true);
   assert.equal(source.includes("control.addEventListener('input', () => {"), true);
   assert.equal(source.includes('session.state.undoBuffer = nextUndoBuffer;'), true);
@@ -7315,4 +7302,51 @@ test('legacy saved-name-only recovery preserves its name while explicit custom c
   assert.equal(session.createRecoveryRecord().attemptNameDraft, 'My saved work');
   session.applyAttemptState({ ...record, attemptNameMode: 'custom' });
   assert.equal(session.createRecoveryRecord().attemptNameDraft, '');
+});
+
+test('long text survives worksheet preview, local save, attempt ZIP, server validation, review and print', async () => {
+  const mod = await loadViewerModule();
+  const { assertAttemptPackage } = await import('../app/contracts/attempt-package-validator.js');
+  const text = '  Prompt <script>plain text</script>\n\n' + '中 English\n'.repeat(1500) + '\n  THE END';
+  const config = { inputType: 'text', textMode: 'long', maxLength: 20000, displayMode: 'multi_line' };
+  const pkg = createWorksheetPackageFromDraft({ localId: 'long-draft', title: 'Long', blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Paste' }, responseConfig: config }] });
+  const worksheet = parseWorksheetPackage(pkg.bytes).worksheet;
+  const payload = mod.resolveImportedWorksheetPayload({ localId: 'long-import', worksheet });
+  assert.deepEqual(payload.blocks[0].responseConfig, config);
+  let saved;
+  const session = new mod.ViewerAttemptSession({ attempts: { put: async value => { saved = structuredClone(value); return value; } }, resumeFlags: { get() {}, set() {} } });
+  session.applyAttemptState(session.createLocalAttemptState(payload, 'imported_worksheet'));
+  session.setAnswer('q1', text);
+  clearTimeout(session.autosaveTimer);
+  await session.autosave();
+  assert.equal(saved.answers.q1.value, text);
+  assert.equal((await session.voice.run('q1', { mode: 'rewrite' })).ok, false);
+  const zip = await session.buildUploadedAttemptPackage();
+  const files = parseStoredZip(zip.bytes);
+  const manifest = JSON.parse(decodeUtf8(files.get('manifest.json')));
+  const attempt = JSON.parse(decodeUtf8(files.get('content/attempt.json')));
+  const exportedWorksheet = JSON.parse(decodeUtf8(files.get('content/worksheet.json')));
+  assert.equal(manifest.packageVersion, 5);
+  assert.equal(attempt.answers.q1.value, text);
+  assert.doesNotThrow(() => assertAttemptPackage(manifest, exportedWorksheet, attempt, { files }));
+  assert.equal(mod.parseLocalAttemptPackage(zip.bytes).attempt.answers.q1.value, text);
+  const model = await mod.buildWorksheetPrintReportModel({ viewerPayload: payload, answers: saved.answers, storage: {} });
+  assert.equal(model.questions[0].answerText, text);
+  assert.equal(model.questions[0].layoutMode, 'flow');
+  const html = mod.buildWorksheetPrintReportHtml(model);
+  assert.ok(html.includes('THE END'));
+  assert.ok(html.includes('&lt;script&gt;plain text&lt;/script&gt;'));
+  assert.ok(!html.includes('<script>plain text</script>'));
+});
+
+test('rewrite undo can restore a pre-existing oversized answer without allowing new oversized edits', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({ resumeFlags: { get() {}, set() {} } });
+  session.state.viewerPayload = { blocks: [{ blockId: 'q1', kind: 'question', responseConfig: { inputType: 'text', maxLength: 5 } }] };
+  session.state.answers = { q1: { value: 'short' } };
+  session.state.undoBuffer = { q1: 'older longer answer' };
+  assert.equal(session.setAnswer('q1', 'new longer answer'), false);
+  session.setAnswer('q1', session.state.undoBuffer.q1, { restoreUndo: true });
+  assert.equal(session.state.answers.q1.value, 'older longer answer');
+  clearTimeout(session.autosaveTimer);
 });

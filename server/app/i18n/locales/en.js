@@ -1,6 +1,22 @@
 import roleplayscene from './roleplayscene/en.js';
 
 export default {
+  textAnswer: {
+    invalidLong: 'Enter a whole number from 1 to {max}.',
+    packageTooLarge: 'This attempt package exceeds the 30 MB limit.',
+    remainingOne: '1 character remaining.',
+    "toggle": "Long text",
+    "standardHint": "Maximum 1,200 characters. Add by voice and Rewrite are available.",
+    "longHint": "Maximum 20,000 characters. Add by voice and Rewrite are unavailable.",
+    "invalid": "Enter a whole number from 1 to {max}. For longer answers, enable Long text.",
+    "switchTitle": "Switch to standard text?",
+    "switchDescription": "The answer limit will be reduced to {max} characters. Add by voice and Rewrite will be available. Existing saved attempts will keep their answers.",
+    "switchConfirm": "Switch to standard text",
+    "viewerLong": "Long text response. Paste or type your text here.",
+    "rejected": "This edit exceeds the {max}-character limit. Your previous answer has been kept. Shorten the text and try again.",
+    "over": "Over the {max}-character limit by {count}. Your existing answer is preserved; shorten it to fit.",
+    "remaining": "{count} characters remaining."
+},
   imageResponse: {
     prepareFailed:
       'This image could not be reduced to 2 MB while keeping enough detail. Please resize it or choose another image. Your saved images are unchanged.',

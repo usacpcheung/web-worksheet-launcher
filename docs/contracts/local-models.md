@@ -97,3 +97,21 @@ owned answer assets. Imported answer-only assets receive the new attempt owner I
 Worksheet/shared assets retain their existing lifetime. Import uses fresh identities
 for both binaries and answer references; old packages and local records are unchanged.
 No database version migration is required.
+
+
+## Text answer mode and preservation
+
+`responseConfig.textMode: "long"` opts an existing Text question into a multiline,
+full-width answer surface without voice/rewrite/Undo assistance. `"standard"`
+retains those controls. New standard limits are 1–1,200 (default 200); long limits
+are 1–20,000 (default 20,000). Omitted mode is legacy standard text, with existing
+saved limits/answers preserved. Switching long to standard requires confirmation
+when the authored limit will reduce to 1,200; it never edits saved answers. Existing source-mismatch checks still apply when resuming an attempt against an edited worksheet.
+
+Local answer strings retain whitespace and are no longer truncated during
+normalization, autosave, recovery-journal writes, submission or package export.
+Input limits apply to new edits, with whole-paste rejection and IME validation
+only after composition ends. An existing over-limit answer can be shortened in
+stages; rewrite Undo can restore its exact original snapshot. Long-mode questions
+are excluded from the shared voice workflow, including retry/auth recovery entry
+points; RolePlayScene's existing text questions remain eligible.

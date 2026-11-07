@@ -22,7 +22,7 @@ function setup(options = {}) {
     recovery: {}, applied: [], states: [], requests: [], records: [], interval: null };
   const flow = createVoiceWorkflow({
     context: blockId => ({ attemptId: state.attempt, contextKey: state.contextKey, editable: state.editable, recovery: state.recovery[blockId],
-      block: { blockId, kind: 'question', responseConfig: { inputType: 'text', maxLength: options.maxLength || 200 } },
+      block: { blockId, kind: 'question', responseConfig: { inputType: 'text', textMode: options.textMode, maxLength: options.maxLength || 200 } },
       answer: state.answers[blockId] }),
     apply: (id, text, snapshot, caret) => { state.answers[id] = text; state.applied.push({ id, text, snapshot, caret }); },
     recover: (id, record) => { if (record) state.recovery[id] = record; else delete state.recovery[id]; },
@@ -654,4 +654,14 @@ test('cancelling selected voice input retains the original even after late provi
   assert.equal(h.state.answers.q1,'Earlier');
   wait.resolve({ok:true,data:{text:'Late'}}); await tick();
   assert.equal(h.state.applied.length,0);
+});
+
+test('long text cannot start recording, rewrite, or retry; legacy discussion text remains eligible', async () => {
+  const { flow, state } = setup({ textMode: 'long', maxLength: 20000 });
+  for (const options of [{}, { mode: 'rewrite' }, { retry: { phase: 'text', text: 'transcript' } }]) {
+    assert.equal((await flow.run('q1', options)).ok, false);
+  }
+  assert.equal(state.records.length, 0);
+  assert.equal(state.requests.length, 0);
+  assert.equal(isVoiceQuestion({ kind: 'question', responseConfig: { inputType: 'text' } }), true);
 });
