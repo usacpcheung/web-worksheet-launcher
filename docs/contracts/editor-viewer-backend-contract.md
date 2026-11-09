@@ -144,3 +144,7 @@ For both existing consumers and future integrations, preserve:
 5. same ZIP artifact expectation for open/import path.
 
 If backend contract changes are required, update editor and viewer together through the shared API client contract rather than forking response shapes per surface.
+
+## Shared text authoring
+
+Prompts and content blocks additionally accept `rich-text-v1`, with a restricted application document and a validated plain-text projection. Worksheet package/schema 7/7 and attempt package/schema 6/1 guard this feature. Existing formats remain supported and opening old drafts does not migrate them. See [document schema, rendering, and rollout](../worksheet/shared-rich-text-editor.md). No learner-answer, auth or message contract changes are introduced.

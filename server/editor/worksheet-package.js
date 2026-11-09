@@ -4,7 +4,7 @@ import { assertPackageAssets } from '../app/contracts/package-assets.js';
 import { hasOptionImages, assertOptionImages } from '../app/option-images.js';
 import { createStoredZip, decodeUtf8, parseStoredZip, toUint8Array, crc32 } from './zip-utils.js';
 import { assertValidAudioTracks, normalizeAudioTracks } from './audio-tracks.js';
-import { assertWorksheetTextFormats, hasMarkdown } from '../app/worksheet-text.js';
+import { assertWorksheetTextFormats, hasMarkdown, hasRichText } from '../app/worksheet-text.js';
 
 const PACKAGE_FORMAT = 'worksheet-package';
 const PACKAGE_VERSION = 2;
@@ -172,6 +172,7 @@ function createWorksheetPackageFromDraft(draft, assetRecordsById = new Map()) {
   if (hasOptionImages(draftBlocks)) { manifest.packageVersion = 4; manifest.schemaVersion = 4; }
   if (hasImageResponses(draftBlocks)) { manifest.packageVersion = 5; manifest.schemaVersion = 5; }
   if (hasLongText(draftBlocks)) { manifest.packageVersion = 6; manifest.schemaVersion = 6; }
+  if (hasRichText(draftBlocks)) { manifest.packageVersion = 7; manifest.schemaVersion = 7; }
   const entries = [
     { path: 'manifest.json', data: JSON.stringify(manifest, null, 2) },
     { path: 'content/worksheet.json', data: JSON.stringify(worksheet, null, 2) },
@@ -239,16 +240,17 @@ function parseWorksheetPackage(arrayBuffer) {
 
   if (
     manifest?.format !== PACKAGE_FORMAT
-    || ![LEGACY_PACKAGE_VERSION, PACKAGE_VERSION, 3, 4, 5, 6].includes(manifest?.packageVersion)
+    || ![LEGACY_PACKAGE_VERSION, PACKAGE_VERSION, 3, 4, 5, 6, 7].includes(manifest?.packageVersion)
   ) {
     throw new Error('Unsupported worksheet package format or packageVersion.');
   }
   if (manifest.packageVersion === PACKAGE_VERSION && manifest.schemaVersion !== CONTENT_SCHEMA_VERSION) {
     throw new Error('Unsupported worksheet package schemaVersion.');
   }
-  if ([3, 4, 5, 6].includes(manifest.packageVersion) && manifest.schemaVersion !== manifest.packageVersion) throw new Error('Unsupported worksheet package schemaVersion.');
+  if ([3, 4, 5, 6, 7].includes(manifest.packageVersion) && manifest.schemaVersion !== manifest.packageVersion) throw new Error('Unsupported worksheet package schemaVersion.');
   assertWorksheetTextFormats(worksheet.blocks);
   assertTextQuestions(worksheet.blocks);
+  if (hasRichText(worksheet.blocks) && manifest.packageVersion < 7) throw new Error('Rich text requires worksheet package version 7.');
   if (hasLongText(worksheet.blocks) && manifest.packageVersion < 6) throw new Error("Long text requires worksheet package version 6.");
   if (hasMarkdown(worksheet.blocks) && manifest.packageVersion < 3) throw new Error('Markdown requires worksheet package version 3.');
 

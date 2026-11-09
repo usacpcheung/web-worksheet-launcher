@@ -27,8 +27,8 @@ import {
   parseWorksheetPackage,
 } from './worksheet-package.js';
 import { collectAudioTrackAssetIds, normalizeAudioTracks } from './audio-tracks.js';
-import { MARKDOWN_FORMAT, PROMPT_TEXT_LIMIT, promptTextState, upgradeEditableBlocks, assertWorksheetTextFormats, worksheetTextToPlain, installWorksheetTextStyles } from '../app/worksheet-text.js';
-import { createTextPreview } from './text-preview.js';
+import { MARKDOWN_FORMAT, PROMPT_TEXT_LIMIT, promptTextState, copyWorksheetText, assertWorksheetTextFormats, worksheetTextToPlain, installWorksheetTextStyles } from '../app/worksheet-text.js';
+import { createRichTextEditor } from './rich-text-editor.js';
 import { getWorksheetT2ALanguagePresetById } from './t2a-language-presets.js';
 import { MEDIA_LIMITS, IMAGE_MIME_TYPES, IMAGE_EXTENSIONS, AUDIO_MIME_TYPES, AUDIO_EXTENSIONS } from './media-config.js';
 import { probeSession } from '../app/auth/session-readiness.js';
@@ -1478,8 +1478,7 @@ class EditorDraftSession {
           return {
             ...base,
             prompt: {
-              text: String(block?.prompt?.text || ''),
-              format: block?.prompt?.format || 'plain_text',
+              ...copyWorksheetText(block.prompt),
               mediaRefs: normalizeMediaRefs(block?.prompt?.mediaRefs),
               audioTracks: normalizeAudioTracks(block?.prompt?.audioTracks),
             },
@@ -1492,8 +1491,7 @@ class EditorDraftSession {
         return {
           ...base,
           content: {
-            text: String(block?.content?.text || ''),
-            format: block?.content?.format || 'plain_text',
+            ...copyWorksheetText(block.content),
           },
         };
       }),
@@ -1639,13 +1637,6 @@ class EditorDraftSession {
     const savedAt = existing?.metadata?.updatedAt;
     this.state.lastSavedAt = isNonEmptyString(savedAt) && Number.isFinite(Date.parse(savedAt)) ? savedAt : null;
     this.state.lastPersistenceError = null;
-    const conversion = upgradeEditableBlocks(this.state.draft.blocks);
-    if (conversion.changed) {
-      this.state.draft = { ...this.state.draft, blocks: conversion.blocks };
-      this.state.draftRevision += 1;
-      this.scheduleAutosave();
-      if (existing) this.pushNotification({ kind: 'info', category: 'editor', source: 'formatting.converted', text: t('formatting.converted') });
-    }
     this.validateCurrentDraft();
     this.persistRestoreMetadata();
     return this.state.draft;
@@ -1728,35 +1719,22 @@ class EditorDraftSession {
   }
 
   updateBlockContent(blockId, nextText) {
-    if (!this.state.draft || !blockId) return;
-
-    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
-      if (block.blockId !== blockId) {
-        return block;
-      }
-
-      if (block.prompt) {
-        if (String(nextText || '').trim()) {
-          this.transientQuestionBlockIds.delete(blockId);
-        }
-        return {
-          ...block,
-          prompt: {
-            ...block.prompt,
-            text: String(nextText || ''),
-          },
-        };
-      }
-
-      return {
-        ...block,
-        content: {
-          ...(block.content || {}),
-          text: String(nextText || ''),
-        },
-      };
+    const block = this.state.draft?.blocks.find(item => item.blockId === blockId);
+    const previous = block?.prompt || block?.content || {};
+    this.updateBlockTextField(this.state.draft?.localId, blockId, {
+      text: String(nextText || ''), format: previous.format === 'rich-text-v1' ? 'plain_text' : previous.format || 'plain_text',
     });
+  }
 
+  updateBlockTextField(draftId, blockId, field) {
+    if (!this.state.draft || this.state.draft.localId !== draftId) return;
+    const block = this.state.draft.blocks.find(item => item.blockId === blockId);
+    if (!block) return;
+    assertWorksheetTextFormats([{ kind: 'content', content: field }]);
+    const key = block.kind === 'question' ? 'prompt' : 'content';
+    const { document: _oldDocument, ...previous } = block[key] || {};
+    block[key] = { ...previous, ...copyWorksheetText(field) };
+    if (key === 'prompt' && field.text.trim()) this.transientQuestionBlockIds.delete(blockId);
     this.touchDraft();
   }
 
@@ -3275,8 +3253,7 @@ class EditorDraftSession {
           ...block,
           kind: 'question',
           prompt: {
-            text: String(block?.prompt?.text || block?.content?.text || ''),
-            format: block?.prompt?.format || block?.content?.format || 'plain_text',
+            ...copyWorksheetText(block.prompt || block.content),
           },
           responseConfig: isRecord(block.responseConfig)
             ? normalizeQuestionResponseConfig(block.responseConfig)
@@ -3289,8 +3266,7 @@ class EditorDraftSession {
         ...block,
         kind: 'content',
         content: {
-          text: String(block?.content?.text || block?.prompt?.text || ''),
-          format: block?.content?.format || block?.prompt?.format || 'plain_text',
+          ...copyWorksheetText(block.content || block.prompt),
         },
         prompt: undefined,
         responseConfig: undefined,
@@ -3651,8 +3627,6 @@ class EditorDraftSession {
       },
     });
 
-      const conversion = upgradeEditableBlocks(draft.blocks);
-      draft.blocks = conversion.blocks;
       // Persist the incoming record without exposing it as the active worksheet.
       // A quota/storage failure must leave the outgoing editor state intact.
       const normalizedDraft = this.normalizeDraftForContracts(draft);
@@ -3690,7 +3664,6 @@ class EditorDraftSession {
       this.persistRestoreMetadata();
       const successMessage = editorNotification('import.importedPackageZip');
       this.pushNotification({ kind: 'success', category: 'editor', source: 'import.package_zip', text: successMessage });
-      if (conversion.changed) this.pushNotification({ kind: 'info', category: 'editor', source: 'formatting.converted', text: t('formatting.converted') });
       this.notifyStateChange();
       return { importedRecord, draftRecord: this.state.draft };
     } catch (error) {
@@ -4976,6 +4949,7 @@ class EditorDraftSession {
 }
 
 function renderEditorShell(session) {
+  session.destroyTextEditor?.();
   session.cancelBlockDrag?.();
   if (!app) return;
 
@@ -5062,11 +5036,12 @@ function renderEditorShell(session) {
   subjectInput.className = 'control';
   subjectField.append(subjectLabel, subjectInput);
   metadataSection.append(metadataHeading, titleField, subjectField);
-  const blockEditor = document.createElement('textarea');
-  blockEditor.id = 'editor-block-editor';
-  blockEditor.rows = 8;
-  blockEditor.className = 'control';
-  const textPreview = createTextPreview(blockEditor, t, createEditorIcon('info'));
+  const textEditor = createRichTextEditor(t, (identity, field) => {
+    session.updateBlockTextField(identity.draftId, identity.blockId, field);
+    refreshPromptT2AControlsForSelectedBlock();
+    updateSummary({ preserveDetailEditor: true });
+  });
+  session.destroyTextEditor = () => textEditor.destroy();
 
   const questionInputType = document.createElement('select');
   questionInputType.id = 'editor-question-input-type';
@@ -6447,7 +6422,9 @@ function renderEditorShell(session) {
 
   const syncFormControls = () => {
     const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
-    const selectedText = selectedBlock?.prompt?.text || selectedBlock?.content?.text || '';
+    const draftId = session.state.draft?.localId;
+    textEditor.prune(new Set((session.state.draft?.blocks || []).map(block => `${draftId}:${block.blockId}`)));
+    if (selectedBlock) textEditor.sync(`${draftId}:${selectedBlock.blockId}`, selectedBlock.prompt || selectedBlock.content);
     const activeElement = document.activeElement;
 
     if (activeElement !== titleInput) {
@@ -6455,9 +6432,6 @@ function renderEditorShell(session) {
     }
     if (activeElement !== subjectInput) {
       subjectInput.value = session.state.draft?.metadata?.subject || '';
-    }
-    if (activeElement !== blockEditor) {
-      blockEditor.value = selectedText;
     }
     if (selectedBlock && activeElement !== blockKind) {
       blockKind.value = selectedBlock.kind;
@@ -6944,6 +6918,7 @@ function renderEditorShell(session) {
       ? '1'
       : '0';
     return [
+      session.state.draft?.localId,
       selectedBlock.blockId,
       selectedBlock.kind,
       normalizedInputType,
@@ -7239,8 +7214,7 @@ function renderEditorShell(session) {
       const contentLabel = document.createElement('label');
       contentLabel.textContent = t('editor.block.contentTextLabel');
       contentLabel.htmlFor = 'editor-block-editor';
-      blockEditor.placeholder = t('editor.block.contentTextPlaceholder');
-      textPreview.mount(rightPanel, contentLabel, `${session.state.draft.localId}:${selectedBlock.blockId}`, selectedBlock.content);
+      textEditor.mount(rightPanel, contentLabel, `${session.state.draft.localId}:${selectedBlock.blockId}`, selectedBlock.content, false, { draftId: session.state.draft.localId, blockId: selectedBlock.blockId });
       return;
     }
 
@@ -7248,8 +7222,7 @@ function renderEditorShell(session) {
     const promptLabel = document.createElement('label');
     promptLabel.textContent = t('editor.block.promptLabel');
     promptLabel.htmlFor = 'editor-block-editor';
-    blockEditor.placeholder = t('editor.block.promptPlaceholder');
-    textPreview.mount(rightPanel, promptLabel, `${session.state.draft.localId}:${selectedBlock.blockId}`, selectedBlock.prompt, true);
+    textEditor.mount(rightPanel, promptLabel, `${session.state.draft.localId}:${selectedBlock.blockId}`, selectedBlock.prompt, true, { draftId: session.state.draft.localId, blockId: selectedBlock.blockId });
 
     const promptMediaRefs = normalizeMediaRefs(selectedBlock?.prompt?.mediaRefs);
     const currentQuestionImageRef = getSingleMediaRef(promptMediaRefs, 'question_image');
@@ -8542,6 +8515,7 @@ function renderEditorShell(session) {
     if (!preserveDetailEditor) {
       renderDetailEditor();
     }
+    refreshPromptT2AControlsForSelectedBlock();
     refreshImageBudget();
 
     const saveState = session.state.lastPersistenceError
@@ -8732,16 +8706,6 @@ function renderEditorShell(session) {
   });
   blockKind.addEventListener('change', () => {
     session.setSelectedBlockKind(blockKind.value);
-    updateSummary();
-  });
-  blockEditor.addEventListener('input', () => {
-    const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
-    session.updateBlockContent(session.state.selectedBlockId, blockEditor.value);
-    if (selectedBlock?.kind === 'question') {
-      refreshPromptT2AControlsForSelectedBlock();
-      updateSummary({ preserveDetailEditor: true });
-      return;
-    }
     updateSummary();
   });
   saveBtn.addEventListener('click', async () => {

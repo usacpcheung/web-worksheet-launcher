@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MARKDOWN_FORMAT, renderWorksheetText, worksheetTextToPlain, upgradeEditableBlocks, promptTextState } from './worksheet-text.js';
+import { MARKDOWN_FORMAT, renderWorksheetText, worksheetTextToPlain,  promptTextState } from './worksheet-text.js';
 import { createWorksheetPackageFromDraft, parseWorksheetPackage } from '../editor/worksheet-package.js';
 import { createStoredZip } from '../editor/zip-utils.js';
 const md = text => ({ text, format: MARKDOWN_FORMAT });
@@ -24,23 +24,9 @@ test('escape punctuation and preserve unmatched markers', () => {
   assert.equal(renderWorksheetText(md('\\*literal\\* **unfinished')), '<p>*literal* **unfinished</p>');
   assert.equal(renderWorksheetText(md('\\# heading\n1\\. literal\n\\> quote')), '<p># heading\n1. literal\n&gt; quote</p>');
 });
-test('legacy conversion is non-mutating, visually literal, and idempotent', () => {
-  const text = '# Heading\n**Not bold** *Not italic*\n- list\n1. one\n> quote\nC:\\text\n\n中文 <b>literal</b>  ';
-  const old = [{ kind: 'content', content: { text }, instructions: '*unchanged*' }];
-  const converted = upgradeEditableBlocks(old);
-  assert.equal(converted.changed, true);
-  assert.equal(old[0].content.text, text);
-  assert.equal(worksheetTextToPlain(converted.blocks[0].content), text);
-  assert.equal(converted.blocks[0].instructions, '*unchanged*');
-  assert.equal(upgradeEditableBlocks(converted.blocks).changed, false);
-  assert.doesNotMatch(renderWorksheetText(converted.blocks[0].content), /<(strong|em|h2|ul|ol|blockquote)>/);
-  const whitespace = 'first\n  \n\t\nlast';
-  assert.equal(worksheetTextToPlain(upgradeEditableBlocks([{ kind: 'content', content: { text: whitespace } }]).blocks[0].content), whitespace);
-});
 test('plain text never receives Markdown interpretation; unknown formats reject', () => {
   assert.equal(renderWorksheetText({ text: '**Keep** <b>raw</b>' }), '**Keep** &lt;b&gt;raw&lt;/b&gt;');
   assert.throws(() => renderWorksheetText({ text: 'x', format: 'future-format' }), /Unsupported/);
-  assert.throws(() => upgradeEditableBlocks([{ kind: 'content', content: { text: 'x', format: 'future-format' } }]), /Unsupported/);
   assert.throws(() => createWorksheetPackageFromDraft({ blocks: [{ kind: 'short_text', prompt: { text: 'x', format: 'future-format' } }] }), /Unsupported/);
   assert.equal(renderWorksheetText(md('')), '<br>');
 });

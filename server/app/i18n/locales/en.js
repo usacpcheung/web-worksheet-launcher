@@ -148,6 +148,26 @@ export default {
     "popupDeadline": "Sign-in is still pending and exceeded the maximum wait window.",
     "popupWaiting": "Sign-in check timed out, still waiting for popup callback…"
   },
+  richEditor: {
+    documentTooComplex: 'This change is too complex to save. Simplify the nesting or paste smaller sections. Your previous text is preserved.',
+    "toolbar": "Text formatting",
+    "style": "Paragraph style",
+    "paragraph": "Paragraph",
+    "heading": "Heading {level}",
+    "bold": "Bold",
+    "italic": "Italic",
+    "underline": "Underline",
+    "redText": "Red text",
+    "bulletList": "Bulleted list",
+    "orderedList": "Numbered list",
+    "blockquote": "Quote",
+    "clear": "Clear formatting",
+    "undo": "Undo",
+    "redo": "Redo",
+    "loading": "Loading editor…",
+    "loadFailed": "The editor could not load. Your text is unchanged. ",
+    "retry": "Retry"
+},
   formatting: {
     mode: 'Text display mode', syntax: 'You type', result: 'Result',
     backToEditor: 'Back to editor',

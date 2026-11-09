@@ -114,7 +114,7 @@ test('active voice operation blocks submission, releases on cancel, and cannot m
 
 async function loadViewerModule(overrides = {}) {
   const filePath = path.resolve('server/viewer/main.js');
-  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'./text-answer-input.js'", JSON.stringify(new NodeURL('./text-answer-input.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'./image-response-ui.js'", JSON.stringify(new NodeURL('./image-response-ui.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./text-preview.js'", JSON.stringify(new NodeURL('./text-preview.js', import.meta.url).href)).replaceAll("'../app/contracts/attempt-package-validator.js'", JSON.stringify(new NodeURL('../app/contracts/attempt-package-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
+  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'./text-answer-input.js'", JSON.stringify(new NodeURL('./text-answer-input.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'./image-response-ui.js'", JSON.stringify(new NodeURL('./image-response-ui.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'../app/contracts/attempt-package-validator.js'", JSON.stringify(new NodeURL('../app/contracts/attempt-package-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
   const bagName = `__viewerTestBag_${Math.random().toString(16).slice(2)}`;
 
   globalThis[bagName] = {
@@ -7349,4 +7349,36 @@ test('rewrite undo can restore a pre-existing oversized answer without allowing 
   session.setAnswer('q1', session.state.undoBuffer.q1, { restoreUndo: true });
   assert.equal(session.state.answers.q1.value, 'older longer answer');
   clearTimeout(session.autosaveTimer);
+});
+
+test('rich text survives normalization, local persistence, attempt ZIP and print without an editor runtime', async () => {
+  const mod = await loadViewerModule();
+  const { richTextField } = await import('../app/worksheet-text.js');
+  const { assertAttemptPackage } = await import('../app/contracts/attempt-package-validator.js');
+  const field = richTextField([{ tag: 'p', children: [{ tag: 'u', children: [{ tag: 'red', children: [{ tag: 'text', text: '題目 <img src=x>' }] }] }] }]);
+  const pkg = createWorksheetPackageFromDraft({ localId: 'rich', title: 'Rich', blocks: [
+    { blockId: 'c', kind: 'content', position: 0, content: field },
+    { blockId: 'q1', kind: 'question', position: 1, prompt: { ...field, mediaRefs: [], audioTracks: [] }, responseConfig: { inputType: 'text', maxLength: 200 } },
+  ] });
+  const payload = mod.resolveImportedWorksheetPayload({ localId: 'rich-import', worksheet: parseWorksheetPackage(pkg.bytes).worksheet });
+  assert.deepEqual(payload.blocks[0].content, field);
+  assert.deepEqual(payload.blocks[1].prompt.document, field.document);
+  let saved;
+  const session = new mod.ViewerAttemptSession({ attempts: { put: async value => { saved = structuredClone(value); return value; } }, resumeFlags: { get() {}, set() {} } });
+  session.applyAttemptState(session.createLocalAttemptState(payload, 'imported_worksheet'));
+  session.setAnswer('q1', '**Literal answer**'); clearTimeout(session.autosaveTimer); await session.autosave();
+  assert.deepEqual(saved.viewerPayload.blocks[1].prompt.document, field.document);
+  const zip = await session.buildUploadedAttemptPackage();
+  const files = parseStoredZip(zip.bytes);
+  const manifest = JSON.parse(decodeUtf8(files.get('manifest.json')));
+  const worksheet = JSON.parse(decodeUtf8(files.get('content/worksheet.json')));
+  const attempt = JSON.parse(decodeUtf8(files.get('content/attempt.json')));
+  assert.equal(manifest.packageVersion, 6);
+  assert.doesNotThrow(() => assertAttemptPackage(manifest, worksheet, attempt, { files }));
+  assert.throws(() => assertAttemptPackage({ ...manifest, packageVersion: 5 }, worksheet, attempt, { files }), /version 6/);
+  assert.deepEqual(mod.parseLocalAttemptPackage(zip.bytes).worksheet.blocks[1].prompt.document, field.document);
+  const model = await mod.buildWorksheetPrintReportModel({ viewerPayload: payload, answers: saved.answers, storage: {} });
+  const html = mod.buildWorksheetPrintReportHtml(model);
+  assert.match(html, /<u><span class="worksheet-text-red">題目 &lt;img src=x&gt;<\/span><\/u>/);
+  assert.match(html, /\*\*Literal answer\*\*/);
 });

@@ -144,6 +144,26 @@ export default {
     "popupDeadline": "登入尚未完成，已超出最長等候時間。",
     "popupWaiting": "登入檢查逾時，仍在等候彈出視窗回應…"
   },
+  richEditor: {
+    documentTooComplex: '這次修改的結構過於複雜，無法儲存。請減少巢狀層級，或分段貼上。原有文字已保留。',
+    "toolbar": "文字格式",
+    "style": "段落樣式",
+    "paragraph": "段落",
+    "heading": "標題 {level}",
+    "bold": "粗體",
+    "italic": "斜體",
+    "underline": "底線",
+    "redText": "紅色文字",
+    "bulletList": "項目清單",
+    "orderedList": "編號清單",
+    "blockquote": "引文",
+    "clear": "清除格式",
+    "undo": "復原",
+    "redo": "重做",
+    "loading": "正在載入編輯器…",
+    "loadFailed": "無法載入編輯器。文字內容未有更改。",
+    "retry": "重試"
+},
   formatting: {
     mode: '文字顯示模式', syntax: '輸入格式', result: '顯示效果',
     backToEditor: '返回編輯器',

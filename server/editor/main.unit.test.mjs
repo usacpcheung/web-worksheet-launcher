@@ -149,7 +149,7 @@ test('modal load-status copies are visual-only and preserve the single shell ann
 
 async function loadEditorModule() {
   const filePath = path.resolve('server/editor/main.js');
-  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'../app/bridge/audio-generation.js'", JSON.stringify(new NodeURL('../app/bridge/audio-generation.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./text-preview.js'", JSON.stringify(new NodeURL('./text-preview.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
+  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'../app/bridge/audio-generation.js'", JSON.stringify(new NodeURL('../app/bridge/audio-generation.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./rich-text-editor.js'", JSON.stringify(new NodeURL('./rich-text-editor.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
 
   const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/option-images.js'", JSON.stringify(new NodeURL('../app/option-images.js', import.meta.url).href)).replaceAll("'./option-image-editor.js'", JSON.stringify(new NodeURL('./option-image-editor.js', import.meta.url).href)).replaceAll("'../app/api/publication-flow.js'", JSON.stringify(new NodeURL('../app/api/publication-flow.js', import.meta.url).href)).replaceAll("'../app/auth/mutation-auth.js'", JSON.stringify(new NodeURL('../app/auth/mutation-auth.js', import.meta.url).href)).replaceAll("'../app/auth/session-state-adapter.js'", JSON.stringify(new NodeURL('../app/auth/session-state-adapter.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-return.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-return.js', import.meta.url).href)).replaceAll("'../app/auth/session-coordinator.js'", JSON.stringify(new NodeURL('../app/auth/session-coordinator.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-flow.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-flow.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-prompt.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-prompt.js', import.meta.url).href)).replaceAll("'../app/api/deletion-flow.js'", JSON.stringify(new NodeURL('../app/api/deletion-flow.js', import.meta.url).href)).replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-drag-reorder.js'", JSON.stringify(new NodeURL('./block-drag-reorder.js', import.meta.url).href)), [
     {
@@ -5725,7 +5725,7 @@ test('stage3: successful replay T2A attaches mp3 bytes through canonical media h
   assert.equal(optionAsset.mimeType, 'audio/mpeg');
 });
 
-test('opening a legacy editable draft converts once, preserves literal speech, and saves its format', async () => {
+test('opening a legacy editable draft preserves its representation and literal speech', async () => {
   const mod = await loadEditorModule();
   const original = { localId: 'legacy-format', title: 'Legacy', blocks: [{ blockId: 'q', kind: 'question', position: 0,
     prompt: { text: '**literal**\n- point\\path', format: 'plain_text' }, responseConfig: { inputType: 'text' } }] };
@@ -5734,9 +5734,10 @@ test('opening a legacy editable draft converts once, preserves literal speech, a
     resumeFlags: { get: () => null, set: () => {} } };
   const session = new mod.EditorDraftSession(storage);
   await session.createOrOpenByLocalDraftId(original.localId);
-  assert.equal(session.state.draft.blocks[0].prompt.format, 'limited-markdown-v1');
+  assert.equal(session.state.draft.blocks[0].prompt.format, 'plain_text');
+  assert.equal(session.state.draftRevision, session.state.lastSavedRevision);
   assert.equal(session.getAudioTrackTarget('q', 'prompt').text, original.blocks[0].prompt.text);
-  assert.equal(session.state.notifications.filter(item => item.source === 'formatting.converted').length, 1);
+  assert.equal(session.state.notifications.filter(item => item.source === 'formatting.converted').length, 0);
   await session.saveNow();
   const convertedSource = stored.blocks[0].prompt.text;
   const reopened = new mod.EditorDraftSession(storage);
@@ -6625,5 +6626,25 @@ test('long text authoring uses explicit caps and confirms a reduction without ch
   assert.equal(config().maxLength, 1200);
   session.updateQuestionInputType(id, 'number');
   assert.equal(config().textMode, undefined);
+  clearTimeout(session.autosaveTimer);
+});
+
+test('rich edits retain media and IDs, switch block kind, and reject late results from a different draft', async () => {
+  const mod = await loadEditorModule();
+  const { richTextField } = await import('../app/worksheet-text.js');
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  await session.createOrOpenByLocalDraftId(null);
+  const block = session.createBlock('question');
+  block.prompt.audioTracks = [{ language: 'en', assetId: 'audio' }];
+  const field = richTextField([{ tag: 'p', children: [{ tag: 'u', children: [{ tag: 'text', text: 'New text' }] }] }]);
+  session.updateBlockTextField('different-draft', block.blockId, field);
+  assert.notEqual(block.prompt.format, 'rich-text-v1');
+  session.updateBlockTextField(session.state.draft.localId, block.blockId, field);
+  assert.equal(block.prompt.audioTracks[0].assetId, 'audio');
+  assert.deepEqual(session.normalizeDraftForContracts(session.state.draft).blocks.at(-1).prompt.document, field.document);
+  session.setSelectedBlockKind('content');
+  assert.deepEqual(session.state.draft.blocks.at(-1).content.document, field.document);
+  session.setSelectedBlockKind('question');
+  assert.deepEqual(session.state.draft.blocks.at(-1).prompt.document, field.document);
   clearTimeout(session.autosaveTimer);
 });

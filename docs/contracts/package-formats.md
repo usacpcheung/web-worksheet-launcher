@@ -6,9 +6,9 @@ Reviewed against main `7bb19de` on 2026-10-06. Code authorities: `server/editor/
 
 | Content | Manifest `format` | Current export version / schema | Accepted compatibility |
 | --- | --- | --- | --- |
-| Plain worksheet with audio tracks | `worksheet-package` | 2 / 2 | Worksheet versions 1–6 are read; legacy JSON remains a separate import adapter. |
+| Plain worksheet with audio tracks | `worksheet-package` | 2 / 2 | Worksheet versions 1–7 are read; legacy JSON remains a separate import adapter. |
 | Worksheet containing limited Markdown | `worksheet-package` | 3 / 3 | Markdown in version 1/2 envelopes is rejected. |
-| Plain worksheet attempt | `worksheet-attempt-package` | 1 / 1 | Attempt versions 1–5 are read. |
+| Plain worksheet attempt | `worksheet-attempt-package` | 1 / 1 | Attempt versions 1–6 are read. |
 | Attempt containing limited Markdown | `worksheet-attempt-package` | 2 / 1 | Markdown in version 1 attempt envelopes is rejected. |
 | Worksheet containing option images | `worksheet-package` | 4 / 4 | Also supports limited Markdown; older readers reject this envelope. |
 | Attempt containing option images | `worksheet-attempt-package` | 3 / 1 | Also supports limited Markdown; older readers reject this envelope. |
@@ -16,6 +16,8 @@ Reviewed against main `7bb19de` on 2026-10-06. Code authorities: `server/editor/
 | Attempt containing image responses | `worksheet-attempt-package` | 4 / 1 | Includes answer images. |
 | Worksheet containing long text | `worksheet-package` | 6 / 6 | Also supports image responses, Markdown and option images; older readers reject it. |
 | Attempt containing long text | `worksheet-attempt-package` | 5 / 1 | Includes all earlier features; older readers reject it. |
+| Worksheet containing rich text | `worksheet-package` | 7 / 7 | Includes earlier features; rich fields require this envelope. |
+| Attempt containing rich text | `worksheet-attempt-package` | 6 / 1 | Includes earlier features and full rich documents. |
 | RolePlayScene | `roleplayscene-package` | 1 | Browser imports also accept plain project JSON and legacy root `project.json` ZIPs; server draft upload requires the current package envelope. |
 
 Worksheet/attempt ZIP helpers support stored (uncompressed) entries and validate entry sizes, CRCs and duplicate names. RolePlayScene uses bundled `fflate` archive reading and has separate API decompression resource limits; do not generalize its compression support to worksheet ZIP import.
@@ -34,7 +36,7 @@ Question images use `prompt.mediaRefs`. Version-1 prompt/option audio references
 
 Editor ZIP import keeps an imported source record, stores binary media locally and creates a separate editable draft. It does not overwrite an existing draft by package ID. Compatible JSON requires nonempty blocks and uses the legacy adapter. Editor opening/replacement and old-audio migration confirmations remain supported. See [replacement](../worksheet/editor-worksheet-replacement.md).
 
-Missing/`plain_text` text formats remain literal; `limited-markdown-v1` enables the documented subset; unknown formats fail validation. Editable plain-text conversion escapes source to preserve display. See [Markdown and version rules](../worksheet/worksheet-limited-markdown.md).
+Missing/`plain_text` text formats remain literal; `limited-markdown-v1` enables the documented subset; unknown formats fail validation. Opening/editable import preserves legacy fields; edits use rich text only when required by the authored document. See [Markdown and version rules](../worksheet/worksheet-limited-markdown.md).
 
 ## Attempt ZIP
 
@@ -192,3 +194,7 @@ not cut to fit. Already saved/imported oversized answers remain complete through
 local recovery, resume, export, server upload and printing; shortening them in
 stages is allowed. Long text never invokes voice/rewrite. The shared rewrite
 provider input ceiling remains 2,000 Unicode code points for eligible questions.
+
+## Rich text
+
+See [shared editor and rich-text-v1 contract](../worksheet/shared-rich-text-editor.md) for the restricted document, validation, legacy preservation, feature-version gates and deployment compatibility. Both server boundaries and browser readers validate the same document schema.

@@ -14,13 +14,19 @@
     "pw:install": "playwright install chromium",
     "serve:static": "node scripts/static-server.mjs",
     "smoke:roleplayscene": "node scripts/roleplayscene-smoke.mjs",
-    "smoke:roleplayscene:headed": "node scripts/roleplayscene-smoke.mjs --headed"
+    "smoke:roleplayscene:headed": "node scripts/roleplayscene-smoke.mjs --headed",
+    "build:editor": "node scripts/build-rich-text.mjs",
+    "check:editor-bundle": "node scripts/build-rich-text.mjs --check"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
     "pg": "^8.16.0"
   },
   "devDependencies": {
+    "@tiptap/core": "3.33.0",
+    "@tiptap/pm": "3.33.0",
+    "@tiptap/starter-kit": "3.33.0",
+    "esbuild": "0.28.2",
     "playwright": "^1.60.0"
   }
 }
