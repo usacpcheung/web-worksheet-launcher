@@ -62,6 +62,24 @@ try {
       await modal.getByText(await label(kind === 'attempts' ? 'viewer.serverAttempts.empty' : 'common.publishedBrowser.empty'), { exact: true }).waitFor();
       assert.equal(await prompt.count(), 0);
       if (kind === 'published') {
+        // Debounced searches must not blur the field or lose subsequent typing.
+        const filter = modal.locator('.browse-modal__filters input').first();
+        const firstSearch = holdList();
+        await filter.fill('Sc');
+        await firstSearch.began; await assertLoading();
+        assert.equal(await filter.isEnabled(), true);
+        assert.equal(await filter.evaluate(node => document.activeElement === node), true);
+        const newerSearch = holdList();
+        await filter.pressSequentially('ience');
+        await newerSearch.began;
+        assert.equal(lastListUrl.searchParams.get('title'), 'Science');
+        newerSearch.release();
+        await modal.getByText(await label('common.publishedBrowser.empty'), { exact: true }).waitFor();
+        const olderCompleted = page.waitForResponse(response => new URL(response.url()).searchParams.get('title') === 'Sc');
+        firstSearch.release(); await olderCompleted;
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.equal(await filter.inputValue(), 'Science');
+        assert.equal(await filter.evaluate(node => document.activeElement === node && node.selectionStart === 7), true);
         moreAvailable = true;
         await modal.getByRole('button', { name: await label('common.actions.refresh'), exact: true }).click();
         const more = modal.getByRole('button', { name: await label('common.actions.loadMore'), exact: true });

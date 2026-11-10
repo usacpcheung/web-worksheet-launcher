@@ -8256,7 +8256,8 @@ function renderEditorShell(session) {
       loading.className = 'muted';
       loading.textContent = t('editor.uploadedDraft.loading');
       container.appendChild(loading);
-      return;
+      // Existing rows remain usable during a background refresh (for example, publishing).
+      if (!session.state.uploadedDrafts.length) return;
     }
     if (session.state.uploadedDraftsError) {
       const error = document.createElement('p'); error.setAttribute('role', 'alert');

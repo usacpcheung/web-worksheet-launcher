@@ -5617,9 +5617,10 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
     signInBtn.hidden = isLoggedIn;
     signInBtn.disabled = isChecking || signInInFlight;
     signInBtn.textContent = signInInFlight ? t('common.actions.signingIn') : t('common.actions.signIn');
-    titleFilterInput.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
-    subjectFilterInput.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
-    ownerFilterInput.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
+    // Automatic searches must not blur the active field or interrupt continued typing.
+    titleFilterInput.disabled = !isLoggedIn || isChecking;
+    subjectFilterInput.disabled = !isLoggedIn || isChecking;
+    ownerFilterInput.disabled = !isLoggedIn || isChecking;
     searchBtn.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
     loadMoreBtn.hidden = !isLoggedIn || !session.state.publishedHasMore;
     loadMoreBtn.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages || !session.state.publishedHasMore;
