@@ -51,7 +51,7 @@ try {
         await open(published ? '#server-browse-published-btn' : '#server-manage-btn');
         await modal.waitFor({ state: 'visible' });
         const refresh = modal.locator(published ? '.published-refresh-action' : '.uploaded-drafts-refresh-action');
-        if (published) {
+        {
           for (const fail of [false, true]) {
             failList = fail;
             let release;
@@ -60,12 +60,12 @@ try {
             await refresh.click();
             assert.equal(await refresh.isDisabled(), true);
             assert.notEqual(await refresh.textContent(), idleLabel);
-            assert.equal(await modal.locator('.published-more-action').isDisabled(), true);
+            if (published) assert.equal(await modal.locator('.published-more-action').isDisabled(), true);
             for (const control of await modal.locator('.published-browser-filters input, .published-browser-filters button').all()) {
               assert.equal(await control.isDisabled(), true);
             }
             release();
-            await page.waitForFunction(() => !document.querySelector('.published-refresh-action').disabled);
+            await page.waitForFunction(selector => !document.querySelector(selector).disabled, published ? '.published-refresh-action' : '.uploaded-drafts-refresh-action');
             assert.equal(await refresh.textContent(), idleLabel);
             if (fail) await modal.locator('[role="alert"]').waitFor();
           }

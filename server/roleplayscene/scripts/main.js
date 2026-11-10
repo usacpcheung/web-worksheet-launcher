@@ -2116,12 +2116,15 @@ function syncUploadedDraftActionAvailability() {
   if (serverSaveButton) serverSaveButton.disabled = draftOpenInProgress;
   if (serverManageButton) serverManageButton.disabled = isLoadingUploadedDrafts || draftOpenInProgress;
   const refreshButton = serverModalActions?.querySelector('.uploaded-drafts-refresh-action');
-  if (refreshButton) refreshButton.disabled = draftOpenInProgress;
+  if (refreshButton) {
+    refreshButton.disabled = draftOpenInProgress || isLoadingUploadedDrafts;
+    refreshButton.textContent = translate(isLoadingUploadedDrafts ? 'server.refreshing' : 'server.refresh');
+  }
   serverModalBody?.querySelectorAll('.server-draft-row[data-uploaded-draft-id]').forEach((row) => {
     const uploadedDraftId = String(row.dataset.uploadedDraftId || '');
     row.querySelectorAll('button[data-draft-action]').forEach((button) => {
       const action = button.dataset.draftAction;
-      button.disabled = draftOpenInProgress
+      button.disabled = draftOpenInProgress || isLoadingUploadedDrafts
         || (action === 'publish' && (isPublishingDraftFlow
           || uploadedDrafts.some(draft => getRolePlaySceneDraftId(draft) === uploadedDraftId
             && draft.publish_state === 'current_version_published')));
@@ -2180,11 +2183,11 @@ function renderUploadedDraftManager({
     },
     actions: [
       {
-        label: translate('server.refresh'),
-        disabled: Boolean(openingUploadedDraft),
+        label: translate(isLoadingUploadedDrafts ? 'server.refreshing' : 'server.refresh'),
+        disabled: Boolean(openingUploadedDraft) || isLoadingUploadedDrafts,
         className: 'uploaded-drafts-refresh-action',
         onClick: async () => {
-          if (openingUploadedDraft) return;
+          if (openingUploadedDraft || isLoadingUploadedDrafts) return;
           const refreshingModal = activeServerModal;
           const result = await loadUploadedRolePlaySceneDrafts({ preflight: true, showManager: false });
           if (activeServerModal !== refreshingModal) return;
@@ -2671,6 +2674,7 @@ async function loadUploadedRolePlaySceneDrafts({ preflight = true, showManager =
   const stale = () => ({ ok: false, skipped: true, status: 'stale_response' });
   isLoadingUploadedDrafts = true;
   updateServerSessionUi();
+  syncUploadedDraftActionAvailability();
   let sessionReady = null;
   try {
     if (preflight) {
@@ -2704,6 +2708,7 @@ async function loadUploadedRolePlaySceneDrafts({ preflight = true, showManager =
     if (requestId === uploadedDraftsRequestId) {
       isLoadingUploadedDrafts = false;
       updateServerSessionUi();
+      syncUploadedDraftActionAvailability();
     }
   }
 }

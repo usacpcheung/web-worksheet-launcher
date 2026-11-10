@@ -15,7 +15,7 @@ test('draft loader ignores stale success, failure and rejection without releasin
     getServerReadErrorMessage: () => 'error',
       openingUploadedDraft: null, uploadedDraftsRequestId: 0, serverModalRevision: 0,
       uploadedDrafts: [], uploadedDraftSlotLimit: 3, isLoadingUploadedDrafts: false,
-      updateServerSessionUi() {}, renderUploadedDraftManager: () => events.push('render'),
+      updateServerSessionUi() {}, syncUploadedDraftActionAvailability() {}, renderUploadedDraftManager: () => events.push('render'),
       showMessage: () => events.push('error'), getServerErrorMessage: () => 'error',
       apiClient: { listRolePlaySceneDrafts: () => new Promise((resolve, reject) => requests.push({ resolve, reject })) },
     });

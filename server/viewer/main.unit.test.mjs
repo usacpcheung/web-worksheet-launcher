@@ -4006,10 +4006,8 @@ test('renderViewerStartPanel shows contextual server-attempt management action',
   assert.equal(Boolean(manageBtn), true);
 });
 
-test('viewer manager reads carry their dialog ownership guard', async () => {
-  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes('await session.listUploadedAttempts({ isCurrent: () => !closing && overlay.isConnected, recoverAuth: false });'), true);
-});
+// Manager ownership and late-response dismissal are exercised through the real UI
+// in scripts/viewer-browser-entry-smoke.mjs (including delayed initial/refresh reads).
 
 test('bootstrapViewer falls back to start panel when resume flag record is invalid', { concurrency: false }, async () => {
   const { document, appRoot } = createFakeDom();

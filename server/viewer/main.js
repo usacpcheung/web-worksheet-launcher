@@ -5249,7 +5249,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
 
   options.signal?.addEventListener('abort', closeModal, { once: true });
 
-  const renderRows = async () => {
+  const renderRows = () => {
     if (closing) return;
     renderViewerAuthFeedback(session);
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
@@ -5399,6 +5399,17 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     });
   };
 
+  const refreshAttempts = async (isCurrent = () => !closing && overlay.isConnected) => {
+    const pending = session.listUploadedAttempts({ isCurrent, recoverAuth: false });
+    // The session marks loading synchronously; paint that state before waiting for I/O.
+    renderRows();
+    try {
+      return await pending;
+    } finally {
+      renderRows();
+    }
+  };
+
   const startModalSignInFlow = () => {
     if (signInInFlight) return;
     signInInFlight = true;
@@ -5424,7 +5435,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
           const readiness = await session.probeServerSessionSilently({ force: true, isCurrent });
           if (!isCurrent()) return;
           if (readiness.status === 'ready') {
-            await session.listUploadedAttempts({ isCurrent, recoverAuth: false });
+            await refreshAttempts(isCurrent);
             if (!isCurrent()) return;
             await session.browsePublishedPackages(session.state.publishedFilters || {}, { preflight: false, reset: true, isCurrent, recoverAuth: false });
             if (!isCurrent()) return;
@@ -5465,8 +5476,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     startModalSignInFlow();
   });
   refreshBtn.addEventListener('click', async () => {
-    await session.listUploadedAttempts({ isCurrent: () => !closing && overlay.isConnected, recoverAuth: false });
-    await renderRows();
+    await refreshAttempts();
   });
   closeBtn.addEventListener('click', () => {
     closeModal();
@@ -5478,9 +5488,9 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     }
   });
 
-  await session.listUploadedAttempts({ isCurrent: () => !closing && overlay.isConnected, recoverAuth: false });
-  await renderRows();
+  const initialLoad = refreshAttempts();
   if (!closing) closeBtn.focus();
+  await initialLoad;
 }
 
 async function showPublishedPackagesBrowseModal(session, options = {}) {
@@ -5723,13 +5733,17 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
   };
 
   const refreshBrowse = async (options = {}) => {
-    await session.browsePublishedPackages({
+    const pending = session.browsePublishedPackages({
       title: titleFilterInput.value,
       subject: subjectFilterInput.value,
       owner: ownerFilterInput.value,
     }, { ...options, preflight: false, recoverAuth: false, isCurrent: () => !closing && overlay.isConnected && (options.isCurrent?.() ?? true) });
-    if (options.isCurrent && !options.isCurrent()) return;
     renderRows();
+    try {
+      return await pending;
+    } finally {
+      if (!options.isCurrent || options.isCurrent()) renderRows();
+    }
   };
 
   const startModalSignInFlow = () => {
@@ -5806,8 +5820,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
     await refreshBrowse({ reset: true });
   });
   loadMoreBtn.addEventListener('click', async () => {
-    await session.browsePublishedPackages(session.state.publishedFilters || {}, { append: true, preflight: false, recoverAuth: false, isCurrent: () => !closing && overlay.isConnected });
-    renderRows();
+    await refreshBrowse({ append: true });
   });
   refreshBtn.addEventListener('click', async () => {
     await refreshBrowse({ reset: true });
@@ -5825,8 +5838,9 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
     }
   });
 
-  await refreshBrowse({ reset: true });
+  const initialLoad = refreshBrowse({ reset: true });
   if (!closing) closeBtn.focus();
+  await initialLoad;
 }
 
 async function resumeViewerReadReturn(session) {

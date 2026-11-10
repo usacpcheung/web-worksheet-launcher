@@ -300,7 +300,7 @@ assert.ok(
     && mainSource.includes("className: 'uploaded-drafts-refresh-action'")
     && mainSource.includes("serverSaveButton.disabled = Boolean(openingUploadedDraft)")
     && mainSource.includes("serverManageButton.disabled = isLoadingUploadedDrafts || Boolean(openingUploadedDraft)")
-    && mainSource.includes("button.disabled = draftOpenInProgress\n        || (action === 'publish'"),
+    && mainSource.includes("button.disabled = draftOpenInProgress || isLoadingUploadedDrafts\n        || (action === 'publish'"),
   'uploaded draft manager should serialize opens and keep draft, refresh, save, and manage actions locked across modal re-renders',
 );
 assert.ok(
