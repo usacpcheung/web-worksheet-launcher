@@ -3571,3 +3571,10 @@ html:has(.viewer-attempt-dialog[open]) { overflow:hidden; overflow-anchor:none; 
   overflow-wrap: anywhere;
   resize: vertical;
 }
+
+/* Print remains reachable from the compact action drawer after submission. */
+.viewer-drawer-print { display:none; }
+.viewer-actions-drawer .viewer-drawer-print { display:block; }
+.viewer-drawer-print button { width:100%; }
+.viewer-drawer-print button[aria-disabled="true"] { opacity:.5; cursor:default; }
+.viewer-drawer-print-hint { margin:8px 0 0; color:#526985; font-size:.85rem; line-height:1.5; }

@@ -6021,6 +6021,19 @@ function renderViewerShell(session) {
   printReportBtn.setAttribute('aria-label', t('viewer.print.printReportAriaLabel'));
   printReportBtn.title = t('viewer.print.printReportTitle');
   printReportBtn.innerHTML = createViewerIcon('print');
+  const drawerPrint = document.createElement('div');
+  drawerPrint.className = 'viewer-drawer-print';
+  const drawerPrintBtn = document.createElement('button');
+  drawerPrintBtn.type = 'button';
+  drawerPrintBtn.className = 'viewer-bottom-action-btn';
+  drawerPrintBtn.textContent = t('viewer.print.printReportTitle');
+  const drawerPrintHint = document.createElement('p');
+  drawerPrintHint.id = 'viewer-drawer-print-hint';
+  drawerPrintHint.className = 'viewer-drawer-print-hint';
+  drawerPrintHint.hidden = true;
+  drawerPrintHint.textContent = t('viewer.attemptMenu.printHint');
+  drawerPrintBtn.setAttribute('aria-describedby', drawerPrintHint.id);
+  drawerPrint.append(drawerPrintBtn, drawerPrintHint);
   const languageSelector = createLanguageSelector({
     variant: 'icon',
     onChange: () => {
@@ -7100,8 +7113,12 @@ function renderViewerShell(session) {
     checkBtn.hidden = !checkAvailable;
     checkBtn.disabled = session.state.isFinalizing || !checkAvailable;
     printReportBtn.hidden = false;
-    printReportBtn.disabled = session.state.isFinalizing;
-    printReportBtn.setAttribute('aria-disabled', String(!printAvailable || session.state.isFinalizing));
+    for (const control of [printReportBtn, drawerPrintBtn]) {
+      control.disabled = session.state.isFinalizing;
+      control.setAttribute('aria-disabled', String(!printAvailable || session.state.isFinalizing));
+    }
+    drawerPrintHint.hidden = printAvailable;
+    if (printAvailable) hidePrintHint();
     cancelUploadBtn.hidden = !session.state.isUploadingAttemptPackage && !session.state.isLoadingUploadRecoveryList;
     uploadAttemptBtn.disabled = session.state.isFinalizing || session.state.isUploadingAttemptPackage || session.state.isUploadAttemptFlowActive;
     exportAttemptBtn.disabled = session.state.isFinalizing || session.state.isUploadingAttemptPackage;
@@ -7215,8 +7232,11 @@ function renderViewerShell(session) {
     }
   });
 
-  printReportBtn.addEventListener('click', async () => {
-    if (session.state.status !== 'completed') { showPrintHint(); return; }
+  const handlePrint = async (event) => {
+    if (session.state.status !== 'completed') {
+      if (event.currentTarget === printReportBtn) showPrintHint();
+      return;
+    }
     if (promptingIdentity || session.state.isFinalizing) return;
     const attemptId = session.state.localAttemptId;
     const isCurrent = () => !signal.aborted && session.state.localAttemptId === attemptId && session.state.status === 'completed';
@@ -7234,7 +7254,9 @@ function renderViewerShell(session) {
       renderUI();
     } catch { session.pushNotification({ kind: 'error', text: t('viewer.attemptMenu.localSaveFailed') }); }
     finally { promptingIdentity = false; }
-  });
+  };
+  printReportBtn.addEventListener('click', handlePrint, { signal });
+  drawerPrintBtn.addEventListener('click', handlePrint, { signal });
   prevBtn.addEventListener('click', goPrev);
   nextBtn.addEventListener('click', goNext);
 
@@ -7292,8 +7314,8 @@ function renderViewerShell(session) {
   bottomBarRoot.innerHTML = '';
   app.append(shell, detailsModal);
   const navigation = createWorksheetNavigation({ t, signal, operationPanel: crossQuestionStatus.root,
-    utilityActions: headerActions, utilityHome: headerTop,
-    actions: { previous: prevBtn, next: nextBtn, save: saveBtn, submit: completeBtn, check: checkBtn },
+    utilityActions: headerActions, utilityHome: headerTop, compactPrint: drawerPrint,
+    actions: { previous: prevBtn, next: nextBtn, save: saveBtn, submit: completeBtn, check: checkBtn, print: drawerPrintBtn },
     navigate: index => navigateToBlockIndex(index),
   });
   shell.prepend(navigation.root);
