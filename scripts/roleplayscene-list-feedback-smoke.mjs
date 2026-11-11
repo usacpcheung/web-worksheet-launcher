@@ -6,6 +6,7 @@ try {
     const context = await browser.newContext({ viewport: { width, height: 900 } });
     try {
       const page = await context.newPage();
+      const row = { uploaded_draft_id: 'fixture', roleplayscene_uploaded_draft_id: 'fixture', title: 'QA draft', subject: 'Subject', description: 'Description', publish_state: 'draft_only', owner_sub: 'fixture' };
       const errors = []; page.on('pageerror', error => errors.push(error.message));
       let signedIn = false, failList = false, reads = 0, hold = null, heldSession = null;
       await page.addInitScript(locale => localStorage.setItem('worksheetLauncher.locale', locale), locale);
@@ -26,7 +27,7 @@ try {
         reads++;
         return route.fulfill({ status: failList ? 503 : 200, json: failList
           ? { ok: false, error: { code: 'SERVICE_BUSY' } }
-          : { ok: true, data: { items: [] } } });
+          : { ok: true, data: { items: new URL(route.request().url()).pathname.endsWith('/drafts') ? [row] : [] } } });
       });
       await page.goto(`${process.env.VIEWER_SMOKE_URL || 'http://127.0.0.1:8765'}/server/roleplayscene/`);
       const modal = page.locator('#server-modal-overlay');
@@ -53,6 +54,10 @@ try {
         const refresh = modal.locator(published ? '.published-refresh-action' : '.uploaded-drafts-refresh-action');
         {
           for (const fail of [false, true]) {
+            if (!published) {
+              await modal.locator('[data-draft-action]').first().waitFor();
+              for (const action of await modal.locator('[data-draft-action]').all()) assert.equal(await action.isEnabled(), true);
+            }
             failList = fail;
             let release;
             hold = new Promise(resolve => { release = resolve; });
@@ -60,6 +65,10 @@ try {
             await refresh.click();
             assert.equal(await refresh.isDisabled(), true);
             assert.notEqual(await refresh.textContent(), idleLabel);
+            if (!published) {
+              assert.ok(await modal.locator('[data-draft-action]').count(), 'cached draft rows stay visible');
+              for (const action of await modal.locator('[data-draft-action]').all()) assert.equal(await action.isDisabled(), true);
+            }
             if (published) assert.equal(await modal.locator('.published-more-action').isDisabled(), true);
             for (const control of await modal.locator('.published-browser-filters input, .published-browser-filters button').all()) {
               assert.equal(await control.isDisabled(), true);
@@ -67,6 +76,7 @@ try {
             release();
             await page.waitForFunction(selector => !document.querySelector(selector).disabled, published ? '.published-refresh-action' : '.uploaded-drafts-refresh-action');
             assert.equal(await refresh.textContent(), idleLabel);
+            if (!published && !fail) for (const action of await modal.locator('[data-draft-action]').all()) assert.equal(await action.isEnabled(), true);
             if (fail) await modal.locator('[role="alert"]').waitFor();
           }
           failList = false;

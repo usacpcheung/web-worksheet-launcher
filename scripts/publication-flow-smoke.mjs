@@ -65,6 +65,8 @@ try {
           await page.waitForFunction(() => !window.editorSession.state.isLoadingUploadedDrafts);
           assert.equal(await form().evaluate(node => node.contains(document.activeElement)), true,
             'background list completion must not steal publication focus');
+          assert.equal(await form().locator('input').first().inputValue(), 'Taken');
+          assert.equal(await form().locator('input').last().inputValue(), 'Retained metadata');
         }
         // Real dialogs retain keyboard focus within the active form.
         await page.keyboard.press('Tab');

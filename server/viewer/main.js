@@ -4625,7 +4625,11 @@ class ViewerAttemptSession {
       probe: options => this.probeServerSessionSilently({ force: true, ...options }),
       subject: () => this.state.serverSession?.user?.sub,
       signIn: () => this.beginServerSignIn({ readRecovery: true }),
-      prompt: options => promptForReadSignIn(options),
+      prompt: options => {
+        // Hand off the initial checking notice to the explicit Login/Cancel UI.
+        this._browserEntry?.clearFeedback();
+        return promptForReadSignIn(options);
+      },
       redirect: ({ intent, isCurrent, subject }) => redirectReadSignIn({
         app: 'viewer', intent, isCurrent, subject: () => subject,
         save: async () => {
