@@ -1229,7 +1229,6 @@ class EditorDraftSession {
     this._activeAuthFlowId = null;
     this._loadUploadedDraftsWithPreflightPromise = null;
     this._loadUploadedDraftsWithoutPreflightPromise = null;
-    this._loadUploadedDraftsActiveCount = 0;
     this._audioOperations = new Map();
     this.audioPhaseTimeoutMs = AUDIO_GENERATION_PHASE_TIMEOUT_MS;
     this._promptT2AInFlightTargets = new Set();
@@ -4221,24 +4220,24 @@ class EditorDraftSession {
     const ownsRequest = () => isCurrent() && this._uploadedDraftsRequest === request;
     const superseded = () => ({ ok: false, skipped: true, status: 'superseded' });
     const loadPromise = (async () => {
-      let sessionReady = null;
-      if (shouldPreflight) {
-        sessionReady = await this.ensureReadSessionReady({ isCurrent: ownsRequest, intent: { kind: 'drafts' } });
-        if (!ownsRequest()) return superseded();
-        if (sessionReady.result?.skipped) return sessionReady.result;
-        if (!sessionReady.ok) {
-          this.state.uploadedDraftsError = getApiErrorMessage(sessionReady.result, 'list');
-          this.state.uploadedDrafts = []; this.notifyStateChange();
-          return sessionReady.result;
-        }
-      }
-
-      this._loadUploadedDraftsActiveCount += 1;
-      this.state.isLoadingUploadedDrafts = this._loadUploadedDraftsActiveCount > 0;
+      this.state.isLoadingUploadedDrafts = true;
+      this.state.uploadedDraftsError = null;
       this.pushNotification({ kind: 'info', category: 'server', source: 'uploadedDrafts.refresh', text: editorNotification('uploadDraft.refreshing'), logActivity: false });
       this.notifyStateChange();
 
       try {
+        let sessionReady = null;
+        if (shouldPreflight) {
+          sessionReady = await this.ensureReadSessionReady({ isCurrent: ownsRequest, intent: { kind: 'drafts' } });
+          if (!ownsRequest()) return superseded();
+          if (sessionReady.result?.skipped) return sessionReady.result;
+          if (!sessionReady.ok) {
+            this.state.uploadedDraftsError = getApiErrorMessage(sessionReady.result, 'list');
+            this.state.uploadedDrafts = []; this.notifyStateChange();
+            return sessionReady.result;
+          }
+        }
+
         const fetchRows = () => this.apiClient.listUploadedDrafts({ signal: options.signal });
         const result = await this.readAuth.read(fetchRows, { preflight: false, prepared: sessionReady, recoverAuth: options.recoverAuth !== false, isCurrent: ownsRequest, signal: options.signal, intent: { kind: 'drafts' } });
         if (!ownsRequest()) return superseded();
@@ -4264,9 +4263,9 @@ class EditorDraftSession {
         if (!ownsRequest()) return superseded();
         throw error;
       } finally {
-        this._loadUploadedDraftsActiveCount = Math.max(0, this._loadUploadedDraftsActiveCount - 1);
-        this.state.isLoadingUploadedDrafts = this._loadUploadedDraftsActiveCount > 0;
-        if (this._loadUploadedDraftsActiveCount === 0) {
+        // A dismissed/superseded request must not keep a newer manager busy.
+        if (this._uploadedDraftsRequest === request) {
+          this.state.isLoadingUploadedDrafts = false;
           this.state.notifications = this.state.notifications.filter((item) => !(
             item?.source === 'uploadedDrafts.refresh' && item?.kind === 'info'
           ));
@@ -5949,90 +5948,94 @@ function renderEditorShell(session) {
       return { ok: false, status: 'superseded' };
     }
     const append = options.append === true;
-    const sessionReady = await session.ensureReadSessionReady({ isCurrent, intent: { kind: 'published', filters: { title: browsePublishedState.title, subject: browsePublishedState.subject, owner: browsePublishedState.owner } } });
-    if (!isCurrent()) {
-      if (request === publishedSearchRequest) browsePublishedState = { ...browsePublishedState, loading: false };
-      return { ok: false, status: 'superseded' };
-    }
-    if (sessionReady.result?.skipped) return sessionReady.result;
-    if (!sessionReady.ok) {
-      const notReadyMessage = getApiErrorMessage(sessionReady.result, 'list');
-      browsePublishedState = {
-        ...browsePublishedState,
-        loading: false,
-        error: notReadyMessage,
-        items: [],
-        hasMore: false,
-        nextOffset: null,
-      };
-      emitPublishedBrowseNotification({
-        kind: 'warn',
-        source: 'browse.published.search',
-        text: notReadyMessage,
-      });
-      renderPublishedBrowserModal();
-      return sessionReady.result;
-    }
-    browsePublishedState = {
-      ...browsePublishedState,
-      loading: true,
-      error: null,
-    };
+    // Session checks are part of loading too; never show an empty/stale list meanwhile.
+    browsePublishedState = { ...browsePublishedState, loading: true, error: null };
     renderPublishedBrowserModal();
-    let result;
     try {
-      result = await session.readAuth.read(() => session.apiClient.listPublishedPackages({
-        title: browsePublishedState.title,
-        subject: browsePublishedState.subject,
-        owner: browsePublishedState.owner,
-        limit: 20,
-        offset: append && Number.isFinite(Number(browsePublishedState.nextOffset))
-          ? Number(browsePublishedState.nextOffset)
-          : 0,
-      }), { preflight: false, prepared: sessionReady, isCurrent, intent: { kind: 'published', filters: { title: browsePublishedState.title, subject: browsePublishedState.subject, owner: browsePublishedState.owner } } });
-    } catch (error) {
-      result = { ok: false, error: { code: 'NETWORK_ERROR' }, cause: error };
-    }
-    if (!isCurrent()) {
-      if (request === publishedSearchRequest) browsePublishedState = { ...browsePublishedState, loading: false };
-      return { ok: false, status: 'superseded' };
-    }
-    if (result.ok && !result.isCurrent?.()) result = { ok: false, skipped: true, status: 'superseded' };
-    if (result.skipped) { browsePublishedState = { ...browsePublishedState, loading: false }; renderPublishedBrowserModal(); return result; }
-    if (!result.ok) {
+      const sessionReady = await session.ensureReadSessionReady({ isCurrent, intent: { kind: 'published', filters: { title: browsePublishedState.title, subject: browsePublishedState.subject, owner: browsePublishedState.owner } } });
+      if (!isCurrent()) {
+        if (request === publishedSearchRequest) browsePublishedState = { ...browsePublishedState, loading: false };
+        return { ok: false, status: 'superseded' };
+      }
+      if (sessionReady.result?.skipped) return sessionReady.result;
+      if (!sessionReady.ok) {
+        const notReadyMessage = getApiErrorMessage(sessionReady.result, 'list');
+        browsePublishedState = {
+          ...browsePublishedState,
+          loading: false,
+          error: notReadyMessage,
+          items: [],
+          hasMore: false,
+          nextOffset: null,
+        };
+        emitPublishedBrowseNotification({
+          kind: 'warn',
+          source: 'browse.published.search',
+          text: notReadyMessage,
+        });
+        renderPublishedBrowserModal();
+        return sessionReady.result;
+      }
+      let result;
+      try {
+        result = await session.readAuth.read(() => session.apiClient.listPublishedPackages({
+          title: browsePublishedState.title,
+          subject: browsePublishedState.subject,
+          owner: browsePublishedState.owner,
+          limit: 20,
+          offset: append && Number.isFinite(Number(browsePublishedState.nextOffset))
+            ? Number(browsePublishedState.nextOffset)
+            : 0,
+        }), { preflight: false, prepared: sessionReady, isCurrent, intent: { kind: 'published', filters: { title: browsePublishedState.title, subject: browsePublishedState.subject, owner: browsePublishedState.owner } } });
+      } catch (error) {
+        result = { ok: false, error: { code: 'NETWORK_ERROR' }, cause: error };
+      }
+      if (!isCurrent()) {
+        if (request === publishedSearchRequest) browsePublishedState = { ...browsePublishedState, loading: false };
+        return { ok: false, status: 'superseded' };
+      }
+      if (result.ok && !result.isCurrent?.()) result = { ok: false, skipped: true, status: 'superseded' };
+      if (result.skipped) { browsePublishedState = { ...browsePublishedState, loading: false }; renderPublishedBrowserModal(); return result; }
+      if (!result.ok) {
+        browsePublishedState = {
+          ...browsePublishedState,
+          loading: false,
+          error: getApiErrorMessage(result, 'list'),
+          hasMore: false,
+          nextOffset: null,
+        };
+        emitPublishedBrowseNotification({
+          kind: 'error',
+          source: 'browse.published.search',
+          text: getApiErrorMessage(result, 'list'),
+        });
+        renderPublishedBrowserModal();
+        return result;
+      }
+      const resultItems = Array.isArray(result.data?.items) ? result.data.items : [];
       browsePublishedState = {
         ...browsePublishedState,
         loading: false,
-        error: getApiErrorMessage(result, 'list'),
-        hasMore: false,
-        nextOffset: null,
+        items: append ? [...browsePublishedState.items, ...resultItems] : resultItems,
+        hasMore: result.data?.hasMore === true,
+        nextOffset: Number.isFinite(Number(result.data?.nextOffset)) ? Number(result.data.nextOffset) : null,
+        error: null,
       };
       emitPublishedBrowseNotification({
-        kind: 'error',
+        kind: 'success',
         source: 'browse.published.search',
-        text: getApiErrorMessage(result, 'list'),
+        text: append
+          ? editorNotification('browsePublished.loadedMoreCount', { count: resultItems.length })
+          : editorNotification('browsePublished.foundCount', { count: resultItems.length }),
       });
       renderPublishedBrowserModal();
       return result;
+    } finally {
+      if (request === publishedSearchRequest && browsePublishedState.loading) {
+        browsePublishedState = { ...browsePublishedState, loading: false };
+        renderPublishedBrowserModal();
+      }
     }
-    const resultItems = Array.isArray(result.data?.items) ? result.data.items : [];
-    browsePublishedState = {
-      ...browsePublishedState,
-      loading: false,
-      items: append ? [...browsePublishedState.items, ...resultItems] : resultItems,
-      hasMore: result.data?.hasMore === true,
-      nextOffset: Number.isFinite(Number(result.data?.nextOffset)) ? Number(result.data.nextOffset) : null,
-      error: null,
-    };
-    emitPublishedBrowseNotification({
-      kind: 'success',
-      source: 'browse.published.search',
-      text: append
-        ? editorNotification('browsePublished.loadedMoreCount', { count: resultItems.length })
-        : editorNotification('browsePublished.foundCount', { count: resultItems.length }),
-    });
-    renderPublishedBrowserModal();
-    return result;
   }
 
   function renderPublishedBrowserModal() {
@@ -8248,6 +8251,14 @@ function renderEditorShell(session) {
   function renderUploadedDraftRows(container) {
     const serverReady = session.state.serverSession?.status === 'ready';
     container.innerHTML = '';
+    if (session.state.isLoadingUploadedDrafts) {
+      const loading = document.createElement('p');
+      loading.className = 'muted';
+      loading.textContent = t('editor.uploadedDraft.loading');
+      container.appendChild(loading);
+      // Existing rows remain usable during a background refresh (for example, publishing).
+      if (!session.state.uploadedDrafts.length) return;
+    }
     if (session.state.uploadedDraftsError) {
       const error = document.createElement('p'); error.setAttribute('role', 'alert');
       error.textContent = session.state.uploadedDraftsError; container.append(error); return;
@@ -8255,9 +8266,7 @@ function renderEditorShell(session) {
     if (session.state.uploadedDrafts.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'muted';
-      empty.textContent = session.state.isLoadingUploadedDrafts
-        ? t('editor.uploadedDraft.loading')
-        : t('editor.uploadedDraft.empty');
+      empty.textContent = t('editor.uploadedDraft.empty');
       container.appendChild(empty);
       return;
     }

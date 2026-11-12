@@ -4625,7 +4625,11 @@ class ViewerAttemptSession {
       probe: options => this.probeServerSessionSilently({ force: true, ...options }),
       subject: () => this.state.serverSession?.user?.sub,
       signIn: () => this.beginServerSignIn({ readRecovery: true }),
-      prompt: options => promptForReadSignIn(options),
+      prompt: options => {
+        // Hand off the initial checking notice to the explicit Login/Cancel UI.
+        this._browserEntry?.clearFeedback();
+        return promptForReadSignIn(options);
+      },
       redirect: ({ intent, isCurrent, subject }) => redirectReadSignIn({
         app: 'viewer', intent, isCurrent, subject: () => subject,
         save: async () => {
@@ -5249,7 +5253,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
 
   options.signal?.addEventListener('abort', closeModal, { once: true });
 
-  const renderRows = async () => {
+  const renderRows = () => {
     if (closing) return;
     renderViewerAuthFeedback(session);
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
@@ -5399,6 +5403,17 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     });
   };
 
+  const refreshAttempts = async (isCurrent = () => !closing && overlay.isConnected) => {
+    const pending = session.listUploadedAttempts({ isCurrent, recoverAuth: false });
+    // The session marks loading synchronously; paint that state before waiting for I/O.
+    renderRows();
+    try {
+      return await pending;
+    } finally {
+      renderRows();
+    }
+  };
+
   const startModalSignInFlow = () => {
     if (signInInFlight) return;
     signInInFlight = true;
@@ -5424,7 +5439,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
           const readiness = await session.probeServerSessionSilently({ force: true, isCurrent });
           if (!isCurrent()) return;
           if (readiness.status === 'ready') {
-            await session.listUploadedAttempts({ isCurrent, recoverAuth: false });
+            await refreshAttempts(isCurrent);
             if (!isCurrent()) return;
             await session.browsePublishedPackages(session.state.publishedFilters || {}, { preflight: false, reset: true, isCurrent, recoverAuth: false });
             if (!isCurrent()) return;
@@ -5465,8 +5480,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     startModalSignInFlow();
   });
   refreshBtn.addEventListener('click', async () => {
-    await session.listUploadedAttempts({ isCurrent: () => !closing && overlay.isConnected, recoverAuth: false });
-    await renderRows();
+    await refreshAttempts();
   });
   closeBtn.addEventListener('click', () => {
     closeModal();
@@ -5478,9 +5492,9 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     }
   });
 
-  await session.listUploadedAttempts({ isCurrent: () => !closing && overlay.isConnected, recoverAuth: false });
-  await renderRows();
+  const initialLoad = refreshAttempts();
   if (!closing) closeBtn.focus();
+  await initialLoad;
 }
 
 async function showPublishedPackagesBrowseModal(session, options = {}) {
@@ -5607,9 +5621,10 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
     signInBtn.hidden = isLoggedIn;
     signInBtn.disabled = isChecking || signInInFlight;
     signInBtn.textContent = signInInFlight ? t('common.actions.signingIn') : t('common.actions.signIn');
-    titleFilterInput.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
-    subjectFilterInput.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
-    ownerFilterInput.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
+    // Automatic searches must not blur the active field or interrupt continued typing.
+    titleFilterInput.disabled = !isLoggedIn || isChecking;
+    subjectFilterInput.disabled = !isLoggedIn || isChecking;
+    ownerFilterInput.disabled = !isLoggedIn || isChecking;
     searchBtn.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
     loadMoreBtn.hidden = !isLoggedIn || !session.state.publishedHasMore;
     loadMoreBtn.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages || !session.state.publishedHasMore;
@@ -5723,13 +5738,17 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
   };
 
   const refreshBrowse = async (options = {}) => {
-    await session.browsePublishedPackages({
+    const pending = session.browsePublishedPackages({
       title: titleFilterInput.value,
       subject: subjectFilterInput.value,
       owner: ownerFilterInput.value,
     }, { ...options, preflight: false, recoverAuth: false, isCurrent: () => !closing && overlay.isConnected && (options.isCurrent?.() ?? true) });
-    if (options.isCurrent && !options.isCurrent()) return;
     renderRows();
+    try {
+      return await pending;
+    } finally {
+      if (!options.isCurrent || options.isCurrent()) renderRows();
+    }
   };
 
   const startModalSignInFlow = () => {
@@ -5806,8 +5825,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
     await refreshBrowse({ reset: true });
   });
   loadMoreBtn.addEventListener('click', async () => {
-    await session.browsePublishedPackages(session.state.publishedFilters || {}, { append: true, preflight: false, recoverAuth: false, isCurrent: () => !closing && overlay.isConnected });
-    renderRows();
+    await refreshBrowse({ append: true });
   });
   refreshBtn.addEventListener('click', async () => {
     await refreshBrowse({ reset: true });
@@ -5825,8 +5843,9 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
     }
   });
 
-  await refreshBrowse({ reset: true });
+  const initialLoad = refreshBrowse({ reset: true });
   if (!closing) closeBtn.focus();
+  await initialLoad;
 }
 
 async function resumeViewerReadReturn(session) {
@@ -6006,6 +6025,19 @@ function renderViewerShell(session) {
   printReportBtn.setAttribute('aria-label', t('viewer.print.printReportAriaLabel'));
   printReportBtn.title = t('viewer.print.printReportTitle');
   printReportBtn.innerHTML = createViewerIcon('print');
+  const drawerPrint = document.createElement('div');
+  drawerPrint.className = 'viewer-drawer-print';
+  const drawerPrintBtn = document.createElement('button');
+  drawerPrintBtn.type = 'button';
+  drawerPrintBtn.className = 'viewer-bottom-action-btn';
+  drawerPrintBtn.textContent = t('viewer.print.printReportTitle');
+  const drawerPrintHint = document.createElement('p');
+  drawerPrintHint.id = 'viewer-drawer-print-hint';
+  drawerPrintHint.className = 'viewer-drawer-print-hint';
+  drawerPrintHint.hidden = true;
+  drawerPrintHint.textContent = t('viewer.attemptMenu.printHint');
+  drawerPrintBtn.setAttribute('aria-describedby', drawerPrintHint.id);
+  drawerPrint.append(drawerPrintBtn, drawerPrintHint);
   const languageSelector = createLanguageSelector({
     variant: 'icon',
     onChange: () => {
@@ -7085,8 +7117,12 @@ function renderViewerShell(session) {
     checkBtn.hidden = !checkAvailable;
     checkBtn.disabled = session.state.isFinalizing || !checkAvailable;
     printReportBtn.hidden = false;
-    printReportBtn.disabled = session.state.isFinalizing;
-    printReportBtn.setAttribute('aria-disabled', String(!printAvailable || session.state.isFinalizing));
+    for (const control of [printReportBtn, drawerPrintBtn]) {
+      control.disabled = session.state.isFinalizing;
+      control.setAttribute('aria-disabled', String(!printAvailable || session.state.isFinalizing));
+    }
+    drawerPrintHint.hidden = printAvailable;
+    if (printAvailable) hidePrintHint();
     cancelUploadBtn.hidden = !session.state.isUploadingAttemptPackage && !session.state.isLoadingUploadRecoveryList;
     uploadAttemptBtn.disabled = session.state.isFinalizing || session.state.isUploadingAttemptPackage || session.state.isUploadAttemptFlowActive;
     exportAttemptBtn.disabled = session.state.isFinalizing || session.state.isUploadingAttemptPackage;
@@ -7200,8 +7236,11 @@ function renderViewerShell(session) {
     }
   });
 
-  printReportBtn.addEventListener('click', async () => {
-    if (session.state.status !== 'completed') { showPrintHint(); return; }
+  const handlePrint = async (event) => {
+    if (session.state.status !== 'completed') {
+      if (event.currentTarget === printReportBtn) showPrintHint();
+      return;
+    }
     if (promptingIdentity || session.state.isFinalizing) return;
     const attemptId = session.state.localAttemptId;
     const isCurrent = () => !signal.aborted && session.state.localAttemptId === attemptId && session.state.status === 'completed';
@@ -7219,7 +7258,9 @@ function renderViewerShell(session) {
       renderUI();
     } catch { session.pushNotification({ kind: 'error', text: t('viewer.attemptMenu.localSaveFailed') }); }
     finally { promptingIdentity = false; }
-  });
+  };
+  printReportBtn.addEventListener('click', handlePrint, { signal });
+  drawerPrintBtn.addEventListener('click', handlePrint, { signal });
   prevBtn.addEventListener('click', goPrev);
   nextBtn.addEventListener('click', goNext);
 
@@ -7277,8 +7318,8 @@ function renderViewerShell(session) {
   bottomBarRoot.innerHTML = '';
   app.append(shell, detailsModal);
   const navigation = createWorksheetNavigation({ t, signal, operationPanel: crossQuestionStatus.root,
-    utilityActions: headerActions, utilityHome: headerTop,
-    actions: { previous: prevBtn, next: nextBtn, save: saveBtn, submit: completeBtn, check: checkBtn },
+    utilityActions: headerActions, utilityHome: headerTop, compactPrint: drawerPrint,
+    actions: { previous: prevBtn, next: nextBtn, save: saveBtn, submit: completeBtn, check: checkBtn, print: drawerPrintBtn },
     navigate: index => navigateToBlockIndex(index),
   });
   shell.prepend(navigation.root);

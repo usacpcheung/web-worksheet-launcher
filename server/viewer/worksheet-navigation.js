@@ -32,7 +32,7 @@ export function describeSections(blocks, t) {
   });
 }
 
-export function createWorksheetNavigation({ t, actions, navigate, operationPanel, utilityActions, utilityHome, signal }) {
+export function createWorksheetNavigation({ t, actions, navigate, operationPanel, utilityActions, utilityHome, compactPrint, signal }) {
   const root = make('div', 'viewer-navigation');
   const panel = make('aside', 'viewer-action-panel');
   panel.setAttribute('aria-label', t('viewer.navigation.actions'));
@@ -47,6 +47,7 @@ export function createWorksheetNavigation({ t, actions, navigate, operationPanel
   nav.append(actions.previous, actions.next);
   const primary = make('div', 'viewer-primary-actions');
   primary.append(actions.save, actions.submit, actions.check);
+  if (compactPrint) primary.append(compactPrint);
   panel.append(ring, progress, browse, context, nav, primary);
   const launcher = button('viewer-actions-launcher');
   launcher.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>';
@@ -169,7 +170,10 @@ export function createWorksheetNavigation({ t, actions, navigate, operationPanel
   }
   for (const control of Object.values(actions)) {
     // Release the modal top layer before existing submit/check/save flows run.
-    control.addEventListener('click', () => closeDrawer(), { capture: true, signal });
+    control.addEventListener('click', () => {
+      // Unavailable Print explains its requirement inside the drawer.
+      if (control.getAttribute('aria-disabled') !== 'true') closeDrawer();
+    }, { capture: true, signal });
   }
   const adapt = () => {
     const active = document.activeElement;

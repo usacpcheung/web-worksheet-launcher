@@ -4813,7 +4813,7 @@ test('deleteUploadedDraft refreshes uploaded drafts list and leaves local draft 
   ]);
 });
 
-test('loadUploadedDrafts deduplicates concurrent preflight calls before loading flag is set', async () => {
+test('loadUploadedDrafts deduplicates concurrent preflight calls', async () => {
   const mod = await loadEditorModule();
   let ensureCalls = 0;
   let listCalls = 0;
@@ -4902,7 +4902,7 @@ test('loadUploadedDrafts stores draftSlotLimit for uploaded draft management UI'
   assert.equal(session.state.uploadedDraftSlotLimit, 5);
 });
 
-test('loadUploadedDrafts keeps loading state true until overlapping preflight and non-preflight refreshes finish', async () => {
+test('loadUploadedDrafts keeps the current refresh busy while obsolete preflight work settles', async () => {
   const mod = await loadEditorModule();
   let resolveEnsure;
   let resolveList;

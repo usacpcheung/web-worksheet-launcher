@@ -19,7 +19,7 @@ test('manager refresh cannot reopen closed recovery or replace a newer modal', a
   for (const state of ['closed', 'replaced', 'current']) {
     const response = deferred();
     const c = vm.createContext({ getReadAuth: () => ({ captureIdentity: () => () => true, observe: result => result }), runDeletionFlow, deletingDraftIds: new Set(), deletingPublishedSceneIds: new Set(), store: { projectGeneration: 0 }, t: key => key, serverModalRevision: 0,
-      uploadedDrafts: [], uploadedDraftSlotLimit: 3, openingUploadedDraft: null,
+      uploadedDrafts: [], uploadedDraftSlotLimit: 3, openingUploadedDraft: null, isLoadingUploadedDrafts: false,
       activeServerModal: null, translate: key => key,
       loadUploadedRolePlaySceneDrafts: () => response.promise,
     });
