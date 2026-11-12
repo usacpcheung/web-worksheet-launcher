@@ -6,6 +6,14 @@ Test commands come from `package.json`, the [regression workflow](../../.github/
 
 The `Regression` GitHub Actions workflow runs on every pull request, pushes to `main`, and manual dispatch. It uses Ubuntu 24.04, Node 24, `npm ci`, the Chromium build matching the locked Playwright version, and a disposable PostgreSQL 17 service. It requires no repository secrets or production services. Pull requests use the ordinary `pull_request` event with a read-only token; checkout does not persist credentials.
 
+Browser jobs use the official Playwright Noble container, pinned by version and
+immutable image digest in the workflow. Chromium and its system libraries are
+already installed, so these jobs do not depend on Ubuntu package mirrors during
+setup. After `npm ci`, a Chromium launch verifies that the installed Playwright
+package can use the bundled browser. When upgrading Playwright, update the image
+tag and digest together with `package-lock.json`; retain this launch check and
+all browser shards. Node and PostgreSQL jobs continue to run on the host runner.
+
 Jobs run the complete Node suite, CI runner behavior tests, all discovered `scripts/*-smoke.mjs` across three browser shards, and the PostgreSQL fixture below. New smoke scripts with that suffix are included automatically. No path filters skip documentation-only PRs. A newer run for the same PR/branch cancels an older run.
 
 The final **Regression gate** passes only when Node, all browser shards and PostgreSQL succeed; failures, cancellations and skipped suites cannot pass the gate. After validating the workflow on GitHub, configure `Regression gate` as a required status check in the `main` branch ruleset/protection settings. Adding a workflow file alone does not enforce branch protection. Keep this check name stable. If merge queue is enabled later, also add the `merge_group` workflow event before requiring it in that queue.

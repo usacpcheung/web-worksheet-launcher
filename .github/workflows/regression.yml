@@ -49,6 +49,11 @@ jobs:
     name: Browser smoke (${{ matrix.shard }}/3)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    container:
+      # Keep the tag and immutable digest aligned with package-lock.json's Playwright.
+      # Bundled browsers/dependencies avoid installing from Ubuntu mirrors on every run.
+      image: mcr.microsoft.com/playwright:v1.60.0-noble@sha256:83192064c7510f7ee73dd63dc5f22a5e01a92c81a2e6a9c715d9e3fe55471fd9
+      options: --init --ipc=host
     strategy:
       fail-fast: false
       matrix:
@@ -62,8 +67,14 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
-      - name: Install matching Chromium and system libraries
-        run: npx playwright install --with-deps chromium
+      - name: Verify bundled Chromium matches installed Playwright
+        run: |
+          node --input-type=module <<'NODE'
+          import { chromium } from 'playwright';
+          const browser = await chromium.launch();
+          console.log(`Bundled Chromium ${browser.version()}: ${chromium.executablePath()}`);
+          await browser.close();
+          NODE
       - name: Run browser regressions
         run: npm run test:browser -- --shard=${{ matrix.shard }}/3
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
