@@ -37,7 +37,7 @@ Uploaded/local attempt ZIP restore uses its embedded worksheet and creates new i
 
 ## Text and response compatibility
 
-Supported question input types are `text`, `number`, `boolean`, `multiple_choice`. Deprecated aliases are rejected, not guessed. Markdown uses explicit text-format markers and a shared safe renderer; loading old packages does not migrate them merely for viewing. Local editable conversion and legacy audio migration are explicit compatibility paths, not abandoned code. See the [message/response contract](../message-contract.md) and [limited Markdown](../worksheet/worksheet-limited-markdown.md).
+Supported question input types are `text`, `number`, `boolean`, `multiple_choice`. Deprecated aliases are rejected, not guessed. Markdown uses explicit text-format markers and a shared safe renderer; loading old packages does not migrate them merely for viewing. Opening/editable import preserves the existing text representation. The shared editor writes a restricted rich document only when required; legacy audio migration remains a separate compatibility path. See the [message/response contract](../message-contract.md) and [limited Markdown](../worksheet/worksheet-limited-markdown.md).
 
 Numeric answer keys use the shared number validator. A decimal-only question may retain a whole-valued decimal answer such as `1.0` (stored as numeric `1`); learner input formatting still follows the configured rules. Delayed question-image attachment checks the original draft generation, question and media references before applying. If the target changed, the newly stored unused asset is removed. A successful attachment schedules persistence before awaiting old-asset cleanup; cleanup failure or a later draft switch does not prevent the attachment from being saved.
 
@@ -115,3 +115,5 @@ only after composition ends. An existing over-limit answer can be shortened in
 stages; rewrite Undo can restore its exact original snapshot. Long-mode questions
 are excluded from the shared voice workflow, including retry/auth recovery entry
 points; RolePlayScene's existing text questions remain eligible.
+
+Rich prompt/content fields preserve their `document` alongside the validated plain `text` projection through draft, snapshot, viewer and attempt records. See [shared rich-text editor](../worksheet/shared-rich-text-editor.md).

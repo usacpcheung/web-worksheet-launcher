@@ -87,7 +87,7 @@ try {
       await page.keyboard.press('Control+Shift+ArrowUp');
       assert.equal((await order())[0], 'reorder-0');
       const before = await order();
-      const text = page.locator('textarea:visible').first();
+      const text = page.locator('#editor-block-editor');
       await text.focus();
       await page.evaluate(() => window.editorSession.notifyStateChange());
       assert.equal(await text.evaluate(el => document.activeElement === el), true,

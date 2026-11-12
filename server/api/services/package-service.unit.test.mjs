@@ -1190,3 +1190,17 @@ test('image-response worksheet v5 passes the actual publication boundary', async
   const result = await service.publishFromDraft({identity:{sub:'oidc-sub'},uploadedDraftId:'u'});
   assert.equal(result.ok,true);assert.equal(writes,1);
 });
+
+test('rich-text worksheet v7 passes upload and publication with its document intact', async () => {
+  const { richTextField } = await import('../../app/worksheet-text.js');
+  const field = richTextField([{ tag: 'p', children: [{ tag: 'red', children: [{ tag: 'text', text: 'Read this' }] }] }]);
+  const bytes = createWorksheetPackageFromDraft({ title: 'Rich', blocks: [{ blockId: 'q', kind: 'question', prompt: field, responseConfig: { inputType: 'text', maxLength: 200 } }] }).bytes;
+  let writes = 0;
+  const service = createService({ db: createFakeDb(), artifactStore: { readArtifact: async () => bytes, storeArtifact: async () => {
+    writes++; return { artifactPath: 'rich.zip', artifactSha256: 'rich', artifactSizeBytes: bytes.length };
+  } } });
+  assert.equal((await service.uploadDraft({ identity: { sub: 'oidc-sub' }, title: 'Rich', zipBytes: bytes })).ok, true);
+  assert.equal((await service.publishFromDraft({ identity: { sub: 'oidc-sub' }, uploadedDraftId: 'u' })).ok, true);
+  assert.equal(writes, 2);
+  assert.deepEqual(parseWorksheetPackage(bytes).worksheet.blocks[0].prompt.document, field.document);
+});

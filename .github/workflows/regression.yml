@@ -31,6 +31,7 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
+      - run: npm run check:editor-bundle
       - name: Run Node regressions and CI runner tests
         run: |
           mkdir -p artifacts/node

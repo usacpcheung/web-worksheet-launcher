@@ -62,33 +62,26 @@ try {
     await page.reload();
     await page.waitForFunction(() => window.editorSession);
     const field = page.locator('#editor-block-editor');
-    const toggle = page.locator('.editor-text-preview-toggle');
-    const edit = page.locator('.editor-text-edit-toggle');
-    const preview = page.locator('.editor-text-preview');
-    await field.fill(''); await toggle.click();
-    assert.equal(await preview.innerText(), locale === 'en' ? 'Nothing to preview' : '沒有內容可預覽');
-    await edit.click();
+    const loadMarkdown = async text => {
+      await page.evaluate(text => {
+        const session = window.editorSession;
+        session.updateBlockTextField(session.state.draft.localId, session.state.selectedBlockId, { format: 'limited-markdown-v1', text });
+        session.notifyStateChange();
+      }, text);
+    };
     const source = '## Lesson\n- **重要**\n- *Second*\n\nLine one\nLine two\n<script>window.injected=true</script>\n![image](https://example.invalid/a.png)';
-    await field.fill(source);
-    await field.evaluate(el => el.setSelectionRange(3, 9));
-    await toggle.click();
-    assert.equal(await preview.locator('h2').innerText(), 'Lesson');
-    assert.equal(await preview.locator('strong').innerText(), '重要');
-    assert.equal(await preview.locator('script,img,a').count(), 0);
+    await loadMarkdown(source);
+    await field.locator('h2').waitFor();
+    assert.equal(await field.locator('h2').innerText(), 'Lesson');
+    assert.equal(await field.locator('strong').innerText(), '重要');
+    assert.equal(await field.locator('script,img,a').count(), 0);
     await page.evaluate(() => window.editorSession.saveNow());
-    assert.equal(await preview.isVisible(), true, 'Autosave preserves preview');
-    const previewHtml = await preview.innerHTML();
-    await page.locator('.editor-text-help summary').click();
-    const helpBox = await page.locator('.editor-text-help-popover').boundingBox();
-    assert.ok(helpBox.x >= 0 && helpBox.x + helpBox.width <= width + 1);
-    if (shots) await page.screenshot({ path: `${shots}/markdown-help-${locale}-${width}.png`, fullPage: true });
-    await page.keyboard.press('Escape');
-    assert.equal(await page.locator('.editor-text-help').evaluate(el => el.open), false);
-    await edit.click();
-    assert.deepEqual(await field.evaluate(el => [el.selectionStart, el.selectionEnd, el === document.activeElement]), [3, 9, true]);
-    assert.equal(await field.inputValue(), source);
+    const previewHtml = await page.evaluate(async () => {
+      const { renderWorksheetText } = await import('/server/app/worksheet-text.js');
+      return renderWorksheetText(window.editorSession.state.draft.blocks[0].content);
+    });
     await page.evaluate(() => { window.editorSession.createBlock('question'); window.editorSession.notifyStateChange(); });
-    await field.fill('**' + '文'.repeat(500) + '**');
+    await loadMarkdown('**' + '文'.repeat(500) + '**');
     assert.match(await page.locator('.editor-prompt-counter').innerText(), /500 \/ 500/);
     assert.equal(await field.getAttribute('aria-invalid'), 'false');
     const generate = page.locator('[data-prompt-audio-track-block-id] [data-audio-track-action="generate"]').first();
@@ -103,19 +96,18 @@ try {
     assert.equal(rejectedSessionChecks, 1, 'eligible Markdown reaches preparation once');
     assert.equal(audioRequests, 0, 'failed preparation never sends T2A');
     denySession = false;
-    await field.fill('**' + '文'.repeat(501) + '**');
+    await loadMarkdown('**' + '文'.repeat(501) + '**');
     assert.equal(await field.getAttribute('aria-invalid'), 'true');
     assert.equal(await generate.isEnabled(), false);
     await page.evaluate(() => window.editorSession.saveNow());
-    assert.equal(await field.inputValue(), '**' + '文'.repeat(501) + '**');
+    assert.equal(await field.innerText(), '文'.repeat(501));
     if (shots) await page.screenshot({ path: `${shots}/markdown-limit-${locale}-${width}.png`, fullPage: true });
     await page.locator('#editor-block-kind').selectOption('content');
     assert.equal(await page.locator('.editor-prompt-counter').isVisible(), false);
     await page.locator('#editor-block-kind').selectOption('question');
     assert.equal(await page.evaluate(() => window.editorSession.state.draft.blocks.at(-1).prompt.format), 'limited-markdown-v1');
-    await field.fill('## Question heading\n### Question\n**Explain** your answer. 解釋你的答案。\n\nA second paragraph. 第二段。\n#### Detail\n- First point 第一點\n- A longer point that wraps on narrow screens 較長的項目會在窄螢幕換行\n##### Steps\n3. Consider 想一想\n4. Respond 回答\n###### Note\n> *Reflect* before answering. 回答前先思考。');
-    await toggle.click();
-    assert.equal(await preview.locator('h3').innerText(), 'Question');
+    await loadMarkdown('## Question heading\n### Question\n**Explain** your answer. 解釋你的答案。\n\nA second paragraph. 第二段。\n#### Detail\n- First point 第一點\n- A longer point that wraps on narrow screens 較長的項目會在窄螢幕換行\n##### Steps\n3. Consider 想一想\n4. Respond 回答\n###### Note\n> *Reflect* before answering. 回答前先思考。');
+    assert.equal(await field.locator('h3').innerText(), 'Question');
     assert.equal(await page.evaluate(() => window.injected), undefined);
     if (shots) await page.screenshot({ path: `${shots}/markdown-editor-${locale}-${width}.png`, fullPage: true });
     const payload = await page.evaluate(async () => {
@@ -203,17 +195,14 @@ try {
         original: result.importedRecord, version: createWorksheetPackageFromDraft(draft).manifest.packageVersion,
         notices: window.editorSession.state.notifications.filter(item => item.source === 'formatting.converted').length };
     }, legacy);
-    assert.equal(imported.format, 'limited-markdown-v1'); assert.equal(imported.version, 3);
-    assert.equal(imported.visibleText, legacy); assert.equal(imported.notices, 1);
+    assert.equal(imported.format, 'plain_text'); assert.equal(imported.version, 2);
+    assert.equal(imported.visibleText, legacy); assert.equal(imported.notices, 0);
     assert.ok(JSON.stringify(imported.original).includes('plain_text'), 'Retained import is still plain text');
-    await toggle.click();
-    assert.equal(await preview.locator('strong,em,h2,ul').count(), 0, 'Converted source keeps literal appearance');
-    await edit.click();
+    assert.equal(await field.locator('strong,em,h2,ul').count(), 0, 'Legacy source keeps literal appearance');
     await field.fill('## Long content\n' + 'longword'.repeat(500) + '\n- end');
-    await toggle.click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
     assert.deepEqual(errors, []);
     await context.close();
   }
-  console.log('PASS: Markdown editor preview, source/selection retention, help keyboard, package round trip, viewer/review/print, both languages and widths');
+  console.log('PASS: Markdown import/edit, limits, package round trip, viewer/review/print, legacy preservation, both languages and widths');
 } finally { await browser.close(); }

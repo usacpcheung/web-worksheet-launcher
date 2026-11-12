@@ -2,12 +2,12 @@ import { hasLongText, assertTextQuestions } from '../text-answer.js';
 import { hasImageResponses, assertImageQuestions, assertImageAnswers, ATTEMPT_BYTES } from '../image-response.js';
 import { assertPackageAssets } from './package-assets.js';
 import { hasOptionImages, assertOptionImages } from '../option-images.js';
-import { assertWorksheetTextFormats, hasMarkdown } from '../worksheet-text.js';
+import { assertWorksheetTextFormats, hasMarkdown, hasRichText } from '../worksheet-text.js';
 
 // Share the package/worksheet boundary. Local readers retain their historical
 // envelope defaults and answer coercion; uploads keep the existing strict envelope.
 export function assertAttemptPackage(manifest, worksheet, attempt, { allowLegacyEnvelope = false, files } = {}) {
-  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3, 4, 5].includes(manifest.packageVersion)) {
+  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3, 4, 5, 6].includes(manifest.packageVersion)) {
     throw new Error('Unsupported attempt package format/version.');
   }
   if (!Array.isArray(worksheet?.blocks) || worksheet.blocks.length === 0) {
@@ -18,6 +18,7 @@ export function assertAttemptPackage(manifest, worksheet, attempt, { allowLegacy
   if (hasLongText(worksheet.blocks) && manifest.packageVersion < 5) throw new Error("Long text requires attempt package version 5.");
   assertImageQuestions(worksheet.blocks);
   if (hasImageResponses(worksheet.blocks) && manifest.packageVersion < 4) throw new Error('Image responses require attempt package version 4.');
+  if (hasRichText(worksheet.blocks) && manifest.packageVersion < 6) throw new Error('Rich text requires attempt package version 6.');
   if (hasMarkdown(worksheet.blocks) && manifest.packageVersion < 2) throw new Error('Markdown requires attempt package version 2.');
   if (hasOptionImages(worksheet.blocks) && manifest.packageVersion < 3) throw new Error('Option images require attempt package version 3.');
   if (manifest.packageVersion >= 3) {

@@ -70,3 +70,5 @@ Contributor instructions, discoverable UI skills, colocated module/font notes an
 [past/](past/README.md) contains superseded plans, retired widget instructions, early phase checkpoints and dated audits. Archive status concerns documentation authority; it never means an input format or product capability can be removed. Historical commands, branch names, test counts and acceptance criteria are evidence about their stated baseline only.
 
 The [review register](reviews/documentation-review-2026-10-06.md) covers all 45 original Markdown files and both license texts. Keep current behavior in the folders above. Put completed or superseded planning records in `past/`, with a reason and a link to their replacement. Update current contracts alongside behavior changes, including shared consumers. Do not turn an unimplemented archived proposal into an active requirement without a new decision.
+
+- [Shared worksheet text editor and rich document contract](worksheet/shared-rich-text-editor.md)

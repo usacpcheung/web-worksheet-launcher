@@ -2,7 +2,7 @@
 
 > Updated on 2026-10-31 for the agreed H2–H4 heading subset and prompt typography trial. Code evidence: [worksheet-text.js](../../server/app/worksheet-text.js), [worksheet-package.js](../../server/editor/worksheet-package.js), [package-service.js](../../server/api/services/package-service.js), [main.js](../../server/viewer/main.js). Test commands below are guidance, not a new test-run report.
 
-The implemented feature applies only to worksheet content text and question prompts. Authors edit plain source text, switch to Preview, and return to Edit with their selection restored. The adjacent formatting help is available in English and Traditional Chinese.
+The implemented feature applies only to worksheet content text and question prompts. Authors now use the [shared text editor](shared-rich-text-editor.md). This document describes the retained legacy Markdown parser and package compatibility.
 
 ## Supported syntax
 
@@ -12,7 +12,7 @@ The implemented feature applies only to worksheet content text and question prom
 - Bold (`**text**`) and italic (`*text*`). Unmatched delimiters stay literal; combined triple-star syntax is not supported.
 - Paragraphs, ordinary line breaks, and backslash punctuation escapes such as `\*` and `\\`.
 
-Links, images, code, tables, task lists, horizontal rules, HTML, and embedded media are not enabled. Their syntax remains text. HTML is escaped even in supported formatting. There is no toolbar, live side-by-side editor, or remote Markdown dependency.
+Links, images, code, tables, task lists, horizontal rules, HTML, and embedded media are not enabled. Their syntax remains text. HTML is escaped even in supported formatting. There is no remote Markdown dependency; the shared editor supplies formatting controls.
 
 ## Compatibility and source preservation
 
@@ -22,13 +22,17 @@ The existing `content.format` and `prompt.format` fields determine interpretatio
 | --- | --- |
 | Missing or `plain_text` | Literal existing text |
 | `limited-markdown-v1` | The subset above |
+| `rich-text-v1` | Restricted application document; see shared editor contract |
 | Other nonempty value | Rejected, never guessed or silently downgraded |
 
 Existing published packages, imported source records, and saved attempt snapshots are not migrated just because somebody views them. Their punctuation remains literal. No batch rewrite of published artifacts or database migration is required.
 
-When an existing local draft is opened for editing, or a plain package is converted to an editable draft, its supported fields are escaped once and marked `limited-markdown-v1`. This preserves their displayed wording and punctuation. The editor shows an informational conversion notification at that point. Reopening an already converted draft neither repeats the notice nor escapes it again. A ZIP import retains its original imported source record; its editable draft is separate. Normal autosave persists local draft conversion. New blocks use the new marker.
-
-After conversion, subsequent editing, saving, publishing, and export preserve the author's source, including backslashes and line endings. Learner answers and all other fields retain their existing interpretation.
+Opening an existing local draft or converting a package to an editable draft now
+preserves each field's source and format. The former eager plain-to-Markdown
+conversion and notice have been removed. On editing, the shared editor retains a
+legacy format only when it can represent the edited document faithfully; underline,
+red and other richer structures use `rich-text-v1`. Imported source records remain
+separate and unchanged. See the shared editor contract for details.
 
 ## Package versions and rollout
 
@@ -43,7 +47,7 @@ The newer ZIP versions make older application versions reject an unsupported pac
 
 ## Rendering and safety
 
-Editor preview, viewer cards (editable and submitted), and the existing question print/PDF report use one renderer. The parser creates an internal tree; the serializer permits only `p`, `br`, `h2`–`h4`, `ul`, `ol`, `li`, `blockquote`, `strong`, and `em`. It escapes every source text node. The only generated attribute is a validated integer `ol start`. It never accepts author HTML as markup, generates URLs, or fetches resources.
+Legacy Markdown conversion for editing, viewer cards (editable and submitted), and the existing question print/PDF report use one renderer. The parser creates an internal tree; the serializer permits only `p`, `br`, `h2`–`h4`, `ul`, `ol`, `li`, `blockquote`, `strong`, and `em`. It escapes every source text node. The only generated attribute is a validated integer `ol start`. It never accepts author HTML as markup, generates URLs, or fetches resources.
 
 Prompt audio generation uses a plain-text projection of that same tree, so spoken text excludes formatting markers. Existing operation identity and source-change guards remain in effect. Audio providers, authentication, learner voice/rewrite processing, and RolePlayScene are unchanged.
 
@@ -59,13 +63,16 @@ Printed output follows the existing report's question-only scope; it does not ga
 
 Run `npm test` and, with `node scripts/static-server.mjs` serving port 8765, `node scripts/worksheet-markdown-smoke.mjs`. Set `VIEWER_SMOKE_URL` for a different local server and `VIEWER_SMOKE_SCREENSHOTS` for screenshot output.
 
-The smoke check covers real editor preview/Edit/help interactions, autosave and selection retention, empty and long content, source ZIP round trips, legacy import conversion, submitted review, and generated print output at 1280px and 390px in both languages. APIs are mocked; this is not a VPS or real audio-provider acceptance test. Regression tests also cover safe syntax/escaping, unknown-format rejection before writes, plain/Markdown attempt upload and resume, and conversion idempotence.
+The Markdown smoke preserves legacy parser, limit/audio eligibility, package,
+viewer/review/print and import checks at both locales and desktop/mobile widths.
+Shared-editor interactions are covered by `worksheet-rich-text-smoke.mjs`. APIs are
+mocked; these checks do not establish VPS/provider acceptance.
+
 # Authoring polish and Chinese typography
 
-The text field uses explicit Edit/Preview choices and the existing information
-SVG for a keyboard-accessible syntax/result help table. The prompt field is
-labelled “Question text / 題目文字”. Block navigation labels use the existing
-plain-text projection before truncation, preserving escaped literal symbols.
+The field-level Edit/Preview and syntax help controls are replaced by the shared
+formatting toolbar. The prompt remains labelled “Question text / 題目文字”. Block
+navigation still uses the shared plain-text projection before truncation.
 
 Editor-origin viewer URLs retain the existing `preview=1` and `localDraftId`
 parameters. The viewer offers Back to editor for that flow. Optional session
@@ -81,7 +88,7 @@ licensing and refresh instructions. Print waits up to five seconds for fonts,
 then permits system fallback instead of indefinitely blocking printing.
 
 Run `node scripts/worksheet-polish-smoke.mjs` against the local static server
-for bilingual desktop/mobile coverage of help, toggles, sidebar escaping,
+for bilingual desktop/mobile coverage of the toolbar, sidebar escaping,
 return navigation after refresh, real browser font selection and overflow.
 
 The H2–H4 restriction is an approved product change. Existing H5/H6 source remains intact and now displays literally; the package format identifier is unchanged. Prompt typography uses a shared Chinese/English/mixed-content trial baseline (20px desktop, 18px mobile, line-height 1.6), with H2/H3/H4 ratios 1.55/1.35/1.15 and print-scaled equivalents. Authored blank lines remain preserved.

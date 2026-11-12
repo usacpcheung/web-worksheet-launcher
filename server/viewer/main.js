@@ -20,7 +20,7 @@ import { classifyUploadResult } from '../app/api/upload-result.js';
 import { assertAttemptPackage } from '../app/contracts/attempt-package-validator.js';
 import { installPageRecovery } from '../app/storage/recovery-journal.js';
 import { PackageLoadProgress, packageLoadLabel } from './package-load-progress.js';
-import { setWorksheetText, renderWorksheetText, WORKSHEET_TEXT_CSS, installWorksheetTextStyles, assertWorksheetTextFormats, hasMarkdown } from '../app/worksheet-text.js';
+import { setWorksheetText, renderWorksheetText, WORKSHEET_TEXT_CSS, installWorksheetTextStyles, assertWorksheetTextFormats, hasMarkdown, hasRichText, copyWorksheetText } from '../app/worksheet-text.js';
 import { createVoiceWorkflow, normalizeVoiceRecovery, REWRITE_INPUT_LIMIT, unicodeLength, hasPendingRecovery, getVoiceRecovery } from './answer-voice-workflow.js';
 import { createVoiceControls, createVoiceStatus } from './answer-voice-ui.js';
 import { requestVoiceSignIn } from './voice-sign-in.js';
@@ -843,11 +843,12 @@ function parseUploadedAttemptPackage(zipBytes) {
     throw new Error('Uploaded attempt package is missing required files.');
   }
   const manifest = JSON.parse(decodeUtf8(manifestEntry));
-  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3, 4, 5].includes(manifest?.packageVersion)) {
+  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3, 4, 5, 6].includes(manifest?.packageVersion)) {
     throw new Error('Uploaded attempt package format is not supported.');
   }
   const worksheet = JSON.parse(decodeUtf8(worksheetEntry));
   assertWorksheetTextFormats(worksheet.blocks);
+  if (hasRichText(worksheet.blocks) && manifest.packageVersion < 6) throw new Error('Rich text requires attempt package version 6.');
   if (hasMarkdown(worksheet.blocks) && manifest.packageVersion < 2) throw new Error('Markdown requires attempt package version 2.');
   const attempt = JSON.parse(decodeUtf8(attemptEntry));
   assertAttemptPackage(manifest, worksheet, attempt, { allowLegacyEnvelope: true, files });
@@ -894,7 +895,7 @@ function parseLocalAttemptPackage(zipBytes) {
   if (manifest?.format === 'worksheet-package') {
     throw new Error(t('viewer.notifications.localAttemptImport.worksheetPackageNotAttempt'));
   }
-  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3, 4, 5].includes(manifest?.packageVersion)) {
+  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3, 4, 5, 6].includes(manifest?.packageVersion)) {
     throw new Error(t('viewer.notifications.localAttemptImport.invalidPackage'));
   }
 
@@ -909,6 +910,7 @@ function parseLocalAttemptPackage(zipBytes) {
   try {
     worksheet = JSON.parse(decodeUtf8(worksheetEntry));
     assertWorksheetTextFormats(worksheet.blocks);
+    if (hasRichText(worksheet.blocks) && manifest.packageVersion < 6) throw new Error('Rich text requires attempt package version 6.');
     if (hasMarkdown(worksheet.blocks) && manifest.packageVersion < 2) throw new Error('Markdown requires attempt package version 2.');
     attempt = JSON.parse(decodeUtf8(attemptEntry));
     assertAttemptPackage(manifest, worksheet, attempt, { allowLegacyEnvelope: true, files });
@@ -1017,16 +1019,14 @@ function computeViewerPayloadFingerprint(payload) {
       position: block.position,
       prompt: block.prompt
         ? {
-          text: block.prompt.text || '',
-          format: block.prompt.format || 'plain_text',
+          ...copyWorksheetText(block.prompt),
           mediaRefs: normalizePromptMediaRefs(block.prompt.mediaRefs),
           audioTracks: normalizeAudioTrackList(block.prompt.audioTracks),
         }
         : null,
       content: block.content
         ? {
-          text: block.content.text || '',
-          format: block.content.format || 'plain_text',
+          ...copyWorksheetText(block.content),
         }
         : null,
       responseConfig: isRecord(block.responseConfig)
@@ -1182,8 +1182,7 @@ function normalizeViewerBlock(block, index) {
     return {
       ...base,
       prompt: {
-        text: String(safeBlock?.prompt?.text || ''),
-        format: safeBlock?.prompt?.format || 'plain_text',
+        ...copyWorksheetText(safeBlock?.prompt),
         mediaRefs: normalizePromptMediaRefs(safeBlock?.prompt?.mediaRefs),
         audioTracks: normalizeAudioTrackList(safeBlock?.prompt?.audioTracks),
       },
@@ -1194,8 +1193,7 @@ function normalizeViewerBlock(block, index) {
   return {
     ...base,
     content: {
-      text: String(safeBlock?.content?.text || ''),
-      format: safeBlock?.content?.format || 'plain_text',
+      ...copyWorksheetText(safeBlock?.content),
     },
   };
 }
@@ -1899,6 +1897,7 @@ async function buildWorksheetPrintReportModel({
       choices,
       promptText: String(block?.prompt?.text || ''),
       promptFormat: block?.prompt?.format || 'plain_text',
+      promptField: copyWorksheetText(block.prompt),
       answerText: config.inputType === 'image_response' ? (answerImages.length ? '' : t('viewer.print.notAnswered')) : formatAnswerValueForPrint(displayBlock, learnerValue),
       result: buildPrintQuestionResult(displayBlock, checkResult),
       image: questionImage,
@@ -2037,7 +2036,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
         <div class="print-prompt-area">
         <section class="print-question-section print-question-section--prompt print-question-section--${escapeHtml(question.sectionBreakModes?.prompt || 'keep')}">
           <h3>${escapeHtml(t('viewer.print.questionHeading'))}</h3>
-          <div class="print-question-text worksheet-text">${renderWorksheetText({ text: question.promptText?.trim() ? question.promptText : t('viewer.print.noPromptProvided'), format: question.promptFormat })}</div>
+          <div class="print-question-text worksheet-text">${renderWorksheetText(question.promptText?.trim() ? (question.promptField || { text: question.promptText, format: question.promptFormat }) : { text: t('viewer.print.noPromptProvided') })}</div>
         </section>
         ${imageSectionHtml}
         </div>
@@ -3684,7 +3683,7 @@ class ViewerAttemptSession {
       assertWorksheetTextFormats(worksheet.blocks);
       const manifest = {
         format: 'worksheet-attempt-package',
-        packageVersion: hasLongText(worksheet.blocks) ? 5 : hasImageResponses(worksheet.blocks) ? 4 : hasOptionImages(worksheet.blocks) ? 3 : hasMarkdown(worksheet.blocks) ? 2 : 1,
+        packageVersion: hasRichText(worksheet.blocks) ? 6 : hasLongText(worksheet.blocks) ? 5 : hasImageResponses(worksheet.blocks) ? 4 : hasOptionImages(worksheet.blocks) ? 3 : hasMarkdown(worksheet.blocks) ? 2 : 1,
         schemaVersion: 1,
         generatedAt: nowIso(),
         worksheet: {
@@ -6373,8 +6372,10 @@ function renderViewerShell(session) {
       sectionLabel: sectionLabels.get(currentBlockId),
       prompt: currentBlock?.prompt?.text || '',
       promptFormat: currentBlock?.prompt?.format || 'plain_text',
+      promptDocument: currentBlock?.prompt?.document,
       content: currentBlock?.content?.text || '',
       contentFormat: currentBlock?.content?.format || 'plain_text',
+      contentDocument: currentBlock?.content?.document,
       inputType: currentBlockInputType,
       maxLength: currentBlock?.responseConfig?.maxLength || null,
       textMode: currentBlock?.responseConfig?.textMode || 'standard',

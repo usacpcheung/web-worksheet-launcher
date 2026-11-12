@@ -1,12 +1,14 @@
 // Versioned worksheet text only. Never use this for learner answers or HTML input.
 export const MARKDOWN_FORMAT = 'limited-markdown-v1';
 export const PLAIN_FORMAT = 'plain_text';
+export const RICH_FORMAT = 'rich-text-v1';
 export const PROMPT_TEXT_LIMIT = 500;
 // Match the package normalizer's legacy question detection before normalization.
 const fieldKey = block => block?.kind === 'question' || (block?.prompt && typeof block.prompt === 'object') ? 'prompt' : 'content';
 export function assertTextFormat(field) {
   const format = field?.format || PLAIN_FORMAT;
-  if (![PLAIN_FORMAT, MARKDOWN_FORMAT].includes(format)) throw new Error(`Unsupported worksheet text format: ${format}`);
+  if (![PLAIN_FORMAT, MARKDOWN_FORMAT, RICH_FORMAT].includes(format)) throw new Error(`Unsupported worksheet text format: ${format}`);
+  if (format === RICH_FORMAT) assertRichDocument(field);
   return format;
 }
 export function assertWorksheetTextFormats(blocks = []) {
@@ -15,18 +17,14 @@ export function assertWorksheetTextFormats(blocks = []) {
 export function hasMarkdown(blocks = []) {
   return blocks.some(block => block?.[fieldKey(block)]?.format === MARKDOWN_FORMAT);
 }
-export function upgradeEditableBlocks(blocks = []) {
-  assertWorksheetTextFormats(blocks);
-  let changed = false;
-  const upgraded = blocks.map(block => {
-    const key = fieldKey(block);
-    const field = block[key] || {};
-    if (field.format === MARKDOWN_FORMAT) return block;
-    changed = true;
-    return { ...block, [key]: { ...field, format: MARKDOWN_FORMAT,
-      text: String(field.text ?? '').replace(/[\\`*{}\[\]()#+\-.!_>|~]/g, '\\$&') } };
-  });
-  return { blocks: upgraded, changed };
+export function hasRichText(blocks = []) {
+  return blocks.some(block => block?.[fieldKey(block)]?.format === RICH_FORMAT);
+}
+// Copy the text contract without media, editor state, or engine-specific properties.
+export function copyWorksheetText(field = {}) {
+  field ||= {};
+  return { text: String(field.text ?? ''), format: field.format || PLAIN_FORMAT,
+    ...(field.format === RICH_FORMAT ? { document: structuredClone(field.document) } : {}) };
 }
 
 const textNode = text => ({ tag: 'text', text });
@@ -89,21 +87,24 @@ function parse(source) {
 }
 
 const escapeHtml = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const TAGS = new Set(['p', 'br', 'h2', 'h3', 'h4', 'ul', 'ol', 'li', 'blockquote', 'strong', 'em']);
+const TAGS = new Set(['p', 'br', 'h2', 'h3', 'h4', 'ul', 'ol', 'li', 'blockquote', 'strong', 'em', 'u', 'red']);
 // Strict output allowlist: only generated nodes reach serialization; input HTML is always text.
 function safeHtml(node) {
   if (node.tag === 'text') return escapeHtml(node.text);
   if (!TAGS.has(node.tag)) return '';
   if (node.tag === 'br') return '<br>';
+  if (node.tag === 'red') return `<span class="worksheet-text-red">${node.children.map(safeHtml).join('')}</span>`;
   const start = node.tag === 'ol' && Number.isSafeInteger(node.start) && node.start >= 0 ? ` start="${node.start}"` : '';
   return `<${node.tag}${start}>${(node.children || []).map(safeHtml).join('')}</${node.tag}>`;
 }
 export function renderWorksheetText(field) {
   const format = assertTextFormat(field); const source = String(field?.text ?? '');
-  return format === PLAIN_FORMAT ? escapeHtml(source) : parse(source).map(safeHtml).join('');
+  return format === PLAIN_FORMAT ? escapeHtml(source) : (format === RICH_FORMAT ? field.document.blocks : parse(source)).map(safeHtml).join('');
 }
 export function worksheetTextToPlain(field) {
-  if (assertTextFormat(field) === PLAIN_FORMAT) return String(field?.text ?? '');
+  const format = assertTextFormat(field);
+  if (format === PLAIN_FORMAT) return String(field?.text ?? '');
+  if (format === RICH_FORMAT) return richPlain(field.document.blocks);
   const plain = node => {
     if (node.tag === 'text') return node.text;
     if (node.tag === 'ol') return node.children.map((item, index) => `${node.start + index}. ${plain(item)}`).join('\n');
@@ -124,7 +125,8 @@ export function setWorksheetText(element, field) {
 }
 export const WORKSHEET_TEXT_CSS = `
 .worksheet-text { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
-.worksheet-text p { margin: 0; }
+.worksheet-text p { margin: 0; min-height: 1lh; }
+.worksheet-text-red { color: #b42318; }
 .worksheet-text h2,.worksheet-text h3,.worksheet-text h4 { margin: .5em 0 .25em; line-height: 1.3; text-transform: none; letter-spacing: normal; color: inherit; }
 .worksheet-text h2 { font-size: 1.55em; } .worksheet-text h3 { font-size: 1.35em; }
 .worksheet-text h4 { font-size: 1.15em; }
@@ -137,4 +139,58 @@ export function installWorksheetTextStyles(doc) {
   if (!doc?.head || doc.getElementById('worksheet-text-styles')) return;
   const style = doc.createElement('style'); style.id = 'worksheet-text-styles'; style.textContent = WORKSHEET_TEXT_CSS;
   doc.head.appendChild(style);
+}
+
+// Application-owned document schema. HTML and ProseMirror JSON are never package formats.
+const inlineTags = new Set(['text', 'br', 'strong', 'em', 'u', 'red']);
+const blockTags = new Set(['p', 'h2', 'h3', 'h4', 'blockquote', 'ul', 'ol']);
+function richPlain(nodes) {
+  const plain = node => {
+    if (node.tag === 'text') return node.text;
+    if (node.tag === 'br') return '\n';
+    if (node.tag === 'ol') return node.children.map((item, index) => `${node.start + index}. ${plain(item)}`).join('\n');
+    return node.children.map(plain).join(['ul', 'li', 'blockquote'].includes(node.tag) ? '\n' : '');
+  };
+  return nodes.map(plain).join('\n');
+}
+function assertRichDocument(field) {
+  const fail = () => { throw new Error('Invalid rich-text-v1 document.'); };
+  const doc = field.document;
+  if (!doc || doc.version !== 1 || Object.keys(doc).some(k => !['version', 'blocks'].includes(k))) fail();
+  let count = 0;
+  const visit = (nodes, allowed, depth) => {
+    if (!Array.isArray(nodes) || depth > 32) fail();
+    for (const node of nodes) {
+      if (++count > 100000 || !node || !allowed.has(node.tag)) fail();
+      const keys = node.tag === 'text' ? ['tag', 'text'] : node.tag === 'br' ? ['tag'] : node.tag === 'ol' ? ['tag', 'children', 'start'] : ['tag', 'children'];
+      if (Object.keys(node).some(key => !keys.includes(key))) fail();
+      if (node.tag === 'text') { if (typeof node.text !== 'string') fail(); continue; }
+      if (node.tag === 'br') continue;
+      if (node.tag === 'ol' && (!Number.isSafeInteger(node.start) || node.start < 0 || node.start > 999999999)) fail();
+      const children = ['ul','ol'].includes(node.tag) ? new Set(['li']) : ['li','blockquote'].includes(node.tag) ? blockTags : inlineTags;
+      if (['ul','ol','li','blockquote'].includes(node.tag) && !node.children?.length) fail();
+      visit(node.children, children, depth + 1);
+    }
+  };
+  visit(doc.blocks, blockTags, 0);
+  if (!doc.blocks.length || typeof field.text !== 'string' || field.text !== richPlain(doc.blocks)) fail();
+}
+export function richTextField(blocks) {
+  const field = { format: RICH_FORMAT, text: richPlain(blocks), document: { version: 1, blocks } };
+  assertTextFormat(field);
+  return field;
+}
+// Normalize the existing Markdown parser's result for editing, without reinterpreting syntax.
+export function worksheetTextToNodes(field) {
+  const format = assertTextFormat(field);
+  if (format === RICH_FORMAT) return structuredClone(field.document.blocks);
+  const normalize = node => {
+    if (node.tag === 'text') return node.text.split('\n').flatMap((text, i) => [ ...(i ? [{ tag: 'br' }] : []), ...(text ? [{ tag: 'text', text }] : []) ]);
+    if (node.tag === 'br') return [node];
+    let children = (node.children || []).flatMap(normalize);
+    if (['li','blockquote'].includes(node.tag)) children = [{ tag: 'p', children }];
+    return [{ tag: node.tag, ...(node.tag === 'ol' ? { start: node.start } : {}), children }];
+  };
+  if (format === PLAIN_FORMAT) return [{ tag: 'p', children: normalize({ tag: 'text', text: String(field?.text ?? '').replace(/\r\n|\r/g, '\n') }) }];
+  return parse(String(field?.text ?? '')).flatMap(node => node.tag === 'br' ? [{ tag: 'p', children: [] }] : normalize(node));
 }

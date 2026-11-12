@@ -27,28 +27,22 @@ try {
     await page.reload();
     await page.waitForFunction(() => window.editorSession);
     const field = page.locator('#editor-block-editor');
-    await field.fill('## 香港學習\n**重點**');
+    const loadMarkdown = text => page.evaluate(text => {
+      window.editorSession.updateBlockTextField(window.editorSession.state.draft.localId, window.editorSession.state.selectedBlockId,
+        { text, format: 'limited-markdown-v1' });
+      window.editorSession.notifyStateChange();
+    }, text);
+    await loadMarkdown('## 香港學習\n**重點**');
     assert.equal(await page.locator('.block-select__title').first().innerText(), '香港學習 重點');
-    await field.fill('\\# 是井號，\\* 是星號');
+    await loadMarkdown('\\# 是井號，\\* 是星號');
     assert.equal(await page.locator('.block-select__title').first().innerText(), '# 是井號，* 是星號');
     await page.evaluate(() => { window.editorSession.createBlock('question'); window.editorSession.notifyStateChange(); });
-    await field.fill('如果顧客只說：「我要咖啡。」你會怎樣做？\n**重要**');
+    await loadMarkdown('如果顧客只說：「我要咖啡。」你會怎樣做？\n**重要**');
     assert.equal(await page.locator('label[for="editor-block-editor"]').innerText(), locale === 'en' ? 'Question text' : '題目文字');
-    const preview = page.locator('.editor-text-preview-toggle');
-    const edit = page.locator('.editor-text-edit-toggle');
-    assert.equal(await edit.getAttribute('aria-pressed'), 'true');
-    await preview.click();
-    assert.equal(await preview.getAttribute('aria-pressed'), 'true');
-    await preview.click();
-    assert.equal(await field.isVisible(), false, 'Selected mode does not toggle off');
-    await page.locator('.editor-text-help summary').click();
-    assert.equal(await page.locator('.editor-text-help summary svg').count(), 1);
-    assert.equal(await page.locator('.editor-text-help tbody tr').count(), 7);
-    assert.equal(await page.locator('.editor-text-help tbody tr').last().locator('td').last().innerText(), '*');
+    await field.waitFor();
+    assert.equal(await page.locator('.editor-rich-toolbar button').count(), 10);
     await page.evaluate(() => document.fonts.ready);
-    if (shots) await page.screenshot({ path: `${shots}/polish-help-${locale}-${width}.png`, fullPage: true });
-    await page.keyboard.press('Escape');
-    await edit.click();
+    if (shots) await page.screenshot({ path: `${shots}/polish-editor-${locale}-${width}.png`, fullPage: true });
     const before = await page.evaluate(() => ({ draft: window.editorSession.state.draft.localId, block: window.editorSession.state.selectedBlockId }));
     const openLabel = await page.evaluate(async () => (await import('/server/app/i18n/index.js')).t('editor.actions.openViewer'));
     await page.getByRole('button', { name: openLabel, exact: true }).click();
@@ -125,12 +119,12 @@ try {
     const stored = await page.evaluate(async id => (await import('/server/viewer/storage/index.js')).viewerStorage.attempts.get(id), attemptId);
     assert.ok(Object.values(stored.answers).some(answer => answer.value === 'Latest answer immediately before return'), 'Return flushes the debounce before navigating');
     assert.deepEqual(await page.evaluate(() => ({ draft: window.editorSession.state.draft.localId, block: window.editorSession.state.selectedBlockId })), before);
-    assert.match(await field.inputValue(), /我要咖啡/);
+    assert.match(await field.innerText(), /我要咖啡/);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
     await page.goto(base + '/server/viewer/index.html');
     assert.equal(await page.locator('.viewer-back-to-editor').count(), 0, 'Ordinary learner entry has no editor action');
     assert.deepEqual(errors, []);
-    console.log(`PASS ${locale} ${width}px: toggle, help, snippets, return after reload, local font subsets (${fontRequests.size})`);
+    console.log(`PASS ${locale} ${width}px: formatting toolbar, snippets, return after reload, local font subsets (${fontRequests.size})`);
     await context.close();
   }
 } finally { await browser.close(); }
