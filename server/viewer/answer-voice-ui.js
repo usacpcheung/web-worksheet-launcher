@@ -16,7 +16,7 @@ export function createVoiceStatus({ session, t, view }) {
   const timer = document.createElement('span'); timer.className = 'viewer-voice-timer';
   // Elapsed time is readable, but not announced four times per second.
   timer.setAttribute('aria-live', 'off');
-  const go = button(t('viewer.voice.view'), () => view(session.voice.active?.blockId));
+  const go = button(t('viewer.voice.view'), () => view(session.voiceParentId?.(session.voice.active?.blockId) || session.voice.active?.blockId));
   const stop = button(t('viewer.voice.stop'), () => session.voice.stop());
   const cancel = button(t('viewer.voice.cancel'), () => session.voice.cancel());
   root.append(label, timer, go, stop, cancel);
@@ -24,9 +24,9 @@ export function createVoiceStatus({ session, t, view }) {
     const op = session.voice.active;
     root.hidden = !op;
     if (!op) return;
-    const own = op.blockId === blockId;
+    const own = (session.voiceParentId?.(op.blockId) || op.blockId) === blockId;
     const questions = session.state.viewerPayload.blocks.filter(block => block.kind === 'question');
-    const number = questions.findIndex(block => block.blockId === op.blockId) + 1;
+    const number = questions.findIndex(block => block.blockId === (session.voiceParentId?.(op.blockId) || op.blockId)) + 1;
     const stage = t(`viewer.voice.stages.${op.state}`);
     const text = own ? stage : t('viewer.voice.otherQuestion', { stage, number });
     if (label.textContent !== text) label.textContent = text;
@@ -38,7 +38,7 @@ export function createVoiceStatus({ session, t, view }) {
   } };
 }
 
-export function createVoiceControls({ session, block, control, t, view, applied, signal, sharedStatusId, canRestoreFocus, requestSignIn }) {
+export function createVoiceControls({ session, block, control, t, view, applied, signal, sharedStatusId, canRestoreFocus, requestSignIn, keepCaretOnBlur, navigationBlockId }) {
   let intent = null;
   let authNotice = null;
   let placedSelection = null;
@@ -57,7 +57,7 @@ export function createVoiceControls({ session, block, control, t, view, applied,
   };
   for (const event of ['pointerup', 'keyup', 'input', 'select']) control.addEventListener(event, capture);
   control.addEventListener('blur', event => {
-    if (event.relatedTarget !== add) { intent = null; update(); }
+    if (event.relatedTarget !== add && !keepCaretOnBlur?.(event.relatedTarget)) { intent = null; update(); }
   });
   const signInForRecovery = async (confirm = true) => {
     const attemptId = session.state.localAttemptId, payload = session.state.viewerPayload;
@@ -96,7 +96,7 @@ export function createVoiceControls({ session, block, control, t, view, applied,
   editor.addEventListener('input', () => {
     const record = getVoiceRecovery(session.state.voiceRecovery, block.blockId);
     if (!record || session.voice.active) return;
-    if (record.candidate !== undefined) record.candidate = editor.value;
+    if (record.candidate !== undefined) { record.candidate = editor.value; if (record.completeAnswer) record.text = editor.value; }
     else record.text = editor.value;
     session.state.attemptRevision++;
     session.scheduleAutosave();
@@ -110,6 +110,11 @@ export function createVoiceControls({ session, block, control, t, view, applied,
     const record = getVoiceRecovery(session.state.voiceRecovery, block.blockId);
     if (record) perform({ mode: record.mode, retry: record, candidate: record.candidate });
   });
+  const useRecovered = button(t('fillBlanks.useRecovered'), () => {
+    const record = getVoiceRecovery(session.state.voiceRecovery, block.blockId);
+    if (record) perform({mode: record.mode, retry: record, candidate: record.text});
+  });
+  useRecovered.hidden = true;
   const append = button(t('viewer.voice.append'), () => {
     const record = getVoiceRecovery(session.state.voiceRecovery, block.blockId);
     if (record) perform({ mode: 'voice', retry: record, append: true,
@@ -118,7 +123,7 @@ export function createVoiceControls({ session, block, control, t, view, applied,
   const signIn = button(t('viewer.voice.signIn'), () => signInForRecovery(false));
   const discard = button(t('viewer.voice.discard'), () => { session.voice.discard(block.blockId); intent = null; });
   const actions = document.createElement('div'); actions.className = 'viewer-voice-recovery-actions';
-  actions.append(retry, insert, append, signIn, discard);
+  actions.append(retry, insert, useRecovered, append, signIn, discard);
   recovery.append(message, editorLabel, actions);
   if (status) root.append(status.root);
   root.append(hint, recovery);
@@ -132,7 +137,8 @@ export function createVoiceControls({ session, block, control, t, view, applied,
     const record = getVoiceRecovery(session.state.voiceRecovery, block.blockId);
     const range = voiceInsertionRange(control.value, intent);
     const replaces = range.replaceStart !== undefined;
-    const retainedLength = control.value.length - (replaces ? range.index - range.replaceStart : 0);
+    const retained = replaces ? control.value.slice(0, range.replaceStart) + control.value.slice(range.index) : control.value;
+    const retainedLength = block.responseConfig?.blankTarget ? unicodeLength(retained) : retained.length;
     add.disabled = Boolean(op) || hasPendingRecovery(record) || !supportsAnswerRecording()
       || retainedLength >= (block.responseConfig?.maxLength || 200);
     add.setAttribute('aria-describedby', `${sharedStatusId || status.root.id} ${hint.id}`);
@@ -161,17 +167,20 @@ export function createVoiceControls({ session, block, control, t, view, applied,
       retry.textContent = t(hasRecoveryText(record) ? 'viewer.voice.retryRewrite' : 'viewer.voice.retryRecording');
       retry.disabled = Boolean(op) || (hasRecoveryText(record) ? !record.text.trim() || unicodeLength(record.text) > REWRITE_INPUT_LIMIT : false);
       insert.hidden = record.candidate === undefined || record.code === 'STALE_CONTEXT';
-      insert.disabled = Boolean(op) || !editor.value.trim();
+      insert.disabled = Boolean(op) || !editor.value.trim() || (record.completeAnswer && unicodeLength(editor.value)>50);
+      if (record.completeAnswer) { message.textContent = t('fillBlanks.resultLimit', { count: unicodeLength(editor.value), max:50 }); insert.textContent = t('fillBlanks.applyAnswer'); } else insert.textContent = t('viewer.voice.insert');
       append.hidden = record.code !== 'STALE_CONTEXT' || !editor.value.trim();
       append.disabled = Boolean(op);
+      useRecovered.hidden = !block.responseConfig?.blankTarget || !hasRecoveryText(record) || record.candidate !== undefined || ['AUTH_REQUIRED','STALE_CONTEXT'].includes(record.code);
+      useRecovered.disabled = Boolean(op) || !record.text?.trim();
       signIn.hidden = record.code !== 'AUTH_REQUIRED';
       discard.disabled = Boolean(op);
     }
     const value = session.state.voiceApplied;
     if (value?.blockId === block.blockId && value.id !== lastApplied && !op
-      && String(session.state.answers?.[block.blockId]?.value ?? '') === value.text) {
+      && (session.answerForVoice ? session.answerForVoice(block.blockId) : String(session.state.answers?.[block.blockId]?.value ?? '')) === value.text) {
       lastApplied = value.id; intent = null;
-      const visible = session.state.lastActiveBlockId === block.blockId && !document.hidden && control.isConnected
+      const visible = (session.state.lastActiveBlockId === (navigationBlockId || block.blockId)) && !document.hidden && control.isConnected
         && (!canRestoreFocus || canRestoreFocus());
       applied(value, visible);
       if (visible) {

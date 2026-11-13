@@ -114,7 +114,7 @@ test('active voice operation blocks submission, releases on cancel, and cannot m
 
 async function loadViewerModule(overrides = {}) {
   const filePath = path.resolve('server/viewer/main.js');
-  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'./text-answer-input.js'", JSON.stringify(new NodeURL('./text-answer-input.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'./image-response-ui.js'", JSON.stringify(new NodeURL('./image-response-ui.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'../app/contracts/attempt-package-validator.js'", JSON.stringify(new NodeURL('../app/contracts/attempt-package-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
+  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/fill-in-blanks.js'", JSON.stringify(new NodeURL('../app/fill-in-blanks.js', import.meta.url).href)).replaceAll("'./fill-in-blanks-ui.js'", JSON.stringify(new NodeURL('./fill-in-blanks-ui.js', import.meta.url).href)).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'./text-answer-input.js'", JSON.stringify(new NodeURL('./text-answer-input.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'./image-response-ui.js'", JSON.stringify(new NodeURL('./image-response-ui.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'../app/contracts/attempt-package-validator.js'", JSON.stringify(new NodeURL('../app/contracts/attempt-package-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
   const bagName = `__viewerTestBag_${Math.random().toString(16).slice(2)}`;
 
   globalThis[bagName] = {
@@ -3467,7 +3467,7 @@ test('block presentation signature includes grading-derived fields and guarded c
   assert.equal(source.includes('currentBlockCheckStatus = currentBlock?.blockId'), true);
   assert.equal(source.includes('currentBlockCheckStatus: hasCurrentBlockCheckStatus ? currentBlockCheckStatus : null,'), true);
   assert.equal(source.includes('const shouldShowCheckFeedback = hasGlobalCheckResult && currentBlockIsCheckable && hasCurrentBlockCheckStatus;'), true);
-  assert.equal(source.includes('if (shouldShowCheckFeedback) {'), true);
+  assert.equal(source.includes("if (shouldShowCheckFeedback && inputType !== 'fill_in_blanks') {"), true);
 });
 test('number rendering branch avoids text input min/max attributes and uses pattern hint', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
@@ -7379,4 +7379,34 @@ test('rich text survives normalization, local persistence, attempt ZIP and print
   const html = mod.buildWorksheetPrintReportHtml(model);
   assert.match(html, /<u><span class="worksheet-text-red">題目 &lt;img src=x&gt;<\/span><\/u>/);
   assert.match(html, /\*\*Literal answer\*\*/);
+});
+
+test('blank maps, virtual voice targets, free-response grading and package versions survive the full attempt boundary', async () => {
+  const mod=await loadViewerModule();
+  const {emptyBlankConfig,blankVoiceId}=await import('../app/fill-in-blanks.js');
+  const {assertAttemptPackage}=await import('../app/contracts/attempt-package-validator.js');
+  const config={...emptyBlankConfig(),passage:{version:1,blocks:[{tag:'p',children:[
+    {tag:'text',text:'Choose '},{tag:'blank',id:'a',text:'water',checking:'auto',alternatives:['rain water']},
+    {tag:'text',text:' and explain '},{tag:'blank',id:'b',text:'',checking:'free',alternatives:[]},
+  ]}]}};
+  const pkg=createWorksheetPackageFromDraft({localId:'blanks',title:'Blanks',blocks:[{blockId:'q',kind:'question',position:0,prompt:{text:'Complete'},responseConfig:config}]});
+  assert.equal(pkg.manifest.packageVersion,8);
+  const payload=mod.resolveImportedWorksheetPayload({localId:'blank-import',worksheet:parseWorksheetPackage(pkg.bytes).worksheet});
+  let saved;const session=new mod.ViewerAttemptSession({attempts:{put:async record=>{saved=structuredClone(record);return record}},resumeFlags:{get(){},set(){}}});
+  session.applyAttemptState(session.createLocalAttemptState(payload,'imported_worksheet'));
+  session.setAnswer('q',{a:' WATER '});assert.equal(mod.computeAnswerSummary(payload,session.state.answers).answered,0);
+  session.setAnswer(blankVoiceId('q','b'),'😀'.repeat(50));clearTimeout(session.autosaveTimer);await session.autosave();
+  assert.equal(Object.keys(saved.answers).length,1);assert.equal(saved.answers.q.value.b,'😀'.repeat(50));
+  assert.equal(session.answerForVoice(blankVoiceId('q','a')),' WATER ');
+  assert.equal(mod.computeAnswerSummary(payload,saved.answers).answered,1);
+  const checked=mod.computeCheckResult(payload,saved.answers);assert.equal(checked.totalQuestions,1);assert.equal(checked.correctCount,1);assert.equal(checked.blanksByBlockId.q.statuses.b,'teacher_review');
+  assert.equal(session.setAnswer('q',{a:'x'.repeat(51)}),false);
+  assert.equal(session.setAnswer('q',{unknown:'x'}),false);
+  const zip=await session.buildUploadedAttemptPackage(),files=parseStoredZip(zip.bytes);
+  const manifest=JSON.parse(decodeUtf8(files.get('manifest.json'))),worksheet=JSON.parse(decodeUtf8(files.get('content/worksheet.json'))),attempt=JSON.parse(decodeUtf8(files.get('content/attempt.json')));
+  assert.equal(manifest.packageVersion,7);assert.doesNotThrow(()=>assertAttemptPackage(manifest,worksheet,attempt,{files}));
+  assert.throws(()=>assertAttemptPackage({...manifest,packageVersion:6},worksheet,attempt,{files}),/version 7/);
+  assert.deepEqual(mod.parseLocalAttemptPackage(zip.bytes).attempt.answers.q.value,saved.answers.q.value);
+  const model=await mod.buildWorksheetPrintReportModel({viewerPayload:payload,answers:saved.answers,checkResult:checked,storage:{}}),html=mod.buildWorksheetPrintReportHtml(model);
+  assert.equal(model.questions[0].layoutMode,'flow');assert.equal(model.questions[0].sectionBreakModes.answer,'flow');assert.match(html,/print-blank-passage/);assert.match(html,/WATER/);assert.match(html,/Teacher review|fillBlanks.teacher_review/);
 });

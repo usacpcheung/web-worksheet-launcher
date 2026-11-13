@@ -1,3 +1,5 @@
+import { createBlankPassageEditor } from './fill-in-blanks-editor.js';
+import { isFillInBlanks, emptyBlankConfig, assertBlankConfig } from '../app/fill-in-blanks.js';
 import { isLongText, textLimitCeiling, textConfigError, STANDARD_TEXT_LIMIT, LONG_TEXT_LIMIT } from '../app/text-answer.js';
 import { imageQuestions, assertImageQuestions, imageBudget } from '../app/image-response.js';
 import { mountOptionImageEditor } from './option-image-editor.js';
@@ -487,7 +489,7 @@ function getSwitchImpact(fromType, toType, questionState) {
   const hasOptionTextLoss = shouldRemoveOptions
     ? normalizedOptions.some((option) => hasTypedText(option.label) || hasTypedText(option.value))
     : false;
-  const hasMeaningfulDataLoss = hasOptionTextLoss || optionAttachmentCountToRemove > 0;
+  const hasMeaningfulDataLoss = hasOptionTextLoss || optionAttachmentCountToRemove > 0 || (normalizedFromType === 'fill_in_blanks' && normalizedToType !== normalizedFromType);
   return {
     fromType: normalizedFromType,
     toType: normalizedToType,
@@ -768,6 +770,7 @@ function getAnswerInputTypeLabel(inputType) {
     number: 'editor.question.inputTypes.number',
     boolean: 'editor.question.inputTypes.boolean',
     multiple_choice: 'editor.question.inputTypes.multipleChoice',
+    fill_in_blanks: 'fillBlanks.type',
     image_response: 'imageResponse.type',
   };
   return keys[inputType] ? t(keys[inputType]) : toTitleCaseLabel(inputType);
@@ -851,7 +854,7 @@ function createEmptyQuestionBlock(position) {
 }
 
 const TEXT_INPUT_TYPES = new Set(['text']);
-const CANONICAL_RESPONSE_INPUT_TYPES = new Set(['text', 'number', 'boolean', 'multiple_choice', 'image_response']);
+const CANONICAL_RESPONSE_INPUT_TYPES = new Set(['text', 'number', 'boolean', 'multiple_choice', 'image_response', 'fill_in_blanks']);
 
 function mapOptionsTextToLines(rawText) {
   if (!rawText) return [];
@@ -1517,6 +1520,7 @@ class EditorDraftSession {
         errors.push(`draft.blocks[${index}].position must be a non-negative integer`);
       }
       if (block.kind === 'question') {
+        try { assertBlankConfig(block.responseConfig); } catch (error) { errors.push(`draft.blocks[${index}]: ${error.message}`); }
         const textError = textConfigError(block.responseConfig, { authoring: true });
         if (textError) errors.push(`draft.blocks[${index}]: ${t(isLongText(block.responseConfig) ? 'textAnswer.invalidLong' : 'textAnswer.invalid', { max: textLimitCeiling(block.responseConfig) })}`);
         if (!block?.prompt?.text?.trim()) errors.push(`draft.blocks[${index}].prompt.text is required for question blocks`);
@@ -2535,7 +2539,7 @@ class EditorDraftSession {
   updateQuestionInputType(blockId, inputType) {
     if (!this.state.draft || !blockId) return;
     if (inputType === 'image_response' && this.state.draft.blocks.find(b=>b.blockId===blockId)?.responseConfig?.inputType !== inputType && imageQuestions(this.state.draft.blocks).length >= 3) return;
-    const normalizedInputType = ['text', 'number', 'boolean', 'multiple_choice', 'image_response'].includes(inputType)
+    const normalizedInputType = ['text', 'number', 'boolean', 'multiple_choice', 'image_response', 'fill_in_blanks'].includes(inputType)
       ? inputType
       : 'text';
 
@@ -5040,7 +5044,14 @@ function renderEditorShell(session) {
     refreshPromptT2AControlsForSelectedBlock();
     updateSummary({ preserveDetailEditor: true });
   });
-  session.destroyTextEditor = () => textEditor.destroy();
+  const blankEditor = createBlankPassageEditor(t, (identity, config) => {
+    if (session.state.draft?.localId !== identity.draftId) return;
+    const block = session.state.draft.blocks.find(b => b.blockId === identity.blockId);
+    if (!isFillInBlanks(block?.responseConfig)) return;
+    block.responseConfig = structuredClone(config); session.touchDraft();
+    updateSummary({ preserveDetailEditor: true });
+  }, options => showConfirmDialog(options));
+  session.destroyTextEditor = () => { textEditor.destroy(); blankEditor.destroy(); };
 
   const questionInputType = document.createElement('select');
   questionInputType.id = 'editor-question-input-type';
@@ -5051,6 +5062,7 @@ function renderEditorShell(session) {
     { value: 'boolean', label: getAnswerInputTypeLabel('boolean') },
     { value: 'multiple_choice', label: getAnswerInputTypeLabel('multiple_choice') },
     { value: 'image_response', label: t('imageResponse.type') },
+    { value: 'fill_in_blanks', label: t('fillBlanks.type') },
   ].forEach(({ value, label }) => {
     const option = document.createElement('option');
     option.value = value;
@@ -6427,6 +6439,8 @@ function renderEditorShell(session) {
     const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
     const draftId = session.state.draft?.localId;
     textEditor.prune(new Set((session.state.draft?.blocks || []).map(block => `${draftId}:${block.blockId}`)));
+    blankEditor.prune(new Set((session.state.draft?.blocks || []).filter(b=>isFillInBlanks(b.responseConfig)).map(b=>`${draftId}:${b.blockId}`)));
+    if (isFillInBlanks(selectedBlock?.responseConfig)) blankEditor.sync(`${draftId}:${selectedBlock.blockId}`, selectedBlock.responseConfig);
     if (selectedBlock) textEditor.sync(`${draftId}:${selectedBlock.blockId}`, selectedBlock.prompt || selectedBlock.content);
     const activeElement = document.activeElement;
 
@@ -7809,6 +7823,8 @@ function renderEditorShell(session) {
       rightPanel.appendChild(answerSection);
     }
 
+    if (activeInputType === 'fill_in_blanks') blankEditor.mount(rightPanel, `${session.state.draft.localId}:${selectedBlock.blockId}`, selectedBlock.responseConfig, {draftId:session.state.draft.localId,blockId:selectedBlock.blockId});
+
     if (activeInputType === 'multiple_choice') {
       const shuffleRow = document.createElement('div');
       shuffleRow.className = 'inline-toggle inline-toggle--custom';
@@ -8788,6 +8804,7 @@ function renderEditorShell(session) {
     const outcome = session.switchQuestionInputTypeWithImpactPolicy(selectedBlockId, questionInputType.value);
     if (!outcome.ok && outcome.reason === 'confirm-switch-required') {
       const details = [
+        ...(currentInputType === 'fill_in_blanks' ? [t('fillBlanks.removeType')] : []),
         t('editor.question.switchTypeConfirm.optionRemoval', { count: outcome.impact.optionCountToRemove }),
         t('editor.question.switchTypeConfirm.attachmentRemoval', { count: outcome.impact.optionAttachmentCountToRemove }),
       ];
@@ -9315,6 +9332,8 @@ function normalizeQuestionResponseConfig(responseConfig, options = {}) {
     inputType,
   };
 
+  if (inputType === 'fill_in_blanks') return source.passage ? structuredClone(source) : emptyBlankConfig();
+  for (const key of ['passage','mode','reuseWords','distractors']) delete normalized[key];
   if (inputType === 'image_response') return { inputType, maxImages: source.maxImages ?? 3 };
   delete normalized.maxImages;
   if (inputType !== 'text') delete normalized.textMode;

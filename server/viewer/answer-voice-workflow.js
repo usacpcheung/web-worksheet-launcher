@@ -58,6 +58,7 @@ export function normalizeVoiceRecovery(records, blocks = []) {
         { deliberate: true, snapshot: item.snapshot, index: item.index, replaceStart: item.replaceStart }),
       mode: item.mode === 'rewrite' ? 'rewrite' : 'voice',
       createdAt: typeof item.createdAt === 'string' ? item.createdAt : '',
+      ...(block.responseConfig?.blankTarget && item.completeAnswer ? { completeAnswer: true, candidate: item.text, code: 'ANSWER_TOO_LONG' } : {}),
       ...(typeof item.undoSnapshot === 'string' ? { undoSnapshot: item.undoSnapshot } : {}),
     }]);
   }
@@ -119,12 +120,17 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
   const applyCandidate = (op, candidate) => {
     if (op.accountCurrent && !op.accountCurrent()) { keep(op, 'STALE_CONTEXT'); return false; }
     if (!fresh(op)) { keep(op, 'STALE_CONTEXT', candidate); return false; }
+    const config = read(op.blockId).block.responseConfig;
+    // Inline blanks use the same single-line normalization as typed/pasted input.
+    if (config?.blankTarget) candidate = candidate.replace(/[\r\n]+/g, ' ');
     const value = op.mode === 'rewrite' ? { text: candidate, caret: candidate.length }
       : insertVoiceSegment(op.snapshot, candidate, op.index, op.replaceStart);
     // Match the viewer's UTF-16 maxLength semantics, independently of the
     // bridge's Unicode-code-point input limit. Never apply an oversized voice result.
-    if (value.text.length > (read(op.blockId).block.responseConfig?.maxLength || 200)) {
-      keep(op, 'ANSWER_TOO_LONG', candidate); return false;
+    if ((config?.blankTarget ? unicodeLength(value.text) : value.text.length) > (config?.maxLength || 200)) {
+      if (config?.blankTarget) {
+        recover(op.blockId, { mode:'rewrite', phase:'text', completeAnswer:true, text:value.text, candidate:value.text, snapshot:op.snapshot, code:'ANSWER_TOO_LONG', createdAt:op.createdAt, undoSnapshot:op.undoSnapshot, accountCurrent:op.accountCurrent });
+      } else keep(op, 'ANSWER_TOO_LONG', candidate); return false;
     }
     apply(op.blockId, value.text, op.undoSnapshot ?? op.snapshot, value.caret);
     recover(op.blockId, null);

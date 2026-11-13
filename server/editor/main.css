@@ -2020,3 +2020,134 @@ textarea.control {
 .editor-rich-text .control-error { margin: 4px 0; }
 .editor-rich-toolbar :focus-visible { outline: 2px solid #2563eb; outline-offset: 1px; }
 @media (hover: hover) { .editor-rich-toolbar button:enabled:hover { background: #e2e8f0; } }
+
+/* Fill-in-the-blank passage uses the existing rich-text toolbar and surface. */
+.editor-blank-passage {
+  position: relative;
+}
+.editor-blank-mark {
+  background: #eaf2ff;
+  border-bottom: 2px solid #8aaada;
+  border-radius: 4px;
+  color: #285f9f;
+  padding: 1px 4px;
+  cursor: pointer;
+}
+.editor-blank-mark.ProseMirror-selectednode {
+  outline: 2px solid #477ec3;
+  outline-offset: 2px;
+}
+.editor-blank-mode,
+.editor-blank-settings-head,
+.editor-blank-field-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.editor-blank-mode {
+  flex-wrap: wrap;
+  border-top: 1px solid #dbe3ef;
+  padding-top: 12px;
+}
+.editor-blank-mode select {
+  width: auto;
+}
+.editor-blank-mode .muted {
+  white-space: nowrap;
+}
+.editor-blank-chips,
+.editor-blank-add {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.editor-blank-add input {
+  flex: 1;
+  min-width: 120px;
+}
+.editor-blank-button {
+  font: inherit;
+  font-size: 13px;
+  min-height: 34px;
+  padding: 5px 10px;
+  border: 1px solid #cbd7e5;
+  border-radius: 7px;
+  color: #3e5676;
+  background: #fff;
+  cursor: pointer;
+}
+.editor-blank-button[aria-pressed="true"] {
+  background: #edf4ff;
+  border-color: #7199cf;
+}
+.editor-blank-settings {
+  display: grid;
+  gap: 8px;
+  background: #f8fbff;
+  padding: 12px;
+  border: 1px solid #d2dfef;
+  border-radius: 9px;
+}
+.editor-blank-settings[hidden],
+.editor-blank-bank[hidden] {
+  display: none;
+}
+.editor-blank-settings .muted {
+  font-size: 12px;
+  margin: 0;
+}
+.editor-blank-bank {
+  display: grid;
+  gap: 8px;
+}
+.editor-blank-reuse {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.editor-blank-reuse input {
+  width: auto;
+}
+.editor-blank-close {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.editor-blank-close svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+.editor-blank-context {
+  position: absolute;
+  z-index: 10;
+  background: white;
+  border: 1px solid #cbd7e6;
+  border-radius: 8px;
+  padding: 5px;
+  box-shadow: 0 5px 20px #314b6320;
+}
+#editor-make-blank {
+  width: auto;
+  margin-left: auto;
+  background: #edf4ff;
+  padding: 5px 10px;
+  border: 1px solid #b8cdec;
+}
+@media (max-width: 600px) {
+  .editor-blank-mode {
+    align-items: flex-start;
+  }
+  .editor-blank-mode label {
+    width: 100%;
+  }
+  #editor-make-blank {
+    margin-left: 0;
+  }
+}

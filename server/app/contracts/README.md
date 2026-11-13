@@ -31,3 +31,7 @@ Terminology note:
 
 - Snapshot validation requires `sourceDraftRevision` to enforce publish provenance traceability.
 - Mapper outputs deep-clone nested block structures so snapshot/viewer mapping does not share mutable references with source models.
+
+Fill-in-the-blanks configuration and answer-map validation is shared through
+`../fill-in-blanks.js`, including package readers and the server upload boundary.
+See the [feature contract](../../../docs/worksheet/fill-in-the-blanks.md).

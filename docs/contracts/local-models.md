@@ -117,3 +117,18 @@ are excluded from the shared voice workflow, including retry/auth recovery entry
 points; RolePlayScene's existing text questions remain eligible.
 
 Rich prompt/content fields preserve their `document` alongside the validated plain `text` projection through draft, snapshot, viewer and attempt records. See [shared rich-text editor](../worksheet/shared-rich-text-editor.md).
+
+## Fill-in-the-blanks persistence
+
+Blank configuration is application-owned rich passage data inside `responseConfig`;
+answers use a plain string map keyed by stable blank IDs inside the question's
+`answers[blockId].value`. Ordinary answer strings/arrays are unchanged. Local draft,
+snapshot, viewer, recovery journal and attempt records preserve these nested maps.
+The full configuration participates in source fingerprints; an edited answer key
+cannot silently resume against an old attempt. No IndexedDB migration is needed.
+
+Per-blank voice targets use `blank:` plus JSON-encoded `[questionId, blankId]` in
+local recovery and transient Undo maps only. Complete overflow candidates retain
+`completeAnswer: true` so reload applies the shortened full answer once, rather
+than inserting it a second time. Attempts never export those recovery records.
+See [fill-in-the-blanks](../worksheet/fill-in-the-blanks.md).

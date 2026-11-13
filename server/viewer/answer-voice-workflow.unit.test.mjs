@@ -22,7 +22,7 @@ function setup(options = {}) {
     recovery: {}, applied: [], states: [], requests: [], records: [], interval: null };
   const flow = createVoiceWorkflow({
     context: blockId => ({ attemptId: state.attempt, contextKey: state.contextKey, editable: state.editable, recovery: state.recovery[blockId],
-      block: { blockId, kind: 'question', responseConfig: { inputType: 'text', textMode: options.textMode, maxLength: options.maxLength || 200 } },
+      block: { blockId, kind: 'question', responseConfig: { inputType: 'text', textMode: options.textMode, blankTarget: options.blankTarget, maxLength: options.maxLength || 200 } },
       answer: state.answers[blockId] }),
     apply: (id, text, snapshot, caret) => { state.answers[id] = text; state.applied.push({ id, text, snapshot, caret }); },
     recover: (id, record) => { if (record) state.recovery[id] = record; else delete state.recovery[id]; },
@@ -664,4 +664,36 @@ test('long text cannot start recording, rewrite, or retry; legacy discussion tex
   assert.equal(state.records.length, 0);
   assert.equal(state.requests.length, 0);
   assert.equal(isVoiceQuestion({ kind: 'question', responseConfig: { inputType: 'text' } }), true);
+});
+
+
+test('blank voice overflow retains the complete answer, survives reload, and applies shortened text once', async () => {
+  const h = setup({blankTarget:true,maxLength:50,rewrite:async()=>({ok:true,data:{text:'x'.repeat(50)}})});
+  await h.record();
+  const record=h.state.recovery.q1;
+  assert.equal(h.state.answers.q1,'Earlier');
+  assert.equal(record.candidate,'Earlier '+'x'.repeat(50));
+  assert.equal(record.mode,'rewrite');assert.equal(record.completeAnswer,true);
+  const blocks=[{blockId:'q1',kind:'question',responseConfig:{inputType:'text',blankTarget:true,maxLength:50}}];
+  const restored=normalizeVoiceRecovery(h.state.recovery,blocks).q1;
+  assert.equal(restored.candidate,record.candidate);
+  restored.candidate=restored.text='Earlier short';h.state.recovery.q1=restored;
+  const count=h.state.requests.length;
+  assert.equal((await h.flow.run('q1',{mode:'rewrite',retry:restored,candidate:restored.candidate})).ok,true);
+  assert.equal(h.state.answers.q1,'Earlier short');assert.equal(h.state.requests.length,count);
+  assert.equal(h.state.applied.at(-1).snapshot,'Earlier');
+});
+test('blank targets enforce 50 Unicode characters without changing normal text limits', async () => {
+  const h=setup({blankTarget:true,maxLength:50,rewrite:async()=>({ok:true,data:{text:'😀'.repeat(50)}})});
+  await h.flow.run('q1',{mode:'rewrite'});assert.equal(h.state.answers.q1,'😀'.repeat(50));
+  const text=setup({maxLength:50,rewrite:async()=>({ok:true,data:{text:'😀'.repeat(50)}})});
+  await text.flow.run('q1',{mode:'rewrite'});assert.equal(text.state.answers.q1,'Earlier');
+});
+
+test('inline blank voice results collapse line breaks before counting or applying', async () => {
+ const h=setup({blankTarget:true,maxLength:50,rewrite:async()=>({ok:true,data:{text:'red\r\nrose'}})});
+ await h.flow.run('q1',{mode:'rewrite'});assert.equal(h.state.answers.q1,'red rose');
+ assert.equal(h.state.applied.at(-1).caret,8);
+ const ordinary=setup({rewrite:async()=>({ok:true,data:{text:'red\nrose'}})});
+ await ordinary.flow.run('q1',{mode:'rewrite'});assert.equal(ordinary.state.answers.q1,'red\nrose');
 });
