@@ -7835,21 +7835,27 @@ function renderEditorShell(session) {
     }
 
     if (activeInputType === 'number') {
+      const correctAnswerLabel = document.createElement('label');
+      correctAnswerLabel.textContent = t('editor.question.correctAnswer');
+      correctAnswerLabel.htmlFor = 'editor-question-correct-answer-number';
+      const correctAnswerField = document.createElement('div');
+      correctAnswerField.className = 'editor-field number-answer-field';
+      correctAnswerField.append(correctAnswerLabel, questionCorrectAnswerNumber, questionCorrectAnswerNumberError);
       const minLabel = document.createElement('label');
       minLabel.textContent = t('editor.question.min');
       minLabel.htmlFor = 'editor-question-min';
       const minField = document.createElement('div');
-      minField.className = 'editor-field';
+      minField.className = 'editor-field number-answer-field';
       minField.append(minLabel, questionMin, questionMinError);
       const maxLabel = document.createElement('label');
       maxLabel.textContent = t('editor.question.max');
       maxLabel.htmlFor = 'editor-question-max';
       const maxField = document.createElement('div');
-      maxField.className = 'editor-field';
+      maxField.className = 'editor-field number-answer-field';
       maxField.append(maxLabel, questionMax, questionMaxError);
       const rangeRow = document.createElement('div');
       rangeRow.className = 'number-answer-range';
-      rangeRow.append(minField, maxField);
+      rangeRow.append(correctAnswerField, minField, maxField);
       answerSection.append(rangeRow);
 
       const rulesRow = document.createElement('div');
@@ -7864,7 +7870,7 @@ function renderEditorShell(session) {
       signedField.append(signedRow);
 
       const decimalPlacesField = document.createElement('div');
-      decimalPlacesField.className = 'editor-field';
+      decimalPlacesField.className = 'editor-field number-answer-field';
       const decimalPlacesLabel = document.createElement('label');
       decimalPlacesLabel.textContent = t('editor.question.decimalPlaces');
       decimalPlacesLabel.htmlFor = 'editor-question-number-decimal-places-allowed';
@@ -7874,16 +7880,10 @@ function renderEditorShell(session) {
       decimalPlacesField.append(
         decimalPlacesLabel,
         questionNumberDecimalPlacesAllowed,
-        decimalPlacesHint,
         questionNumberDecimalPlacesAllowedError
       );
-      rulesRow.append(signedField, decimalPlacesField);
+      rulesRow.append(decimalPlacesField, signedField, decimalPlacesHint);
       answerSection.append(rulesRow);
-
-      const correctAnswerLabel = document.createElement('label');
-      correctAnswerLabel.textContent = t('editor.question.correctAnswer');
-      correctAnswerLabel.htmlFor = 'editor-question-correct-answer-number';
-      answerSection.append(correctAnswerLabel, questionCorrectAnswerNumber, questionCorrectAnswerNumberError);
     }
 
     if (activeInputType === 'boolean') {
