@@ -231,6 +231,13 @@ export function createFillInBlanksControls({
     const r = { wrap, field, caption, def };
     records.set(def.id, r);
     if (typed) {
+      r.review = el('span', 'viewer-blank-input viewer-blank-submitted');
+      r.review.hidden = true;
+      r.review.setAttribute(
+        'aria-label',
+        t('fillBlanks.blankNumber', { number: i + 1 }),
+      );
+      wrap.insertBefore(r.review, caption);
       const id = blankVoiceId(block.blockId, def.id),
         target = resolveBlankVoiceTarget([block], id).block;
       const holder = el('section', 'viewer-blank-voice');
@@ -469,6 +476,10 @@ export function createFillInBlanksControls({
         if (r.field.value !== v && document.activeElement !== r.field)
           r.field.value = v;
         r.voice.update();
+        r.field.hidden = completed();
+        r.review.hidden = !completed();
+        r.review.textContent = v || t('viewer.review.notAnswered');
+        r.wrap.classList.toggle('is-submitted', completed());
         r.field.readOnly =
           completed() || session.voice.active?.blockId === r.voiceId;
         r.trigger.hidden = completed();
@@ -486,6 +497,10 @@ export function createFillInBlanksControls({
       } else {
         r.field.textContent = v;
         r.field.title = v;
+        r.field.setAttribute(
+          'aria-label',
+          `${t('fillBlanks.blankNumber', { number: defs.indexOf(r.def) + 1 })}: ${v || t('viewer.review.notAnswered')}`,
+        );
         r.field.disabled = completed();
         r.field.draggable = !completed() && Boolean(v);
         r.clear.hidden = completed() || !v;

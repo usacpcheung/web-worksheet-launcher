@@ -227,8 +227,19 @@ try {
       );
       const typed = page.locator('.viewer-blanks').first(),
         bank = page.locator('.viewer-blanks').nth(1);
-      const inputs = typed.locator('.viewer-blank-input');
+      const inputs = typed.locator('input.viewer-blank-input');
       await inputs.first().waitFor();
+      const blankLayout = await inputs.first().evaluate((field) => ({
+        bottom: field.getBoundingClientRect().bottom,
+        captionTop: field
+          .closest('[data-blank-id]')
+          .querySelector('.viewer-blank-caption')
+          .getBoundingClientRect().top,
+      }));
+      assert.ok(
+        blankLayout.bottom <= blankLayout.captionTop + 1,
+        'Typed blank must not overlap its counter',
+      );
       const ids = await inputs.evaluateAll((nodes) =>
         nodes.map((n) => n.closest('[data-blank-id]').dataset.blankId),
       );
@@ -415,6 +426,10 @@ try {
       await page.evaluate(() => window.viewerSession.completeLocalAttempt());
       await page.waitForFunction(
         () => window.viewerSession.state.status === 'completed',
+      );
+      assert.equal(
+        await typed.locator('.viewer-blank-submitted').nth(1).textContent(),
+        'a flower rose',
       );
       const result = await page.evaluate(async () => {
         const m = await import('/server/viewer/main.js');

@@ -3608,7 +3608,7 @@ html:has(.viewer-attempt-dialog[open]) { overflow:hidden; overflow-anchor:none; 
   margin: 0 5px;
   line-height: 1.3;
 }
-.viewer-answer-area .viewer-blank-input {
+.viewer-shell--continuous .viewer-answer-area .viewer-blank-input {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
@@ -3651,7 +3651,7 @@ html:has(.viewer-attempt-dialog[open]) { overflow:hidden; overflow-anchor:none; 
 .viewer-blank-caption.is-result {
   visibility: visible;
 }
-.viewer-blank-input:focus {
+.viewer-blanks .viewer-blank-input:focus {
   outline: 2px solid #5184c7;
   outline-offset: 2px;
 }
@@ -3794,7 +3794,7 @@ html:has(.viewer-attempt-dialog[open]) { overflow:hidden; overflow-anchor:none; 
 .viewer-blank-voice .viewer-voice-hint {
   font-size: 13px;
 }
-.viewer-blank-voice textarea {
+.viewer-shell--continuous .viewer-blank-voice textarea {
   font-size: 16px;
   min-height: 90px;
 }
@@ -3816,7 +3816,7 @@ html:has(.viewer-attempt-dialog[open]) { overflow:hidden; overflow-anchor:none; 
     margin: 0 3px;
     grid-template-rows: 38px 18px;
   }
-  .viewer-answer-area .viewer-blank-input {
+  .viewer-shell--continuous .viewer-answer-area .viewer-blank-input {
     height: 38px;
     font-size: 16px;
   }
@@ -3847,4 +3847,13 @@ html:has(.viewer-attempt-dialog[open]) { overflow:hidden; overflow-anchor:none; 
   min-height: 40px;
   white-space: normal;
   overflow-wrap: anywhere;
+}
+
+.viewer-blank-slot.is-submitted { grid-template-rows:minmax(40px, auto) 18px; }
+.viewer-shell--continuous .viewer-answer-area .viewer-blank-submitted {
+  height:auto;
+  min-height:40px;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+  padding-right:8px;
 }
