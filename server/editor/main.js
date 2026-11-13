@@ -7228,7 +7228,7 @@ function renderEditorShell(session) {
     const focusedPromptControl = rightPanel.contains(document.activeElement) ? document.activeElement : null;
     const focusedPromptRow = focusedPromptControl?.closest('[data-prompt-audio-track-block-id]');
     const focusedPromptLanguage = focusedPromptControl?.dataset.promptAudioLanguage
-      || (focusedPromptRow?.dataset.promptAudioTrackBlockId === selectedBlock?.blockId ? focusedPromptRow.dataset.promptAudioTrackLanguage : null);
+      || (focusedPromptRow && focusedPromptRow.dataset.promptAudioTrackBlockId === selectedBlock?.blockId ? focusedPromptRow.dataset.promptAudioTrackLanguage : null);
     const focusedPromptAction = focusedPromptControl?.dataset.audioTrackAction;
     detailSignature = nextSignature;
     optionActionSignature = nextOptionActionSignature;

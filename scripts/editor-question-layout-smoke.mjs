@@ -116,6 +116,11 @@ try {
     await page.evaluate(() => { const s = window.editorSession; s.createBlock('question'); s.notifyStateChange(); });
     assert.equal(await type.inputValue(), 'text'); assert.equal(await media.evaluate(e => e.open), true);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+    await page.evaluate(() => {
+      const s = window.editorSession;
+      s.state.draft.blocks = []; s.state.selectedBlockId = null; s.notifyStateChange();
+    });
+    assert.equal(await page.locator('#editor-question-input-type').count(), 0);
     assert.deepEqual(errors, []); await context.close();
     console.log(`PASS editor layout ${locale}/${width}: conversion, cancel, stale edits, limits, audio selection/removal and new-question defaults`);
   }
