@@ -52,6 +52,7 @@ try {
       });
       const promptGenerate = language => page.locator(`[data-prompt-audio-track-language="${language}"] [data-audio-track-action="generate"]`);
       const clickPromptGenerate = async language => {
+        await page.locator(`[data-prompt-audio-language="${language}"]`).click();
         if (await promptGenerate(language).isVisible()) return promptGenerate(language).click();
         const row = page.locator(`[data-prompt-audio-track-language="${language}"]`);
         await row.locator('.audio-track-more-menu__toggle').click();

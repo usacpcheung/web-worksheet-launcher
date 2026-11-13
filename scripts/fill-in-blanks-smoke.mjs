@@ -89,6 +89,8 @@ try {
       await page
         .locator('#editor-question-input-type')
         .selectOption('fill_in_blanks');
+      await page.locator('[name=prompt-placement][value=instructions]').check();
+      await page.locator('.confirm-modal__actions button').last().click();
       const passage = page.locator('.editor-blank-passage .tiptap');
       await passage.fill(
         'Plants need water and sunlight.\nGive the plants water.',
@@ -189,6 +191,8 @@ try {
           (b) => b.blockId === id,
         );
         const bank = structuredClone(q);
+        bank.prompt = { ...bank.prompt, text: '', format: 'plain_text' };
+        delete bank.prompt.document;
         bank.blockId = 'bank';
         bank.position = 1;
         bank.responseConfig.mode = 'word_bank';

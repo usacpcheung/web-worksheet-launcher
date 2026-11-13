@@ -2155,3 +2155,51 @@ textarea.control {
   max-width: 100%;
   overflow-wrap: anywhere;
 }
+
+/* Type-aware authoring layout and compact prompt media. */
+.editor-question-type { display:flex; align-items:center; gap:8px 12px; flex-wrap:wrap; padding:10px 12px; margin:12px 0 18px; border:1px solid #d8e2f0; border-radius:8px; background:#f8fbff; }
+.editor-question-type label { margin:0; font-weight:600; }
+.editor-question-type select { width:240px; max-width:100%; margin:0; }
+.editor-question-type > p { flex-basis:100%; margin:0; font-size:12px; }
+.editor-disclosure { border:1px solid #d8e1ee; border-radius:8px; background:#fff; margin:14px 0; min-width:0; }
+.editor-disclosure > summary { cursor:pointer; padding:11px 12px; font-size:14px; font-weight:600; }
+.editor-disclosure[open] > summary { border-bottom:1px solid #e3e8f1; }
+.editor-disclosure > summary:focus-visible { outline:2px solid #3569af; outline-offset:2px; }
+.editor-disclosure-body { padding:12px; }
+.editor-prompt-media > .media-row-list { padding:0 12px; }
+.editor-prompt-media > p { margin:8px 12px; }
+.editor-prompt-audio-heading { display:flex; align-items:center; flex-wrap:wrap; gap:10px; padding:12px 0 4px; }
+.editor-prompt-audio-heading strong { font-size:13px; }
+.editor-audio-languages { display:flex; gap:6px; margin-left:auto; }
+.editor-audio-language { display:inline-flex; align-items:center; justify-content:center; gap:5px; min-width:46px; min-height:36px; padding:6px 8px; border:1px solid #d3dce7; border-radius:8px; background:#f5f7fa; color:#69778c; font:inherit; font-size:13px; cursor:pointer; }
+.editor-audio-language--attached { background:#eaf2ff; border-color:#bfd1ed; color:#285fa5; }
+.editor-audio-language[aria-pressed=true] { outline:2px solid #3569af; outline-offset:2px; }
+.editor-audio-language:focus-visible { outline:3px solid #172f58; outline-offset:3px; }
+.editor-audio-language:disabled { cursor:default; opacity:.6; }
+.editor-audio-language-mark { font-size:11px; }
+.editor-prompt-audio-tracks .audio-track-row { display:flex; flex-direction:column; align-items:stretch; gap:8px; padding:8px 0; }
+.editor-prompt-audio-tracks .audio-track-row[hidden] { display:none; }
+.editor-prompt-audio-tracks .media-row__actions { justify-content:flex-start; }
+.editor-prompt-audio-tracks .audio-track-row .media-row__actions > [data-audio-track-action="attach"],
+.editor-prompt-audio-tracks .audio-track-row .media-row__actions > [data-audio-track-action="generate"],
+.editor-prompt-audio-tracks .audio-track-row .media-row__actions > [data-audio-track-action="play"] { display:inline-flex; }
+.editor-prompt-audio-tracks .audio-track-more-menu--prompt { display:block; }
+.editor-audio-source-hint { margin:0 0 10px; font-size:12px; line-height:1.6; }
+.editor-type-choice { display:flex; gap:10px; padding:12px; border:1px solid #d7e2f0; border-radius:8px; margin:10px 0; cursor:pointer; }
+.editor-type-choice:has(input:checked) { background:#f0f6ff; border-color:#89aee0; }
+.editor-type-choice input { width:auto; align-self:flex-start; margin-top:5px; }
+.editor-type-choice small { display:block; margin-top:4px; color:#66768e; line-height:1.6; }
+.editor-type-preview-text { white-space:pre-wrap; overflow-wrap:anywhere; padding:12px; margin-top:8px; background:#f6f9fd; border:1px solid #d9e3ef; border-radius:8px; max-height:220px; overflow:auto; font-size:14px; line-height:1.7; }
+@media(max-width:600px) {
+  .editor-question-type select { flex:1; min-width:150px; }
+  .editor-audio-language { min-width:40px; padding:6px; }
+  .editor-audio-languages { gap:5px; }
+}
+.editor-prompt-media .media-row__actions { gap:6px; flex-wrap:wrap; }
+.editor-prompt-media .media-action-btn { flex:0 0 auto; min-height:36px; padding:6px 10px; font-size:13px; }
+.editor-prompt-media .media-row__title { min-width:0; font-size:13px; }
+.editor-prompt-media .asset-status-badge { min-height:0; padding:3px 7px; font-size:12px; }
+.editor-prompt-media .audio-track-more-menu__list .media-action-btn { width:100%; }
+.editor-prompt-media .media-row__meta { flex-wrap:wrap; }
+/* Keep the overflow menu anchored inside the panel when actions wrap. */
+.editor-prompt-audio-tracks .audio-track-more-menu--prompt { margin-left:auto; }

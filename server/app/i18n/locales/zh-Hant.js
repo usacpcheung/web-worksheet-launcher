@@ -1,6 +1,35 @@
 import roleplayscene from './roleplayscene/zh-Hant.js';
 
 export default {
+  editorLayout: {
+    toContentTitle: "將短文轉為閱讀內容？",
+    toContentDescription: "指示與短文將成為閱讀文字。空格設定及題目媒體關聯會移除；文字格式會保留。",
+    "questionType": "題目類型",
+    "passageTitle": "短文與空格",
+    "instructions": "作答指示 · 可留空",
+    "instructionsOptional": "作答指示 — 可留空",
+    "mediaAudio": "媒體與音訊",
+    "audioLanguage": "音訊語言",
+    "audioLanguageStatus": "{language} — {status}",
+    "noAudio": "未附音訊",
+    "promptAudioHint": "使用目前題目文字；每種語言各自保留一條音軌。",
+    "instructionsAudioHint": "語音只朗讀作答指示，不會朗讀短文或空格答案。填寫指示後可生成語音，也可附加錄音。",
+    "passageChoice": "用作短文",
+    "passageChoiceHint": "保留文字格式；指示欄留空。",
+    "instructionsChoice": "保留為作答指示",
+    "instructionsChoiceHint": "保留目前題目文字；短文從空白開始。",
+    "toBlanksTitle": "轉換為填充題",
+    "toBlanksDescription": "如何使用目前的題目文字？",
+    "switchType": "轉換題型",
+    "audioSourceWarning": "音訊會保留。將題目文字移到短文會改變音訊來源，已有音軌將標示「文字已更改」。",
+    "resultingPrompt": "轉換後的題目文字",
+    "convertedTooLong": "此文字超過題目 {max} 字元上限。系統不會截斷文字；轉換後需縮短題目文字才可匯出或發佈。",
+    "fromBlanksTitle": "將短文轉為題目文字？",
+    "fromBlanksDescription": "目前標記詞語會恢復為普通文字，指示保留在短文上方。文字格式、圖片及音訊會保留。",
+    "convertAndRemove": "轉換並移除空格",
+    "visibleAnswersWarning": "請檢查預覽：學生原本看不到的空格答案，將成為可見文字。",
+    "conversionFailed": "無法轉換文字，題目維持不變。"
+},
   fillBlanks: {
     "type": "填充題",
     "passage": "短文",

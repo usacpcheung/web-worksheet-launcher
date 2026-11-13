@@ -35,6 +35,7 @@ try {
       s.notifyStateChange();
     }, { locale });
     if (target === 'option') await page.locator('[data-option-audio-menu-trigger]').first().click();
+    if (target === 'prompt') await page.locator('[data-prompt-audio-language=english]').click();
     const generate = target === 'prompt'
       ? page.locator('[data-prompt-audio-track-language="english"] [data-audio-track-action="generate"]')
       : page.locator('[data-option-audio-language="english"][data-option-audio-action="generate"]');

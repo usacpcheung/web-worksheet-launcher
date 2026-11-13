@@ -2063,7 +2063,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
         <div class="print-prompt-area">
         <section class="print-question-section print-question-section--prompt print-question-section--${escapeHtml(question.sectionBreakModes?.prompt || 'keep')}">
           <h3>${escapeHtml(t('viewer.print.questionHeading'))}</h3>
-          <div class="print-question-text worksheet-text">${renderWorksheetText(question.promptText?.trim() ? (question.promptField || { text: question.promptText, format: question.promptFormat }) : { text: t('viewer.print.noPromptProvided') })}</div>
+          <div class="print-question-text worksheet-text">${renderWorksheetText(question.promptText?.trim() ? (question.promptField || { text: question.promptText, format: question.promptFormat }) : { text: t(question.blankConfig ? 'fillBlanks.type' : 'viewer.print.noPromptProvided') })}</div>
         </section>
         ${imageSectionHtml}
         </div>
@@ -6512,7 +6512,9 @@ function renderViewerShell(session) {
     const controlId = `answer-${block.blockId}`;
     label.id = `${controlId}-label`;
     label.addEventListener('click', () => document.getElementById(label.htmlFor || controlId)?.focus(), { signal: scope.signal });
-    setWorksheetText(label, { ...block.prompt, text: block.prompt?.text || t('viewer.stepper.question') });
+    setWorksheetText(label, isFillInBlanks(block.responseConfig) && !String(block.prompt?.text || '').trim()
+      ? { text: t('fillBlanks.type') }
+      : { ...block.prompt, text: block.prompt?.text || t('viewer.stepper.question') });
     const mediaFeedback = document.createElement('p');
     mediaFeedback.className = 'viewer-media-feedback';
     mediaFeedback.setAttribute('role', 'status');

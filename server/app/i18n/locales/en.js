@@ -1,6 +1,35 @@
 import roleplayscene from './roleplayscene/en.js';
 
 export default {
+  editorLayout: {
+    toContentTitle: "Convert passage to a reading section?",
+    toContentDescription: "Instructions and the passage become reading text. Blank settings and question media associations are removed; text formatting is kept.",
+    "questionType": "Question type",
+    "passageTitle": "Passage and blanks",
+    "instructions": "Instructions · optional",
+    "instructionsOptional": "Instructions — optional",
+    "mediaAudio": "Media and audio",
+    "audioLanguage": "Audio language",
+    "audioLanguageStatus": "{language} — {status}",
+    "noAudio": "No audio attached",
+    "promptAudioHint": "Uses the current question text. Each language keeps its own audio track.",
+    "instructionsAudioHint": "Audio reads the optional instructions only, not the passage or blank answers. Add instructions to generate audio, or attach a recording.",
+    "passageChoice": "Use it as the passage",
+    "passageChoiceHint": "Keep formatting. Instructions start empty.",
+    "instructionsChoice": "Keep it as instructions",
+    "instructionsChoiceHint": "Keep the existing prompt. Start with an empty passage.",
+    "toBlanksTitle": "Switch to fill in the blanks",
+    "toBlanksDescription": "How would you like to use the existing question text?",
+    "switchType": "Switch type",
+    "audioSourceWarning": "Audio stays attached. Moving the prompt into the passage changes its audio source and marks existing tracks as Text changed.",
+    "resultingPrompt": "Resulting question text",
+    "convertedTooLong": "This text exceeds the {max}-character prompt limit. Nothing will be truncated; shorten the resulting prompt before exporting or publishing.",
+    "fromBlanksTitle": "Convert passage to question text?",
+    "fromBlanksDescription": "The current marked words become ordinary text. Instructions stay above the passage. Formatting, images and audio are kept.",
+    "convertAndRemove": "Convert and remove blanks",
+    "visibleAnswersWarning": "Check the preview: words previously hidden from students will now be visible.",
+    "conversionFailed": "The text could not be converted. The question has not been changed."
+},
   fillBlanks: {
     "type": "Fill in the blanks",
     "passage": "Passage",

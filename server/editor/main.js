@@ -1,3 +1,4 @@
+import { questionTextConversion, passageToPrompt } from './question-type-conversion.js';
 import { createBlankPassageEditor } from './fill-in-blanks-editor.js';
 import { isFillInBlanks, emptyBlankConfig, assertBlankConfig } from '../app/fill-in-blanks.js';
 import { isLongText, textLimitCeiling, textConfigError, STANDARD_TEXT_LIMIT, LONG_TEXT_LIMIT } from '../app/text-answer.js';
@@ -448,7 +449,8 @@ function getBlockDeletePolicy(block) {
     const normalized = normalizeResponseOption(option);
     return hasTypedText(normalized.label) || hasTypedText(normalized.value);
   });
-  const hasTypedContent = hasTypedText(promptText) || hasTypedText(contentText) || hasOptionText;
+  const hasPassageText = isFillInBlanks(block.responseConfig) && hasTypedText(passageToPrompt(block).text);
+  const hasTypedContent = hasTypedText(promptText) || hasTypedText(contentText) || hasOptionText || hasPassageText;
   const hasAssets = collectQuestionAssetIds(block).length > 0;
   return {
     mode: hasTypedContent || hasAssets ? 'confirm_delete' : 'safe_direct_delete',
@@ -1523,7 +1525,7 @@ class EditorDraftSession {
         try { assertBlankConfig(block.responseConfig); } catch (error) { errors.push(`draft.blocks[${index}]: ${error.message}`); }
         const textError = textConfigError(block.responseConfig, { authoring: true });
         if (textError) errors.push(`draft.blocks[${index}]: ${t(isLongText(block.responseConfig) ? 'textAnswer.invalidLong' : 'textAnswer.invalid', { max: textLimitCeiling(block.responseConfig) })}`);
-        if (!block?.prompt?.text?.trim()) errors.push(`draft.blocks[${index}].prompt.text is required for question blocks`);
+        if (!isFillInBlanks(block.responseConfig) && !block?.prompt?.text?.trim()) errors.push(`draft.blocks[${index}].prompt.text is required for question blocks`);
         if (promptTextState(block.prompt).exceedsLimit) errors.push(t('formatting.promptTooLong', { max: PROMPT_TEXT_LIMIT }));
         if (!isRecord(block.responseConfig)) errors.push(`draft.blocks[${index}].responseConfig is required for question blocks`);
         if (!CANONICAL_RESPONSE_INPUT_TYPES.has(block.responseConfig?.inputType)) {
@@ -2536,7 +2538,7 @@ class EditorDraftSession {
     return { ok: true, ...migrated };
   }
 
-  updateQuestionInputType(blockId, inputType) {
+  updateQuestionInputType(blockId, inputType, { promptPlacement } = {}) {
     if (!this.state.draft || !blockId) return;
     if (inputType === 'image_response' && this.state.draft.blocks.find(b=>b.blockId===blockId)?.responseConfig?.inputType !== inputType && imageQuestions(this.state.draft.blocks).length >= 3) return;
     const normalizedInputType = ['text', 'number', 'boolean', 'multiple_choice', 'image_response', 'fill_in_blanks'].includes(inputType)
@@ -2547,6 +2549,7 @@ class EditorDraftSession {
       if (block.blockId !== blockId || block.kind !== 'question') {
         return block;
       }
+      const conversion = questionTextConversion(block, normalizedInputType, promptPlacement);
       const normalizedCurrentResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
       const nextResponseConfig = {
         ...normalizedCurrentResponseConfig,
@@ -2574,7 +2577,8 @@ class EditorDraftSession {
 
       return {
         ...block,
-        responseConfig: normalizeQuestionResponseConfig(nextResponseConfig),
+        prompt: conversion.prompt,
+        responseConfig: conversion.responseConfig || normalizeQuestionResponseConfig(nextResponseConfig),
       };
     });
     this.touchDraft();
@@ -2613,7 +2617,7 @@ class EditorDraftSession {
           ])
         : [])
       : [];
-    this.updateQuestionInputType(blockId, nextInputType);
+    this.updateQuestionInputType(blockId, nextInputType, options);
     if (removedAssetIds.length > 0) {
       this.pruneAssetLinks(removedAssetIds);
     }
@@ -3269,7 +3273,7 @@ class EditorDraftSession {
         ...block,
         kind: 'content',
         content: {
-          ...copyWorksheetText(block.content || block.prompt),
+          ...copyWorksheetText(isFillInBlanks(block.responseConfig) ? passageToPrompt(block) : (block.content || block.prompt)),
         },
         prompt: undefined,
         responseConfig: undefined,
@@ -5305,6 +5309,7 @@ function renderEditorShell(session) {
     cancelLabel = t('common.actions.cancel'),
     variant = 'danger',
     warningText = t('editor.modal.confirm.irreversibleWarning'),
+    content = null,
   }) {
     if (activeConfirmDialog) {
       closeActiveConfirmDialog(false);
@@ -5362,6 +5367,7 @@ function renderEditorShell(session) {
     deleteBtn.textContent = confirmLabel;
     actionRow.append(cancelBtn, deleteBtn);
     dialog.append(heading, description);
+    if (content) dialog.append(content);
     if (removalItems.length > 0) {
       dialog.append(detailsHeading, detailsList);
     }
@@ -6358,6 +6364,17 @@ function renderEditorShell(session) {
   let browsePublishedDialogRevision = 0;
   let manageUploadedDraftsDialogOpen = false;
   let manageUploadedDraftsDialogRevision = 0;
+  const detailViewStates = new Map();
+  const detailViewKey = block => `${session.state.draft?.localId}:${block.blockId}`;
+  const detailViewState = block => {
+    const key = detailViewKey(block);
+    if (!detailViewStates.has(key)) detailViewStates.set(key, {
+      mediaOpen: true,
+      instructionsOpen: Boolean(worksheetTextToPlain(block.prompt).trim()),
+      audioLanguage: 'cantonese',
+    });
+    return detailViewStates.get(key);
+  };
   let detailSignature = null;
   let optionActionSignature = null;
   let visibleActivityCount = ACTIVITY_VISIBLE_INITIAL;
@@ -6800,7 +6817,8 @@ function renderEditorShell(session) {
       button.type = 'button';
       button.className = 'block-select';
       const displayIndex = index + 1;
-      const previewSource = worksheetTextToPlain(block.kind === 'question' ? block?.prompt : block?.content);
+      const previewSource = worksheetTextToPlain(block.kind === 'question'
+        ? (isFillInBlanks(block.responseConfig) ? passageToPrompt(block) : block.prompt) : block.content);
       const preview = String(previewSource || '').replace(/\s+/g, ' ').trim().slice(0, 60) || '—';
       const blockIndex = document.createElement('span');
       blockIndex.className = 'block-select__index';
@@ -7006,9 +7024,25 @@ function renderEditorShell(session) {
     promptT2AUiRefs.attachBtn.disabled = isPromptT2AInFlight;
     promptT2AUiRefs.playBtn.disabled = !currentQuestionAudioRef || isPromptT2AInFlight;
     promptT2AUiRefs.removeBtn.disabled = !currentQuestionAudioRef || isPromptT2AInFlight;
+    const viewState = detailViewState(selectedBlock);
+    rightPanel.querySelectorAll('[data-prompt-audio-language]').forEach(button => {
+      const language = button.dataset.promptAudioLanguage;
+      const attached = Boolean(getAudioTrack(selectedBlock.prompt?.audioTracks, language));
+      button.classList.toggle('editor-audio-language--attached', attached);
+      button.setAttribute('aria-pressed', String(language === viewState.audioLanguage));
+      const label = t('editorLayout.audioLanguageStatus', {
+        language: getAudioTrackLanguageLabel(language),
+        status: t(attached ? 'editor.block.attachedBadge' : 'editorLayout.noAudio'),
+      });
+      button.title = label;
+      button.setAttribute('aria-label', label);
+      button.querySelector('.editor-audio-language-mark').textContent = attached ? '✓' : '−';
+      button.disabled = isPromptT2AInFlight;
+    });
     const currentTextHash = getAudioSourceTextHash(worksheetTextToPlain(selectedBlock?.prompt));
     document.querySelectorAll(`[data-prompt-audio-track-block-id="${selectedBlock.blockId}"]`).forEach((trackRow) => {
       const language = trackRow.dataset.promptAudioTrackLanguage;
+      trackRow.hidden = language !== viewState.audioLanguage;
       const track = getAudioTrack(selectedBlock.prompt?.audioTracks, language);
       const status = trackRow.querySelector('[data-audio-track-status="1"]');
       const stale = trackRow.querySelector('[data-audio-track-stale="1"]');
@@ -7191,6 +7225,11 @@ function renderEditorShell(session) {
     if (!force && nextSignature === detailSignature) {
       return;
     }
+    const focusedPromptControl = rightPanel.contains(document.activeElement) ? document.activeElement : null;
+    const focusedPromptRow = focusedPromptControl?.closest('[data-prompt-audio-track-block-id]');
+    const focusedPromptLanguage = focusedPromptControl?.dataset.promptAudioLanguage
+      || (focusedPromptRow?.dataset.promptAudioTrackBlockId === selectedBlock?.blockId ? focusedPromptRow.dataset.promptAudioTrackLanguage : null);
+    const focusedPromptAction = focusedPromptControl?.dataset.audioTrackAction;
     detailSignature = nextSignature;
     optionActionSignature = nextOptionActionSignature;
     rightPanel.innerHTML = '';
@@ -7235,19 +7274,48 @@ function renderEditorShell(session) {
       return;
     }
 
-    rightPanel.appendChild(createEditorSectionHeader({ icon: 'pencil', title: t('editor.block.questionSectionTitle') }));
+    const activeInputType = selectedBlock.responseConfig?.inputType || 'text';
+    const viewState = detailViewState(selectedBlock);
+    const inputTypeField = document.createElement('div');
+    inputTypeField.className = 'editor-question-type';
+    const inputTypeLabel = document.createElement('label');
+    inputTypeLabel.textContent = t('editorLayout.questionType');
+    inputTypeLabel.htmlFor = 'editor-question-input-type';
+    inputTypeField.append(inputTypeLabel, questionInputType);
+    rightPanel.append(inputTypeField);
+    let promptHost = rightPanel;
+    if (activeInputType === 'fill_in_blanks') {
+      rightPanel.appendChild(createEditorSectionHeader({ icon: 'pencil', title: t('editorLayout.passageTitle') }));
+      blankEditor.mount(rightPanel, `${session.state.draft.localId}:${selectedBlock.blockId}`, selectedBlock.responseConfig, { draftId: session.state.draft.localId, blockId: selectedBlock.blockId });
+      const instructions = document.createElement('details');
+      instructions.className = 'editor-disclosure editor-instructions';
+      instructions.open = viewState.instructionsOpen;
+      instructions.addEventListener('toggle', () => { if (instructions.isConnected) viewState.instructionsOpen = instructions.open; });
+      const summary = document.createElement('summary');
+      summary.textContent = t('editorLayout.instructions');
+      promptHost = document.createElement('div');
+      promptHost.className = 'editor-disclosure-body';
+      instructions.append(summary, promptHost);
+      rightPanel.append(instructions);
+    } else {
+      rightPanel.appendChild(createEditorSectionHeader({ icon: 'pencil', title: t('editor.block.questionSectionTitle') }));
+    }
     const promptLabel = document.createElement('label');
-    promptLabel.textContent = t('editor.block.promptLabel');
+    promptLabel.textContent = t(activeInputType === 'fill_in_blanks' ? 'editorLayout.instructionsOptional' : 'editor.block.promptLabel');
     promptLabel.htmlFor = 'editor-block-editor';
-    textEditor.mount(rightPanel, promptLabel, `${session.state.draft.localId}:${selectedBlock.blockId}`, selectedBlock.prompt, true, { draftId: session.state.draft.localId, blockId: selectedBlock.blockId });
+    textEditor.mount(promptHost, promptLabel, `${session.state.draft.localId}:${selectedBlock.blockId}`, selectedBlock.prompt, true, { draftId: session.state.draft.localId, blockId: selectedBlock.blockId });
 
     const promptMediaRefs = normalizeMediaRefs(selectedBlock?.prompt?.mediaRefs);
     const currentQuestionImageRef = getSingleMediaRef(promptMediaRefs, 'question_image');
     const currentQuestionAudioRef = getSingleMediaRef(promptMediaRefs, 'question_audio');
 
-    const mediaSection = document.createElement('section');
-    mediaSection.className = 'editor-detail-section media-section';
-    mediaSection.appendChild(createEditorSectionHeader({ icon: 'image', title: t('editor.block.promptMediaTitle') }));
+    const mediaSection = document.createElement('details');
+    mediaSection.className = 'editor-disclosure editor-prompt-media media-section';
+    mediaSection.open = viewState.mediaOpen;
+    mediaSection.addEventListener('toggle', () => { if (mediaSection.isConnected) viewState.mediaOpen = mediaSection.open; });
+    const mediaSummary = document.createElement('summary');
+    mediaSummary.textContent = t('editorLayout.mediaAudio');
+    mediaSection.append(mediaSummary);
     const mediaRows = document.createElement('div');
     mediaRows.className = 'media-row-list media-row-list--flat';
     const questionImageRow = document.createElement('div');
@@ -7488,14 +7556,42 @@ function renderEditorShell(session) {
     });
     questionAudioActions.append(attachQuestionAudioBtn, generateQuestionAudioBtn, playQuestionAudioBtn, removeQuestionAudioBtn);
     questionAudioRow.append(questionAudioMeta, questionAudioActions);
+    const audioHeading = document.createElement('div');
+    audioHeading.className = 'editor-prompt-audio-heading';
+    const audioTitle = document.createElement('strong');
+    audioTitle.textContent = t('editor.block.promptAudioLabel');
+    const languages = document.createElement('div');
+    languages.className = 'editor-audio-languages';
+    languages.setAttribute('role', 'group');
+    languages.setAttribute('aria-label', t('editorLayout.audioLanguage'));
+    for (const language of AUDIO_TRACK_LANGUAGE_IDS) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'editor-audio-language';
+      button.dataset.promptAudioLanguage = language;
+      const label = document.createElement('span');
+      label.textContent = { cantonese: '粵', mandarin: '普', english: 'EN' }[language];
+      const status = document.createElement('span');
+      status.className = 'editor-audio-language-mark';
+      status.setAttribute('aria-hidden', 'true');
+      button.append(label, status);
+      button.addEventListener('click', () => {
+        viewState.audioLanguage = language;
+        languageTrackRows.querySelectorAll('details[open]').forEach(menu => { menu.open = false; });
+        refreshPromptT2AControlsForSelectedBlock();
+      });
+      languages.append(button);
+    }
+    audioHeading.append(audioTitle, languages);
     const languageTrackRows = document.createElement('div');
-    languageTrackRows.className = 'media-row-list media-row-list--flat audio-track-row-list audio-track-row-list--flat';
+    languageTrackRows.className = 'media-row-list media-row-list--flat audio-track-row-list audio-track-row-list--flat editor-prompt-audio-tracks';
     AUDIO_TRACK_LANGUAGE_IDS.forEach((language) => {
       const track = getAudioTrack(selectedBlock.prompt?.audioTracks, language);
       const isTrackGenerating = isPromptT2AInFlight
         && promptTrackGenerationLanguageByBlockId.get(selectedBlock.blockId) === language;
       const trackRow = document.createElement('div');
       trackRow.className = `media-row audio-track-row ${track ? 'audio-track-row--attached' : 'audio-track-row--empty'}`;
+      trackRow.hidden = language !== viewState.audioLanguage;
       trackRow.dataset.promptAudioTrackBlockId = selectedBlock.blockId;
       trackRow.dataset.promptAudioTrackLanguage = language;
       trackRow.dataset.audioTrackSourceHash = track?.sourceTextHash || '';
@@ -7611,30 +7707,9 @@ function renderEditorShell(session) {
       removeBtn.addEventListener('click', removePromptTrack);
       let moreMenu = null;
       if (track) {
-        const overflowReplaceBtn = document.createElement('button');
-        overflowReplaceBtn.type = 'button';
-        overflowReplaceBtn.className = 'media-action-btn';
-        overflowReplaceBtn.dataset.audioTrackOverflowAction = 'replace';
-        setMediaActionButtonContent(overflowReplaceBtn, 'upload', t('editor.media.actions.replace'));
-        overflowReplaceBtn.disabled = isPromptT2AInFlight;
-        overflowReplaceBtn.addEventListener('click', attachPromptTrack);
-        const overflowGenerateBtn = document.createElement('button');
-        overflowGenerateBtn.type = 'button';
-        overflowGenerateBtn.className = 'media-action-btn';
-        overflowGenerateBtn.dataset.audioTrackOverflowAction = 'generate';
-        setMediaActionButtonContent(overflowGenerateBtn, 'refresh', t('editor.media.actions.regenerate'));
-        overflowGenerateBtn.disabled = !promptT2AEligible || isPromptT2AInFlight;
-        overflowGenerateBtn.addEventListener('click', generatePromptTrack);
-        const overflowRemoveBtn = document.createElement('button');
-        overflowRemoveBtn.type = 'button';
-        overflowRemoveBtn.className = 'media-action-btn media-action-btn--remove';
-        overflowRemoveBtn.dataset.audioTrackOverflowAction = 'remove';
-        setMediaActionButtonContent(overflowRemoveBtn, 'trash', t('editor.media.actions.remove'));
-        overflowRemoveBtn.disabled = isPromptT2AInFlight;
-        overflowRemoveBtn.addEventListener('click', removePromptTrack);
         moreMenu = createAudioTrackMoreMenu({
           languageLabel: getAudioTrackLanguageLabel(language),
-          actionButtons: [overflowReplaceBtn, overflowGenerateBtn, overflowRemoveBtn],
+          actionButtons: [removeBtn],
           className: 'audio-track-more-menu--prompt',
         });
         setAudioTrackMoreMenuDisabled(moreMenu, isPromptT2AInFlight);
@@ -7645,36 +7720,35 @@ function renderEditorShell(session) {
       cancelBtn.textContent = t('common.actions.cancel');
       cancelBtn.hidden = !isTrackGenerating;
       cancelBtn.addEventListener('click', () => session.cancelAudioGeneration(selectedBlock.blockId));
-      actions.append(attachBtn, generateBtn, cancelBtn, playBtn, removeBtn);
+      actions.append(attachBtn, generateBtn, cancelBtn, playBtn);
       if (moreMenu) actions.appendChild(moreMenu);
       trackRow.append(trackMeta, actions);
       languageTrackRows.appendChild(trackRow);
     });
-    mediaRows.append(questionImageRow, languageTrackRows);
+    const audioSourceHint = document.createElement('p');
+    audioSourceHint.className = 'muted editor-audio-source-hint';
+    audioSourceHint.textContent = t(activeInputType === 'fill_in_blanks' ? 'editorLayout.instructionsAudioHint' : 'editorLayout.promptAudioHint');
+    mediaRows.append(questionImageRow, audioHeading, languageTrackRows, audioSourceHint);
+    // Avoid the rich editor scrolling its selection between pointer-down and click.
+    mediaRows.querySelectorAll('button').forEach(button => {
+      button.addEventListener('mousedown', event => event.preventDefault());
+    });
     mediaSection.append(mediaRows, questionAudioHint, mediaFeedback);
     rightPanel.appendChild(mediaSection);
+    refreshPromptT2AControlsForSelectedBlock();
 
     const answerSection = document.createElement('section');
     answerSection.className = 'editor-detail-section answer-section';
     answerSection.appendChild(createEditorSectionHeader({ icon: 'list', title: t('editor.question.answerSectionTitle') }));
     const answerGrid = document.createElement('div');
     answerGrid.className = 'answer-grid';
-    const inputTypeLabel = document.createElement('label');
-    inputTypeLabel.textContent = t('editor.question.answerInputType');
-    inputTypeLabel.htmlFor = 'editor-question-input-type';
-    const inputTypeField = document.createElement('div');
-    inputTypeField.className = 'editor-field';
-    inputTypeField.append(inputTypeLabel, questionInputType);
-    answerGrid.appendChild(inputTypeField);
-
-    const activeInputType = selectedBlock.responseConfig?.inputType || 'text';
     const imageCount = imageQuestions(session.state.draft.blocks).length;
     const imageTypeOption = questionInputType.querySelector('[value="image_response"]');
     imageTypeOption.textContent = t('imageResponse.typeCount', { count: imageCount });
     imageTypeOption.disabled = imageCount >= 3 && activeInputType !== 'image_response';
     const imageNotice = document.createElement('p'); imageNotice.className='muted';
     imageNotice.textContent=t(imageCount >= 3 ? 'imageResponse.questionLimit' : 'imageResponse.typeCount', {count:imageCount});
-    answerSection.append(imageNotice);
+    inputTypeField.append(imageNotice);
     if (activeInputType === 'image_response') {
       const field=document.createElement('div');field.className='editor-field';
       const label=document.createElement('label');label.htmlFor='editor-max-images';label.textContent=t('imageResponse.maxImages');
@@ -7688,7 +7762,7 @@ function renderEditorShell(session) {
       const budget = document.createElement('p');
       budget.className = 'muted';
       budget.dataset.imageBudget = '';
-      answerSection.append(budget);
+      inputTypeField.append(budget);
     }
 
     if (activeInputType === 'multiple_choice') {
@@ -7819,11 +7893,11 @@ function renderEditorShell(session) {
       answerSection.append(correctAnswerLabel, questionCorrectAnswerBoolean);
     }
 
-    if (activeInputType !== 'multiple_choice') {
+    if (activeInputType !== 'multiple_choice' && activeInputType !== 'fill_in_blanks') {
       rightPanel.appendChild(answerSection);
     }
 
-    if (activeInputType === 'fill_in_blanks') blankEditor.mount(rightPanel, `${session.state.draft.localId}:${selectedBlock.blockId}`, selectedBlock.responseConfig, {draftId:session.state.draft.localId,blockId:selectedBlock.blockId});
+
 
     if (activeInputType === 'multiple_choice') {
       const shuffleRow = document.createElement('div');
@@ -8261,6 +8335,15 @@ function renderEditorShell(session) {
           queueMicrotask(() => replacementAudioAction.focus());
         }
       }
+    }
+    if (focusedPromptLanguage) {
+      const row = Array.from(rightPanel.querySelectorAll('[data-prompt-audio-track-language]'))
+        .find(element => element.dataset.promptAudioTrackLanguage === focusedPromptLanguage);
+      const action = focusedPromptAction && row?.querySelector(`[data-audio-track-action="${focusedPromptAction}"]`);
+      const replacement = action && !action.disabled && action.getClientRects().length ? action
+        : Array.from(rightPanel.querySelectorAll('[data-prompt-audio-language]'))
+          .find(button => button.dataset.promptAudioLanguage === focusedPromptLanguage);
+      if (replacement && !replacement.disabled) replacement.focus({ preventScroll: true });
     }
   };
 
@@ -8729,8 +8812,44 @@ function renderEditorShell(session) {
     session.updateSubject(subjectInput.value);
     updateSummary();
   });
-  blockKind.addEventListener('change', () => {
-    session.setSelectedBlockKind(blockKind.value);
+  function confirmBlankTextConversion(block, { asContent = false } = {}) {
+    const converted = passageToPrompt(block);
+    const preview = document.createElement('div');
+    preview.className = 'editor-type-preview';
+    const heading = document.createElement('strong');
+    heading.textContent = t('editorLayout.resultingPrompt');
+    const text = document.createElement('div');
+    text.className = 'editor-type-preview-text';
+    text.textContent = worksheetTextToPlain(converted);
+    preview.append(heading, text);
+    if (!asContent && promptTextState(converted).exceedsLimit) {
+      const limit = document.createElement('p'); limit.className = 'input-error';
+      limit.textContent = t('editorLayout.convertedTooLong', { max: PROMPT_TEXT_LIMIT });
+      preview.append(limit);
+    }
+    return showConfirmDialog({
+      title: t(asContent ? 'editorLayout.toContentTitle' : 'editorLayout.fromBlanksTitle'),
+      descriptionText: t(asContent ? 'editorLayout.toContentDescription' : 'editorLayout.fromBlanksDescription'),
+      content: preview, removalItems: [t('fillBlanks.removeType')],
+      confirmLabel: t('editorLayout.convertAndRemove'), variant: 'warning',
+      warningText: t('editorLayout.visibleAnswersWarning'),
+    });
+  }
+
+  blockKind.addEventListener('change', async () => {
+    const block = session.findBlock(session.state.selectedBlockId);
+    const kind = blockKind.value;
+    if (kind === 'content' && isFillInBlanks(block?.responseConfig)) {
+      blockKind.value = 'question';
+      const draftId = session.state.draft.localId, generation = session._audioDraftGeneration;
+      const snapshot = JSON.stringify(block);
+      const confirmed = await confirmBlankTextConversion(block, { asContent: true });
+      if (!confirmed || session.state.draft?.localId !== draftId || session._audioDraftGeneration !== generation
+        || session.state.selectedBlockId !== block.blockId || JSON.stringify(session.findBlock(block.blockId)) !== snapshot) {
+        updateSummary(); return;
+      }
+    }
+    session.setSelectedBlockKind(kind);
     updateSummary();
   });
   saveBtn.addEventListener('click', async () => {
@@ -8797,38 +8916,73 @@ function renderEditorShell(session) {
     window.location.assign(viewerUrl);
   });
   questionInputType.addEventListener('change', async () => {
+    const draft = session.state.draft;
     const selectedBlockId = session.state.selectedBlockId;
-    if (!selectedBlockId) return;
-    const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === selectedBlockId);
-    const currentInputType = normalizeQuestionResponseConfig(selectedBlock?.responseConfig).inputType || 'text';
-    const outcome = session.switchQuestionInputTypeWithImpactPolicy(selectedBlockId, questionInputType.value);
-    if (!outcome.ok && outcome.reason === 'confirm-switch-required') {
-      const details = [
-        ...(currentInputType === 'fill_in_blanks' ? [t('fillBlanks.removeType')] : []),
-        t('editor.question.switchTypeConfirm.optionRemoval', { count: outcome.impact.optionCountToRemove }),
-        t('editor.question.switchTypeConfirm.attachmentRemoval', { count: outcome.impact.optionAttachmentCountToRemove }),
-      ];
-      if (outcome.impact.hasOptionTextLoss) {
-        details.push(t('editor.question.switchTypeConfirm.optionTextRemoval'));
+    const selectedBlock = draft?.blocks?.find(block => block.blockId === selectedBlockId);
+    if (!selectedBlock || selectedBlock.kind !== 'question') return;
+    const nextType = questionInputType.value;
+    const currentInputType = normalizeQuestionResponseConfig(selectedBlock.responseConfig).inputType || 'text';
+    questionInputType.value = currentInputType;
+    if (nextType === currentInputType) return;
+    const generation = session._audioDraftGeneration;
+    const snapshot = JSON.stringify(selectedBlock);
+    const stillCurrent = () => session.state.draft?.localId === draft.localId
+      && session._audioDraftGeneration === generation
+      && session.state.selectedBlockId === selectedBlockId
+      && JSON.stringify(session.findBlock(selectedBlockId)) === snapshot;
+    const impact = session.getQuestionInputTypeSwitchImpact(selectedBlockId, nextType);
+    const removals = [];
+    if (impact.optionCountToRemove) removals.push(t('editor.question.switchTypeConfirm.optionRemoval', { count: impact.optionCountToRemove }));
+    if (impact.optionAttachmentCountToRemove) removals.push(t('editor.question.switchTypeConfirm.attachmentRemoval', { count: impact.optionAttachmentCountToRemove }));
+    if (impact.hasOptionTextLoss) removals.push(t('editor.question.switchTypeConfirm.optionTextRemoval'));
+    let promptPlacement = 'instructions';
+    try {
+      if (nextType === 'fill_in_blanks' && worksheetTextToPlain(selectedBlock.prompt).trim()) {
+        const choices = document.createElement('div');
+        choices.className = 'editor-type-choices';
+        for (const value of ['passage', 'instructions']) {
+          const label = document.createElement('label');
+          label.className = 'editor-type-choice';
+          const radio = document.createElement('input');
+          radio.type = 'radio'; radio.name = 'prompt-placement'; radio.value = value;
+          radio.checked = value === 'passage';
+          const text = document.createElement('span');
+          const title = document.createElement('strong');
+          title.textContent = t(`editorLayout.${value}Choice`);
+          const hint = document.createElement('small');
+          hint.textContent = t(`editorLayout.${value}ChoiceHint`);
+          text.append(title, hint); label.append(radio, text); choices.append(label);
+        }
+        const confirmed = await showConfirmDialog({
+          title: t('editorLayout.toBlanksTitle'), descriptionText: t('editorLayout.toBlanksDescription'),
+          content: choices, removalItems: removals,
+          confirmLabel: t('editorLayout.switchType'), variant: 'warning',
+          warningText: normalizeAudioTracks(selectedBlock.prompt?.audioTracks).length
+            ? t('editorLayout.audioSourceWarning') : '',
+        });
+        if (!confirmed || !stillCurrent()) { updateSummary(); return; }
+        promptPlacement = choices.querySelector('input:checked').value;
+      } else if (currentInputType === 'fill_in_blanks') {
+        const confirmed = await confirmBlankTextConversion(selectedBlock);
+        if (!confirmed || !stillCurrent()) { updateSummary(); return; }
+      } else if (impact.hasMeaningfulDataLoss) {
+        const confirmed = await showConfirmDialog({
+          title: t('editor.question.switchTypeConfirm.title'),
+          descriptionText: t('editor.question.switchTypeConfirm.description', {
+            fromType: getAnswerInputTypeLabel(currentInputType), toType: getAnswerInputTypeLabel(nextType),
+          }),
+          removalItems: removals, confirmLabel: t('editor.question.switchTypeConfirm.confirmLabel'),
+        });
+        if (!confirmed || !stillCurrent()) { updateSummary(); return; }
       }
-      const confirmed = await showConfirmDialog({
-        title: t('editor.question.switchTypeConfirm.title'),
-        entityLabel: t('editor.question.switchTypeConfirm.entityLabel'),
-        descriptionText: t('editor.question.switchTypeConfirm.description', {
-          fromType: getAnswerInputTypeLabel(outcome.impact.fromType),
-          toType: getAnswerInputTypeLabel(outcome.impact.toType),
-        }),
-        removalItems: details,
-        confirmLabel: t('editor.question.switchTypeConfirm.confirmLabel'),
-      });
-      if (!confirmed) {
-        questionInputType.value = currentInputType;
-        updateSummary();
-        return;
-      }
-      session.switchQuestionInputTypeWithImpactPolicy(selectedBlockId, questionInputType.value, { confirmSwitch: true });
+      session.switchQuestionInputTypeWithImpactPolicy(selectedBlockId, nextType, { confirmSwitch: true, promptPlacement });
+      // An existing prompt remains discoverable when it is retained as instructions.
+      detailViewState(session.findBlock(selectedBlockId)).instructionsOpen = Boolean(worksheetTextToPlain(session.findBlock(selectedBlockId).prompt).trim());
+    } catch (error) {
+      session.pushNotification({ kind: 'error', category: 'editor', source: 'question.type', text: t('editorLayout.conversionFailed') });
     }
     updateSummary();
+    if (session.state.selectedBlockId === selectedBlockId) questionInputType.focus();
   });
   questionMaxLength.addEventListener('input', () => {
     session.updateQuestionMaxLength(session.state.selectedBlockId, questionMaxLength.value);

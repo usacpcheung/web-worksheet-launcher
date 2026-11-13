@@ -1,4 +1,4 @@
-import { assertBlankConfig, assertBlankQuestions } from '../fill-in-blanks.js';
+import { assertBlankConfig, assertBlankQuestions, isFillInBlanks } from '../fill-in-blanks.js';
 import { textConfigError } from '../text-answer.js';
 import { assertImageQuestions } from '../image-response.js';
 import { getNumberCorrectAnswerConfigViolation, normalizeNumberRules } from './number-input-validator.js';
@@ -180,7 +180,8 @@ function validateBlocks(blocks, path, errors) {
     }
 
     if (block.kind === 'question') {
-      if (!isObject(block.prompt) || !isNonEmptyString(block.prompt.text)) {
+      if (!isObject(block.prompt) || (isFillInBlanks(block.responseConfig)
+        ? typeof block.prompt.text !== 'string' : !isNonEmptyString(block.prompt.text))) {
         errors.push(`${blockPath}.prompt.text is required for question blocks`);
       }
       if (!isObject(block.responseConfig)) {

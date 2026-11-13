@@ -2,10 +2,40 @@
 
 ## Authoring
 
-Choose **Fill in the blanks** in the question type menu. The ordinary prompt,
-media and audio remain available. A separate passage uses the existing rich-text
-toolbar, including paragraphs, line breaks, headings, lists, bold, italic,
-underline and red text. This does not introduce a second editing engine.
+New questions start as Text. The question type selector stays at the top of the
+inspector. Choosing **Fill in the blanks** puts the passage and blank tools first;
+ordinary types keep their prompt and answer settings. The passage uses the
+existing rich-text toolbar, including paragraphs, line breaks, headings, lists,
+bold, italic, underline and red text. This does not introduce a second editing
+engine.
+
+The existing prompt becomes **Instructions — optional**, collapsed when empty
+and expanded when populated. Only this question type allows an empty string in
+`prompt.text`; a valid passage with at least one blank is still required. Viewer
+and print use the question-type label when instructions are empty.
+
+When switching an existing question to blanks, choose **Use it as the passage**
+or **Keep it as instructions**. Cancel leaves the question unchanged. When
+switching away, review the combined instructions and restored passage before
+removing blank settings. Current marked words become visible text; unchanged
+words retain their original formatting. Images and audio stay attached. Text
+is never truncated: a resulting prompt over 500 characters must be shortened
+before exporting/publishing. Confirmations cannot apply after the question or
+worksheet changes. Converting a blank question to a reading block also previews
+and preserves its text, with an explicit warning that blank settings and
+question media associations are removed.
+
+**Media and audio** is expanded by default and can be collapsed. Its compact
+language selectors **粵 / 普 / EN** show attachment state (blue/check versus
+grey/dash) separately from selection (outline). Empty languages remain
+selectable. Switching language does not play or generate audio. Attach/Replace,
+Generate/Regenerate and Play operate on the selected language; Remove is in its
+more menu. During generation, the active language and Cancel remain available;
+other language selectors are temporarily disabled. Existing login/cancel,
+post-login confirmation, language warnings and replacement flows are retained.
+Audio is generated from instructions only, never the passage or blank answers.
+Moving/editing the prompt marks existing recordings as text changed without
+replacing their bytes.
 
 Select a word or short phrase in one paragraph and choose **Make blank**, either
 from the toolbar or the context menu. Selections crossing paragraphs, line breaks
@@ -24,7 +54,7 @@ Click a marked word or its numbered chip to edit one compact settings panel:
 Blank IDs remain stable when their settings change. Removing a blank restores
 its current marked text. If unchanged, its original inline formatting is also
 restored. Undo restores the blank and its metadata as one step. Switching to
-another question type requires the existing destructive-change confirmation.
+another question type requires the conversion preview and confirmation.
 Incomplete local drafts can be saved, but validation blocks export/publishing
 until required answers and at least one blank are present.
 
@@ -124,3 +154,13 @@ After deployment, use a disposable worksheet/attempt to check real microphone
 permission, Login/Cancel then explicit recording, one rewrite, server save/resume,
 ZIP export/import and the actual browser print preview. Automated mocked checks
 do not establish real provider/device or VPS deployment behavior.
+
+## Editor layout regression checks
+
+`node scripts/editor-question-layout-smoke.mjs` covers both locales at 1280/390px:
+top selector, both prompt-placement choices, cancellation, stale dialog edits,
+passage-only export/deletion protection, conversion limit feedback, attachment
+indicators, keyboard language selection, independent removal and disclosure
+defaults. Use the existing audio-consent, slow-popup-auth, voice-choice,
+fill-in-blanks and rich-text smoke scripts alongside it. Provider/auth requests
+in these suites use isolated fixtures; live VPS acceptance is separate.
