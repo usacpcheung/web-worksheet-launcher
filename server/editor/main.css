@@ -1012,7 +1012,15 @@ textarea.control {
   display: grid;
   grid-template-columns: minmax(140px, 220px) minmax(260px, max-content);
   gap: 12px 16px;
-  align-items: end;
+  align-items: start;
+}
+
+.text-answer-settings [data-text-limit-error] {
+  margin: 0;
+}
+
+.text-answer-settings [data-text-limit-error]:empty {
+  display: none;
 }
 
 .number-answer-range {

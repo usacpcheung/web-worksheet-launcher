@@ -46,10 +46,27 @@ try {
       });
       const toggle = page.locator('#editor-question-long-text');
       const limit = page.locator('#editor-question-max-length');
+      const checkTextSettingsLayout = async () => {
+        const lengthLabel = await page.locator('label[for="editor-question-max-length"]').boundingBox();
+        const formatLabel = await page.locator('#editor-question-text-display-mode-label').boundingBox();
+        const input = await limit.boundingBox();
+        const format = await page.locator('.text-answer-settings .answer-toggle').boundingBox();
+        if (width > 1100) {
+          assert.ok(Math.abs(lengthLabel.y - formatLabel.y) < 1, 'Text-setting labels align even with validation feedback');
+          assert.ok(Math.abs(input.y - format.y) < 1, 'Length and format controls share the same row');
+        } else {
+          assert.ok(formatLabel.y >= input.y + input.height, 'Text settings stack without overlap');
+        }
+        assert.ok(format.x >= 0 && format.x + format.width <= width, 'Format controls stay in the viewport');
+      };
       assert.equal(await limit.getAttribute('max'), '1200');
+      await checkTextSettingsLayout();
+      assert.equal(await page.locator('[data-text-limit-error]').isVisible(), false, 'Empty validation feedback takes no space');
+      if (shots) await page.locator('.answer-section').screenshot({ path: `${shots}/text-settings-${locale}-${width}.png` });
       await limit.fill('1201');
       assert.equal(await limit.getAttribute('aria-invalid'), 'true');
       assert.ok(await page.locator('[data-text-limit-error]').innerText());
+      await checkTextSettingsLayout();
       await toggle.check();
       assert.equal(await limit.inputValue(), '20000');
       assert.equal(await limit.getAttribute('max'), '20000');
