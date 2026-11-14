@@ -2,7 +2,8 @@ import { worksheetTextToNodes, richTextField, copyWorksheetText, PLAIN_FORMAT, M
 
 const markNames = { strong: 'bold', em: 'italic', u: 'underline', red: 'redText' };
 const blockNames = { p: 'paragraph', h2: 'heading', h3: 'heading', h4: 'heading', blockquote: 'blockquote', ul: 'bulletList', ol: 'orderedList', li: 'listItem' };
-function toEngine(node, marks = []) {
+export function toEngine(node, marks = []) {
+  if (node.tag === 'blank') return [{ type: 'answerBlank', attrs: { data: structuredClone(node) } }];
   if (node.tag === 'text') return node.text ? [{ type: 'text', text: node.text, ...(marks.length ? { marks } : {}) }] : [];
   if (node.tag === 'br') return [{ type: 'hardBreak' }];
   if (markNames[node.tag]) return node.children.flatMap(child => toEngine(child, [...marks, { type: markNames[node.tag] }]));
@@ -14,7 +15,8 @@ function toEngine(node, marks = []) {
 export function fieldToEditorDocument(field) {
   return { type: 'doc', content: worksheetTextToNodes(field).flatMap(node => toEngine(node)) };
 }
-function fromEngine(node) {
+export function fromEngine(node) {
+  if (node.type === 'answerBlank') return structuredClone(node.attrs.data);
   if (node.type === 'text') {
     let result = { tag: 'text', text: node.text };
     // A fixed mark order produces stable application documents independent of command order.

@@ -148,3 +148,13 @@ If backend contract changes are required, update editor and viewer together thro
 ## Shared text authoring
 
 Prompts and content blocks additionally accept `rich-text-v1`, with a restricted application document and a validated plain-text projection. Worksheet package/schema 7/7 and attempt package/schema 6/1 guard this feature. Existing formats remain supported and opening old drafts does not migrate them. See [document schema, rendering, and rollout](../worksheet/shared-rich-text-editor.md). No learner-answer, auth or message contract changes are introduced.
+
+## Fill-in-the-blanks
+
+The additional `fill_in_blanks` response type uses a validated passage and typed
+or shared-bank mode, with up to 20 blanks and 50 code points per blank. Worksheet
+8/8 and attempt 7/1 envelopes carry the configuration and per-blank answer maps.
+Deploy browser assets and the API parser together. Existing upload authentication,
+three-slot handling and conflict flows remain unchanged; no database migration or
+new endpoint is needed. See [package formats](package-formats.md) and the
+[feature contract](../worksheet/fill-in-the-blanks.md).

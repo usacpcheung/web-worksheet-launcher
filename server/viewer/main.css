@@ -3578,3 +3578,282 @@ html:has(.viewer-attempt-dialog[open]) { overflow:hidden; overflow-anchor:none; 
 .viewer-drawer-print button { width:100%; }
 .viewer-drawer-print button[aria-disabled="true"] { opacity:.5; cursor:default; }
 .viewer-drawer-print-hint { margin:8px 0 0; color:#526985; font-size:.85rem; line-height:1.5; }
+
+/* Inline blank fields keep their caption and tool space reserved. */
+.question-card--blanks {
+  grid-template-columns: minmax(0, 1fr);
+}
+.viewer-blanks {
+  min-width: 0;
+}
+.viewer-blanks-hint {
+  font-size: 14px;
+  color: #657b98;
+  margin: 0 0 18px;
+}
+.viewer-blank-passage {
+  font-size: 21px;
+  line-height: 2.65;
+}
+.viewer-blank-passage p {
+  margin: 0 0 20px;
+}
+.viewer-blank-slot {
+  display: inline-grid;
+  grid-template-rows: 40px 18px;
+  position: relative;
+  vertical-align: middle;
+  width: 180px;
+  max-width: 100%;
+  margin: 0 5px;
+  line-height: 1.3;
+}
+.viewer-shell--continuous .viewer-answer-area .viewer-blank-input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  height: 40px;
+  min-height: 0;
+  border: 1px solid #c3d2e5;
+  border-bottom: 2px solid #8cadd9;
+  border-radius: 7px;
+  background: #f8fbff;
+  color: #243e5e;
+  font-family: inherit;
+  font-size: 18px;
+  line-height: 1.4;
+  padding: 4px 34px 4px 27px;
+  text-align: left;
+  box-shadow: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.viewer-blank-number {
+  position: absolute;
+  top: 12px;
+  left: 9px;
+  font-size: 11px;
+  color: #7190b8;
+  line-height: 1;
+  pointer-events: none;
+}
+.viewer-blank-caption {
+  font:
+    12px/18px system-ui,
+    sans-serif;
+  text-align: right;
+  white-space: nowrap;
+  color: #657b98;
+  visibility: hidden;
+}
+.viewer-blank-slot:focus-within .viewer-blank-caption,
+.viewer-blank-slot.is-active .viewer-blank-caption,
+.viewer-blank-caption.is-result {
+  visibility: visible;
+}
+.viewer-blanks .viewer-blank-input:focus {
+  outline: 2px solid #5184c7;
+  outline-offset: 2px;
+}
+.viewer-blank-slot[data-result="correct"] .viewer-blank-input {
+  border-color: #79a890;
+  background: #f1f8f3;
+}
+.viewer-blank-slot[data-result="incorrect"] .viewer-blank-input {
+  border-color: #cd8c88;
+  background: #fff6f5;
+}
+.viewer-blank-slot[data-result="teacher_review"] .viewer-blank-input {
+  border-color: #b7c5d7;
+  background: #f5f8fc;
+}
+.viewer-blank-progress,
+.viewer-blank-feedback {
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 6px 0;
+  color: #657b98;
+}
+.viewer-blank-feedback {
+  min-height: 1.6em;
+  color: #91511b;
+}
+.viewer-blank-trigger,
+.viewer-blank-clear {
+  position: absolute;
+  right: 2px;
+  top: 3px;
+  width: 32px;
+  height: 34px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #486b9b;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.viewer-blank-trigger svg,
+.viewer-blank-clear svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+.viewer-blank-trigger {
+  visibility: hidden;
+}
+.viewer-blank-slot:focus-within .viewer-blank-trigger,
+.viewer-blank-slot.is-active .viewer-blank-trigger {
+  visibility: visible;
+}
+.viewer-blank-trigger:hover {
+  background: #e8f0fb;
+}
+.viewer-blank-menu {
+  position: fixed;
+  z-index: 1100;
+  width: 200px;
+  max-width: calc(100vw - 16px);
+  padding: 5px;
+  background: white;
+  border: 1px solid #cbd7e6;
+  border-radius: 9px;
+  box-shadow: 0 5px 22px #314b6326;
+  box-sizing: border-box;
+}
+.viewer-blank-menu button {
+  display: block;
+  width: 100%;
+  font: inherit;
+  font-size: 14px;
+  min-height: 42px;
+  padding: 8px 10px;
+  color: #334b69;
+  background: white;
+  border: 0;
+  border-radius: 6px;
+  text-align: left;
+}
+.viewer-blank-menu button:hover:not(:disabled),
+.viewer-blank-menu button:focus-visible {
+  background: #edf4ff;
+  outline: 2px solid #5184c7;
+  outline-offset: -2px;
+}
+.viewer-blank-menu button:disabled {
+  opacity: 0.4;
+}
+.viewer-blank-bank {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 12px 0 16px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #dfe6f0;
+}
+.viewer-blank-word {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font: inherit;
+  font-size: 17px;
+  border: 1px solid #cbd9ec;
+  border-radius: 8px;
+  padding: 7px 12px;
+  background: #f7faff;
+  color: #315c97;
+  cursor: grab;
+  min-height: 40px;
+}
+.viewer-blank-word[aria-pressed="true"] {
+  background: #eaf2ff;
+  border-color: #5883bd;
+}
+.viewer-blank-quantity {
+  font-size: 12px;
+  border: 1px solid #c0d4ef;
+  border-radius: 12px;
+  min-width: 21px;
+  text-align: center;
+  padding: 1px 4px;
+}
+.viewer-blank-slot.is-drop-target .viewer-blank-input {
+  outline: 2px solid #5989c8;
+}
+.viewer-blank-voice {
+  border-top: 1px solid #d6e1ef;
+  padding: 12px 0;
+  font-size: 14px;
+}
+.viewer-blank-voice-title {
+  font-size: 14px;
+  color: #3e5676;
+}
+.viewer-blank-voice .viewer-voice-hint {
+  font-size: 13px;
+}
+.viewer-shell--continuous .viewer-blank-voice textarea {
+  font-size: 16px;
+  min-height: 90px;
+}
+.viewer-blank-voice .viewer-voice-recovery-actions {
+  gap: 8px;
+}
+.viewer-blank-voice .icon-nav-btn {
+  font-size: 14px;
+  min-height: 40px;
+  padding: 7px 13px;
+}
+@media (max-width: 600px) {
+  .viewer-blank-passage {
+    font-size: 18px;
+    line-height: 2.7;
+  }
+  .viewer-blank-slot {
+    width: 160px;
+    margin: 0 3px;
+    grid-template-rows: 38px 18px;
+  }
+  .viewer-shell--continuous .viewer-answer-area .viewer-blank-input {
+    height: 38px;
+    font-size: 16px;
+  }
+  .viewer-blank-trigger {
+    top: 2px;
+    height: 33px;
+  }
+  .viewer-blanks-hint {
+    font-size: 13px;
+  }
+  .viewer-blank-word {
+    font-size: 16px;
+  }
+}
+
+.viewer-blank-word {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.viewer-blank-quantity {
+  flex-shrink: 0;
+}
+.viewer-blank-slot--bank {
+  grid-template-rows: minmax(40px, auto) 18px;
+}
+.viewer-answer-area .viewer-blank-slot--bank .viewer-blank-input {
+  height: auto;
+  min-height: 40px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.viewer-blank-slot.is-submitted { grid-template-rows:minmax(40px, auto) 18px; }
+.viewer-shell--continuous .viewer-answer-area .viewer-blank-submitted {
+  height:auto;
+  min-height:40px;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+  padding-right:8px;
+}

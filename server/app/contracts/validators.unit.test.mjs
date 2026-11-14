@@ -274,3 +274,20 @@ test('number correctAnswer semantic checks pass/fail across draft/snapshot/viewe
     );
   });
 });
+
+test('blank instructions may be empty, while other question prompts and blank passages remain required', () => {
+  const responseConfig = { inputType: 'fill_in_blanks', mode: 'typed', reuseWords: false, distractors: [], passage: { version: 1, blocks: [{ tag: 'p', children: [{ tag: 'blank', id: 'b', text: 'water', checking: 'auto', alternatives: [] }] }] } };
+  const draft = createDraftWithQuestionResponseConfig(responseConfig);
+  draft.blocks[0].prompt.text = '';
+  assert.equal(validateDraftSchema(draft).valid, true);
+  const snapshot = createSnapshotWithQuestionResponseConfig(responseConfig);
+  snapshot.blocks[0].prompt.text = '';
+  assert.equal(validateSnapshotSchema(snapshot).valid, true);
+  draft.blocks[0].responseConfig = { inputType: 'text' };
+  assert.equal(validateDraftSchema(draft).valid, false);
+  draft.blocks[0].responseConfig = { ...responseConfig, passage: { version: 1, blocks: [{ tag: 'p', children: [] }] } };
+  assert.equal(validateDraftSchema(draft).valid, false);
+  draft.blocks[0].responseConfig = responseConfig;
+  draft.blocks[0].prompt.text = 123;
+  assert.equal(validateDraftSchema(draft).valid, false);
+});

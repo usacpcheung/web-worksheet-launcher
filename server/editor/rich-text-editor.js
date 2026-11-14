@@ -22,7 +22,10 @@ const icons = {
   undo: '<path d="m8 4-5 5 5 5M3 9h11a6 6 0 0 1 0 12"/>',
   redo: '<path d="m16 4 5 5-5 5M21 9H10a6 6 0 0 0 0 12"/>',
 };
-export function createRichTextEditor(t, onChange) {
+export function createRichTextEditor(t, onChange, options = {}) {
+  const copyField = options.copyField || copyWorksheetText;
+  const toDocument = options.toDocument || fieldToEditorDocument;
+  const fromDocument = options.fromDocument || editorDocumentToField;
   const records = new Map();
   let disposed = false;
   const update = record => {
@@ -41,6 +44,7 @@ export function createRichTextEditor(t, onChange) {
     editor.view.dom.setAttribute('aria-invalid', String(Boolean(state?.exceedsLimit)));
   };
   function make(key, field, identity) {
+    const editorId = options.idPrefix ? `${options.idPrefix}-${identity.blockId}` : 'editor-block-editor';
     const root = document.createElement('div'); root.className = 'editor-rich-text';
     const toolbar = document.createElement('div'); toolbar.className = 'editor-rich-toolbar';
     toolbar.setAttribute('role', 'group'); toolbar.setAttribute('aria-label', t('richEditor.toolbar'));
@@ -51,10 +55,10 @@ export function createRichTextEditor(t, onChange) {
     }
     toolbar.append(select);
     const surface = document.createElement('div'); surface.className = 'editor-rich-surface worksheet-text';
-    const counter = document.createElement('p'); counter.className = 'muted editor-prompt-counter'; counter.id = 'editor-block-editor-count';
-    const warning = document.createElement('p'); warning.className = 'control-error'; warning.setAttribute('role', 'status'); warning.id = 'editor-block-editor-limit';
+    const counter = document.createElement('p'); counter.className = 'muted editor-prompt-counter'; counter.id = `${editorId}-count`;
+    const warning = document.createElement('p'); warning.className = 'control-error'; warning.setAttribute('role', 'status'); warning.id = `${editorId}-limit`;
     const status = document.createElement('p'); status.className = 'muted'; status.setAttribute('role', 'status'); status.textContent = t('richEditor.loading');
-    const record = { root, select, surface, counter, warning, status, field: copyWorksheetText(field), identity, buttons: new Map(), editor: null, isPrompt: false };
+    const record = { root, toolbar, editorId, select, surface, counter, warning, status, field: copyField(field), identity, buttons: new Map(), editor: null, isPrompt: false };
     for (const [name, paths] of Object.entries(icons)) {
       const button = document.createElement('button'); button.type = 'button';
       button.title = t(`richEditor.${name}`); button.setAttribute('aria-label', button.title);
@@ -88,26 +92,26 @@ export function createRichTextEditor(t, onChange) {
         if (disposed || records.get(key) !== record) return;
         record.editor = createEditor({ element: surface,
           acceptDocument(doc) {
-            try { editorDocumentToField(doc, record.field); return true; }
+            try { fromDocument(doc, record.field); return true; }
             catch {
               status.hidden = false; status.textContent = t('richEditor.documentTooComplex');
               return false;
             }
           },
-          content: fieldToEditorDocument(record.field),
-          editorProps: { attributes: { id: 'editor-block-editor', role: 'textbox', 'aria-multiline': 'true',
+          content: toDocument(record.field), blankNode: options.blankNode === true,
+          editorProps: { attributes: { id: editorId, role: 'textbox', 'aria-multiline': 'true',
             'aria-label': record.label || t('richEditor.toolbar'), 'aria-describedby': `${counter.id} ${warning.id}` } },
           onUpdate: ({ editor }) => {
             if (disposed || records.get(key) !== record) return;
             status.hidden = true;
-            const next = editorDocumentToField(editor.getJSON(), record.field);
-            record.field = copyWorksheetText(next);
+            const next = fromDocument(editor.getJSON(), record.field);
+            record.field = copyField(next);
             onChange(record.identity, next);
             update(record);
           },
-          onSelectionUpdate: () => update(record), onTransaction: () => update(record),
+          onSelectionUpdate: () => { update(record); options.selectionChanged?.(record); }, onTransaction: () => update(record),
         });
-        select.disabled = false; status.hidden = true; update(record);
+        select.disabled = false; status.hidden = true; options.ready?.(record); update(record);
       } catch (error) {
         if (disposed || records.get(key) !== record) return;
         status.replaceChildren(document.createTextNode(t('richEditor.loadFailed')));
@@ -122,17 +126,17 @@ export function createRichTextEditor(t, onChange) {
     mount(parent, label, key, field, isPrompt = false, identity) {
       const record = records.get(key) || make(key, field, identity);
       record.isPrompt = isPrompt; record.label = label.textContent;
-      label.htmlFor = 'editor-block-editor';
+      label.htmlFor = record.editorId;
       record.editor?.view.dom.setAttribute('aria-label', record.label);
       parent.append(label, record.root); update(record);
       this.sync(key, field);
     },
     sync(key, field) {
       const record = records.get(key);
-      if (!record || !field || JSON.stringify(copyWorksheetText(field)) === JSON.stringify(copyWorksheetText(record.field))) return;
-      record.field = copyWorksheetText(field);
+      if (!record || !field || JSON.stringify(copyField(field)) === JSON.stringify(copyField(record.field))) return;
+      record.field = copyField(field);
       // Ordinary autosave/validation updates take the equality path and retain selection/history/IME.
-      record.editor?.commands.setContent(fieldToEditorDocument(field), { emitUpdate: false });
+      record.editor?.commands.setContent(toDocument(field), { emitUpdate: false });
       update(record);
     },
     prune(keys) {
@@ -140,6 +144,7 @@ export function createRichTextEditor(t, onChange) {
         record.editor?.destroy(); record.root.remove(); records.delete(key);
       }
     },
+    getRecord(key) { return records.get(key); },
     destroy() {
       disposed = true;
       for (const record of records.values()) record.editor?.destroy();

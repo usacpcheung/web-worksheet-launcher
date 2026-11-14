@@ -31,3 +31,15 @@ Terminology note:
 
 - Snapshot validation requires `sourceDraftRevision` to enforce publish provenance traceability.
 - Mapper outputs deep-clone nested block structures so snapshot/viewer mapping does not share mutable references with source models.
+
+Fill-in-the-blanks configuration and answer-map validation is shared through
+`../fill-in-blanks.js`, including package readers and the server upload boundary.
+See the [feature contract](../../../docs/worksheet/fill-in-the-blanks.md).
+
+### Fill-in-the-blanks instructions
+
+For `responseConfig.inputType = "fill_in_blanks"`, `prompt.text` must be a string
+but may be empty: it holds optional instructions. The passage and at least one
+valid blank are still required. Other question types continue to require
+nonempty prompt text. This applies to draft, snapshot and viewer validation;
+worksheet package v8 remains the fill-in-the-blanks format.

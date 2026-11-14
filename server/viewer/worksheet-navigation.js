@@ -1,3 +1,4 @@
+import { isFillInBlanks, blankAnswered } from '../app/fill-in-blanks.js';
 import { worksheetTextToPlain } from '../app/worksheet-text.js';
 
 // Viewer-only presentation. All destinations go through the existing section controller.
@@ -244,7 +245,8 @@ export function createWorksheetNavigation({ t, actions, navigate, operationPanel
     else if (!launcherValue.firstElementChild) launcherValue.innerHTML = bookIcon;
     rows.forEach((row, index) => {
       const item = entries[index];
-      const answered = item.isQuestion && isAnsweredValue(answers?.[item.id]?.value);
+      const config = blocks.find(b=>b.blockId===item.id)?.responseConfig;
+      const answered = item.isQuestion && (isFillInBlanks(config) ? blankAnswered(config, answers?.[item.id]?.value) : isAnsweredValue(answers?.[item.id]?.value));
       if (row.dataset.answered === String(answered) && row.classList.contains('is-current') === (index === current)) return;
       row.classList.toggle('is-current', index === current);
       if (index === current) row.setAttribute('aria-current', 'step');

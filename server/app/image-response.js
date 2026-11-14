@@ -1,3 +1,4 @@
+import { isFillInBlanks, blankDefinitions, BLANK_LIMIT } from './fill-in-blanks.js';
 import { isLongText, LONG_TEXT_LIMIT } from './text-answer.js';
 // Browser/server contract. Limits are bytes (MiB), consistently displayed as MB.
 export const IMAGE_INPUT_BYTES = 10 * 1024 * 1024;
@@ -29,6 +30,8 @@ export function imageBudget(blocks, mediaBytes, contentBytes = 0) {
   const answerText = (blocks || []).reduce((n, b) => {
     const c = b?.responseConfig;
     if (!c || c.inputType === 'image_response') return n;
+    if (isFillInBlanks(c))
+      return n + blankDefinitions(c).reduce((sum, blank) => sum + BLANK_LIMIT * 6 + blank.id.length * 6 + 8, 0);
     if (c.inputType === 'text')
       return (
         n +

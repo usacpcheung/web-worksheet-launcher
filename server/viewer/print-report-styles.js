@@ -339,4 +339,9 @@ export const PRINT_REPORT_CSS = `
         print-color-adjust: exact;
       }
     }
+
+.print-blank-passage { line-height: 2; }
+.print-blank { border-bottom: 1px solid #9aacc1; padding: 0 3px; overflow-wrap: anywhere; }
+.print-blank sup { font-size: .7em; color: #61738b; }
+.print-blank small { font-size: .75em; color: #61738b; }
 `;

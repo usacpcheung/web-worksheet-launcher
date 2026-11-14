@@ -1,3 +1,4 @@
+import { assertBlankConfig, assertBlankQuestions, isFillInBlanks } from '../fill-in-blanks.js';
 import { textConfigError } from '../text-answer.js';
 import { assertImageQuestions } from '../image-response.js';
 import { getNumberCorrectAnswerConfigViolation, normalizeNumberRules } from './number-input-validator.js';
@@ -11,7 +12,7 @@ function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-const CANONICAL_RESPONSE_INPUT_TYPES = new Set(['text', 'number', 'boolean', 'multiple_choice', 'image_response']);
+const CANONICAL_RESPONSE_INPUT_TYPES = new Set(['text', 'number', 'boolean', 'multiple_choice', 'image_response', 'fill_in_blanks']);
 
 function isIsoTimestamp(value) {
   if (!isNonEmptyString(value)) {
@@ -51,10 +52,11 @@ function collectAllowedOptionValues(options) {
 
 function validateQuestionResponseConfig(responseConfig, path, errors) {
   if (!CANONICAL_RESPONSE_INPUT_TYPES.has(responseConfig.inputType)) {
-    errors.push(`${path}.inputType must be one of: text, number, boolean, multiple_choice, image_response`);
+    errors.push(`${path}.inputType must be one of: text, number, boolean, multiple_choice, image_response, fill_in_blanks`);
     return;
   }
 
+  try { assertBlankConfig(responseConfig); } catch (error) { errors.push(`${path}: ${error.message}`); }
   const textError = textConfigError(responseConfig);
   if (textError) errors.push(`${path}: ${textError}`);
 
@@ -157,6 +159,7 @@ function validateBlocks(blocks, path, errors) {
   }
 
   try { assertImageQuestions(blocks); } catch (error) { errors.push(error.message); }
+  try { assertBlankQuestions(blocks); } catch (error) { errors.push(error.message); }
   blocks.forEach((block, index) => {
     const blockPath = `${path}[${index}]`;
     try { assertTextFormat(block?.kind === 'question' ? block.prompt : block?.content); }
@@ -177,7 +180,8 @@ function validateBlocks(blocks, path, errors) {
     }
 
     if (block.kind === 'question') {
-      if (!isObject(block.prompt) || !isNonEmptyString(block.prompt.text)) {
+      if (!isObject(block.prompt) || (isFillInBlanks(block.responseConfig)
+        ? typeof block.prompt.text !== 'string' : !isNonEmptyString(block.prompt.text))) {
         errors.push(`${blockPath}.prompt.text is required for question blocks`);
       }
       if (!isObject(block.responseConfig)) {

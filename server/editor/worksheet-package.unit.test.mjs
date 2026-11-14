@@ -391,3 +391,14 @@ test('parseWorksheetPackage rejects malformed v2 audio tracks', () => {
     assert.throws(() => parseWorksheetPackage(zip.buffer), error, name);
   });
 });
+
+test('fill-in-the-blank packages require v8 and reject invalid passage metadata', async () => {
+  const {emptyBlankConfig}=await import('../app/fill-in-blanks.js');
+  const config={...emptyBlankConfig(),passage:{version:1,blocks:[{tag:'p',children:[{tag:'blank',id:'a',text:'water',checking:'auto',alternatives:[]}]}]}};
+  const draft={localId:'blank-draft',title:'Blanks',blocks:[{blockId:'q',kind:'question',position:0,prompt:{text:'Complete'},responseConfig:config}]};
+  const pkg=createWorksheetPackageFromDraft(draft);assert.equal(pkg.manifest.packageVersion,8);assert.deepEqual(parseWorksheetPackage(pkg.bytes).worksheet.blocks[0].responseConfig,config);
+  const downgrade=createStoredZip([{path:'manifest.json',data:JSON.stringify({...pkg.manifest,packageVersion:7,schemaVersion:7})},{path:'content/worksheet.json',data:JSON.stringify({blocks:draft.blocks})}]);
+  assert.throws(()=>parseWorksheetPackage(downgrade),/version 8/);
+  config.passage.blocks[0].children.push({...config.passage.blocks[0].children[0]});
+  assert.throws(()=>createWorksheetPackageFromDraft(draft),/unique/);
+});

@@ -1,3 +1,5 @@
+import { createFillInBlanksControls } from './fill-in-blanks-ui.js';
+import { hasFillInBlanks, isFillInBlanks, assertBlankConfig, assertBlankQuestions, normalizeBlankAnswer, blankDefinitions, blankAnswered, checkBlanks, renderBlankPassage, resolveBlankVoiceTarget, withBlankVoiceTargets, blankLength } from '../app/fill-in-blanks.js';
 import { isLongText, hasLongText, acceptsTextEdit, LONG_TEXT_LIMIT } from '../app/text-answer.js';
 import { bindTextAnswerInput } from './text-answer-input.js';
 import { createImageResponseControls } from './image-response-ui.js';
@@ -843,7 +845,7 @@ function parseUploadedAttemptPackage(zipBytes) {
     throw new Error('Uploaded attempt package is missing required files.');
   }
   const manifest = JSON.parse(decodeUtf8(manifestEntry));
-  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3, 4, 5, 6].includes(manifest?.packageVersion)) {
+  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3, 4, 5, 6, 7].includes(manifest?.packageVersion)) {
     throw new Error('Uploaded attempt package format is not supported.');
   }
   const worksheet = JSON.parse(decodeUtf8(worksheetEntry));
@@ -895,7 +897,7 @@ function parseLocalAttemptPackage(zipBytes) {
   if (manifest?.format === 'worksheet-package') {
     throw new Error(t('viewer.notifications.localAttemptImport.worksheetPackageNotAttempt'));
   }
-  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3, 4, 5, 6].includes(manifest?.packageVersion)) {
+  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3, 4, 5, 6, 7].includes(manifest?.packageVersion)) {
     throw new Error(t('viewer.notifications.localAttemptImport.invalidPackage'));
   }
 
@@ -944,7 +946,7 @@ function normalizeRestoredCheckStatus(value) {
   if (value === false) return 'incorrect';
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toLowerCase();
-  if (normalized === 'correct' || normalized === 'incorrect') {
+  if (normalized === 'correct' || normalized === 'incorrect' || normalized === 'teacher_review') {
     return normalized;
   }
   if (normalized === 'ungraded_missing_or_invalid_key' || normalized === 'ungraded_missing_key') {
@@ -1033,6 +1035,7 @@ function computeViewerPayloadFingerprint(payload) {
         ? {
           inputType: block.responseConfig.inputType || 'text',
           ...(isLongText(block.responseConfig) ? { textMode: 'long', maxLength: block.responseConfig.maxLength } : {}),
+          ...(isFillInBlanks(block.responseConfig) ? { blanks: block.responseConfig } : {}),
           ...(block.responseConfig.inputType === 'image_response' ? {maxImages:block.responseConfig.maxImages} : {}),
           selectionMode: block.responseConfig.selectionMode || null,
           options: Array.isArray(block.responseConfig.options)
@@ -1099,6 +1102,7 @@ function normalizeViewerBlock(block, index) {
       inputType,
     };
 
+    if (inputType === 'fill_in_blanks') { assertBlankConfig(responseConfigSource); Object.assign(normalizedResponseConfig, structuredClone(responseConfigSource)); }
     if (inputType === 'image_response') normalizedResponseConfig.maxImages = responseConfigSource.maxImages;
     if (inputType === 'text') {
       if (responseConfigSource.textMode !== undefined) normalizedResponseConfig.textMode = responseConfigSource.textMode;
@@ -1210,6 +1214,7 @@ function normalizeViewerPayload(payload, fallbackLabel = 'Local worksheet') {
   if (blocks.length === 0) {
     throw new Error('Viewer payload must include at least one normalized block.');
   }
+  assertBlankQuestions(blocks);
 
   return {
     worksheetId: payload.worksheetId || createLocalId('ws'),
@@ -1336,6 +1341,7 @@ function createChoiceButtonGroup(options) {
 function coerceAnswerValueForQuestion(questionBlock, rawValue, options = {}) {
   const inputType = questionBlock?.responseConfig?.inputType || 'text';
   const responseConfig = isRecord(questionBlock?.responseConfig) ? questionBlock.responseConfig : {};
+  if (inputType === 'fill_in_blanks') return normalizeBlankAnswer(responseConfig, rawValue);
   if (inputType === 'image_response') return rawValue == null ? [] : imageAnswerRefs(rawValue, responseConfig.maxImages);
   if (inputType === 'number') {
     // Already-normalized finite numbers (e.g. 1e-7) are returned directly to
@@ -1410,6 +1416,7 @@ function areMultiSelectValuesEqual(learnerValues, correctValues) {
 }
 
 function hasValidCorrectAnswer(responseConfig) {
+  if (isFillInBlanks(responseConfig)) return checkBlanks(responseConfig, {}).total > 0;
   if (!responseConfig || !Object.hasOwn(responseConfig, 'correctAnswer')) {
     return false;
   }
@@ -1450,7 +1457,7 @@ function isGradeableQuestionBlock(block) {
 }
 
 function isSupportedCheckInputType(inputType) {
-  return inputType === 'multiple_choice' || inputType === 'boolean' || inputType === 'number';
+  return inputType === 'multiple_choice' || inputType === 'boolean' || inputType === 'number' || inputType === 'fill_in_blanks';
 }
 
 function isSupportedCheckQuestionBlock(block) {
@@ -1472,11 +1479,19 @@ function computeCheckResult(viewerPayload, answers) {
 
   const byBlockId = {};
   const statusByBlockId = {};
+  const blanksByBlockId = {};
   let correctCount = 0;
   let totalQuestions = 0;
 
   checkableQuestions.forEach((block) => {
     const inputType = block?.responseConfig?.inputType || 'text';
+    if (inputType === 'fill_in_blanks') {
+      const result = checkBlanks(block.responseConfig, answers?.[block.blockId]?.value);
+      blanksByBlockId[block.blockId] = result;
+      if (result.total) { byBlockId[block.blockId] = result.correct === result.total; statusByBlockId[block.blockId] = result.correct === result.total ? 'correct' : 'incorrect'; totalQuestions += result.total; correctCount += result.correct; }
+      else statusByBlockId[block.blockId] = 'teacher_review';
+      return;
+    }
     const hasValidAnswerKey = hasValidCorrectAnswer(block?.responseConfig);
     if (!hasValidAnswerKey) {
       statusByBlockId[block.blockId] = 'ungraded_missing_or_invalid_key';
@@ -1520,6 +1535,7 @@ function computeCheckResult(viewerPayload, answers) {
   return {
     byBlockId,
     statusByBlockId,
+    ...(Object.keys(blanksByBlockId).length ? { blanksByBlockId } : {}),
     correctCount,
     totalQuestions,
   };
@@ -1552,7 +1568,7 @@ function computeAnswerSummary(viewerPayload, answers) {
 
   const answered = questions.filter((block) => {
     const value = answers?.[block.blockId]?.value;
-    return isAnsweredValue(value);
+    return isFillInBlanks(block.responseConfig) ? blankAnswered(block.responseConfig, value) : isAnsweredValue(value);
   }).length;
   return { answered, total: questions.length };
 }
@@ -1895,6 +1911,9 @@ async function buildWorksheetPrintReportModel({
       questionNumber: index + 1,
       inputType: config.inputType || 'text',
       choices,
+      blankConfig: isFillInBlanks(config) ? config : null,
+      blankAnswers: isFillInBlanks(config) ? learnerValue : null,
+      blanksChecked: Boolean(checkResult),
       promptText: String(block?.prompt?.text || ''),
       promptFormat: block?.prompt?.format || 'plain_text',
       promptField: copyWorksheetText(block.prompt),
@@ -1922,10 +1941,10 @@ async function buildWorksheetPrintReportModel({
       : null;
     return {
       ...question,
-      layoutMode: (flowChoices || answerImages.length) ? 'flow' : classifyPrintQuestionLayout(question),
+      layoutMode: (isFillInBlanks(config) || flowChoices || answerImages.length) ? 'flow' : classifyPrintQuestionLayout(question),
       sectionBreakModes: {
         prompt: promptSectionMode,
-        answer: (flowChoices || answerImages.length) ? 'flow' : answerSectionMode,
+        answer: (isFillInBlanks(config) || flowChoices || answerImages.length) ? 'flow' : answerSectionMode,
         checkedAnswer: checkedAnswerSectionMode,
       },
     };
@@ -2004,7 +2023,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
         </section>
       `
       : '';
-    const resultHtml = question.result
+    const resultHtml = !question.blankConfig && question.result
       ? `
         <section class="print-question-section print-question-section--result ${checkedAnswerSectionClass} print-result-${escapeHtml(question.result.status || 'neutral')}">
           <h3>${escapeHtml(t('viewer.print.checkedResultHeading'))}</h3>
@@ -2014,6 +2033,14 @@ function buildWorksheetPrintReportHtml(reportModel) {
       `
       : '';
 
+    const blankHtml = question.blankConfig ? renderBlankPassage(question.blankConfig, blank => {
+      const answer = question.blankAnswers?.[blank.id] || '';
+      const result = checkBlanks(question.blankConfig, question.blankAnswers);
+      const number = blankDefinitions(question.blankConfig).findIndex(b=>b.id===blank.id)+1;
+      const status = result.statuses[blank.id];
+      const note = question.blanksChecked || status === 'teacher_review' ? t('fillBlanks.'+status) : '';
+      return `<span class="print-blank"><sup>${number}</sup> ${escapeHtml(answer || '________')} ${note ? `<small>(${escapeHtml(note)})</small>` : ''}</span>`;
+    }) : '';
     const choicesHtml = question.choices?.length ? `
       <div class="print-choices${question.inputType === 'boolean' ? ' print-choices--boolean' : ''}">
         ${question.choices.map(choice => `
@@ -2036,7 +2063,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
         <div class="print-prompt-area">
         <section class="print-question-section print-question-section--prompt print-question-section--${escapeHtml(question.sectionBreakModes?.prompt || 'keep')}">
           <h3>${escapeHtml(t('viewer.print.questionHeading'))}</h3>
-          <div class="print-question-text worksheet-text">${renderWorksheetText(question.promptText?.trim() ? (question.promptField || { text: question.promptText, format: question.promptFormat }) : { text: t('viewer.print.noPromptProvided') })}</div>
+          <div class="print-question-text worksheet-text">${renderWorksheetText(question.promptText?.trim() ? (question.promptField || { text: question.promptText, format: question.promptFormat }) : { text: t(question.blankConfig ? 'fillBlanks.type' : 'viewer.print.noPromptProvided') })}</div>
         </section>
         ${imageSectionHtml}
         </div>
@@ -2044,8 +2071,9 @@ function buildWorksheetPrintReportHtml(reportModel) {
         <section class="print-question-section print-question-section--answer print-question-section--${escapeHtml(question.sectionBreakModes?.answer || 'keep')}">
           <h3>${escapeHtml(t('viewer.print.answerHeading'))}</h3>
           ${choicesHtml}
+          ${blankHtml ? `<div class="print-blank-passage worksheet-text">${blankHtml}</div>` : ''}
           ${(question.answerImages || []).map((img,i)=>`<figure class="print-answer-image"><img data-answer-image src="${escapeHtml(img.src || '')}" alt="${escapeHtml(t('imageResponse.image',{number:i+1}))}"><figcaption>${i+1} / ${question.answerImages.length}</figcaption></figure>`).join('')}
-          ${question.answerImages?.length ? '' : `<p class="print-answer-text">${escapeHtml(t('viewer.print.answerPrefix'))} ${formatMultilineTextForHtml(question.answerText)}</p>`}
+          ${question.answerImages?.length || question.blankConfig ? '' : `<p class="print-answer-text">${escapeHtml(t('viewer.print.answerPrefix'))} ${formatMultilineTextForHtml(question.answerText)}</p>`}
         </section>
         ${resultHtml}
         </div>
@@ -2226,6 +2254,7 @@ function computeResumeStartBlockIndex(viewerPayload, answers = {}, attemptRecord
   const firstUnanswered = orderedBlocks.findIndex((block) => {
     if (block.kind !== 'question') return false;
     const value = answers?.[block.blockId]?.value;
+    if (isFillInBlanks(block.responseConfig)) return !blankAnswered(block.responseConfig, value);
     if (value === null || value === undefined) return true;
     if (typeof value === 'string') return value.trim() === '';
     if (Array.isArray(value)) return value.length === 0;
@@ -2235,6 +2264,7 @@ function computeResumeStartBlockIndex(viewerPayload, answers = {}, attemptRecord
 }
 
 function getInputHelperText(inputType, responseConfig = {}) {
+  if (inputType === 'fill_in_blanks') return '';
   if (inputType === 'image_response') return t('imageResponse.type');
   if (inputType === 'text') return isLongText(responseConfig) ? t('textAnswer.viewerLong') : t('viewer.inputHelper.text');
   if (inputType === 'number') {
@@ -2498,13 +2528,13 @@ class ViewerAttemptSession {
         contextKey: this.state.viewerPayload,
         recovery: getVoiceRecovery(this.state.voiceRecovery, blockId),
         editable: this.state.status !== 'completed' && !this.state.isFinalizing,
-        block: this.state.viewerPayload?.blocks?.find(block => block.blockId === blockId),
-        answer: String(this.state.answers?.[blockId]?.value ?? ''),
+        block: this.voiceBlock(blockId),
+        answer: this.answerForVoice(blockId),
       }),
       apply: (blockId, text, snapshot, caret) => {
         const activeBlock = this.state.lastActiveBlockId;
         this.state.undoBuffer = { ...this.state.undoBuffer, [blockId]: snapshot };
-        if (text === String(this.state.answers?.[blockId]?.value ?? '')) delete this.state.undoBuffer[blockId];
+        if (text === this.answerForVoice(blockId)) delete this.state.undoBuffer[blockId];
         this.state.voiceApplied = { blockId, text, caret, id: this.voice.active.id };
         this.setAnswer(blockId, text);
         this.state.lastActiveBlockId = activeBlock;
@@ -3072,7 +3102,7 @@ class ViewerAttemptSession {
     this.voice.teardown();
     this.state.voiceApplied = null;
     this.state.voiceRecovery = attemptRecord.status === 'completed' ? {} : normalizeVoiceRecovery(
-      attemptRecord.voiceRecovery, attemptRecord.viewerPayload?.blocks || []);
+      attemptRecord.voiceRecovery, withBlankVoiceTargets(attemptRecord.viewerPayload?.blocks || []));
     this.state.localAttemptId = attemptRecord.localAttemptId || attemptRecord.localId;
     this.state.viewerPayload = attemptRecord.viewerPayload;
     this.state.answers = attemptRecord.answers || {};
@@ -3143,11 +3173,22 @@ class ViewerAttemptSession {
     }
   }
 
+  voiceParentId(id) { return resolveBlankVoiceTarget(this.state.viewerPayload?.blocks, id)?.parent.blockId || id; }
+  voiceBlock(id) { return resolveBlankVoiceTarget(this.state.viewerPayload?.blocks, id)?.block || this.state.viewerPayload?.blocks?.find(b=>b.blockId===id); }
+  answerForVoice(id) {
+    const target=resolveBlankVoiceTarget(this.state.viewerPayload?.blocks,id);
+    return String(target ? this.state.answers?.[target.parent.blockId]?.value?.[target.blank.id] ?? '' : this.state.answers?.[id]?.value ?? '');
+  }
   setAnswer(blockId, value, { restoreUndo = false } = {}) {
     if (!blockId || this.state.status === 'completed') {
       return;
     }
 
+    const target = resolveBlankVoiceTarget(this.state.viewerPayload?.blocks, blockId);
+    if (target) {
+      if (typeof value !== 'string' || blankLength(value)>50) return false;
+      return this.setAnswer(target.parent.blockId, {...(this.state.answers?.[target.parent.blockId]?.value || {}), [target.blank.id]: value});
+    }
     const questionBlock = this.state.viewerPayload?.blocks?.find(
       (block) => block.blockId === blockId && block.kind === 'question'
     );
@@ -3157,7 +3198,8 @@ class ViewerAttemptSession {
     if (questionBlock.responseConfig?.inputType === 'text'
       && !acceptsTextEdit(this.state.answers?.[blockId]?.value, value, questionBlock.responseConfig)
       && !(restoreUndo && Object.hasOwn(this.state.undoBuffer || {}, blockId) && this.state.undoBuffer[blockId] === value)) return false;
-    const coercedValue = coerceAnswerValueForQuestion(questionBlock, value, { phase: 'edit' });
+    let coercedValue;
+    try { coercedValue = coerceAnswerValueForQuestion(questionBlock, value, { phase: 'edit' }); } catch { return false; }
 
     this.state.answers = {
       ...this.state.answers,
@@ -3303,7 +3345,7 @@ class ViewerAttemptSession {
       completedAt: this.state.completedAt,
       submittedAt: this.state.submittedAt || null,
       answers: normalizedAnswers,
-      voiceRecovery: normalizeVoiceRecovery(this.state.voiceRecovery, this.state.viewerPayload.blocks),
+      voiceRecovery: normalizeVoiceRecovery(this.state.voiceRecovery, withBlankVoiceTargets(this.state.viewerPayload.blocks)),
       subject: persistedSubject,
       owner: persistedOwner,
       // checkResult is transient UI state and must not be persisted.
@@ -3683,7 +3725,7 @@ class ViewerAttemptSession {
       assertWorksheetTextFormats(worksheet.blocks);
       const manifest = {
         format: 'worksheet-attempt-package',
-        packageVersion: hasRichText(worksheet.blocks) ? 6 : hasLongText(worksheet.blocks) ? 5 : hasImageResponses(worksheet.blocks) ? 4 : hasOptionImages(worksheet.blocks) ? 3 : hasMarkdown(worksheet.blocks) ? 2 : 1,
+        packageVersion: hasFillInBlanks(worksheet.blocks) ? 7 : hasRichText(worksheet.blocks) ? 6 : hasLongText(worksheet.blocks) ? 5 : hasImageResponses(worksheet.blocks) ? 4 : hasOptionImages(worksheet.blocks) ? 3 : hasMarkdown(worksheet.blocks) ? 2 : 1,
         schemaVersion: 1,
         generatedAt: nowIso(),
         worksheet: {
@@ -6470,7 +6512,9 @@ function renderViewerShell(session) {
     const controlId = `answer-${block.blockId}`;
     label.id = `${controlId}-label`;
     label.addEventListener('click', () => document.getElementById(label.htmlFor || controlId)?.focus(), { signal: scope.signal });
-    setWorksheetText(label, { ...block.prompt, text: block.prompt?.text || t('viewer.stepper.question') });
+    setWorksheetText(label, isFillInBlanks(block.responseConfig) && !String(block.prompt?.text || '').trim()
+      ? { text: t('fillBlanks.type') }
+      : { ...block.prompt, text: block.prompt?.text || t('viewer.stepper.question') });
     const mediaFeedback = document.createElement('p');
     mediaFeedback.className = 'viewer-media-feedback';
     mediaFeedback.setAttribute('role', 'status');
@@ -6531,7 +6575,7 @@ function renderViewerShell(session) {
 
       let checkBanner = null;
       let checkReveal = null;
-      if (shouldShowCheckFeedback) {
+      if (shouldShowCheckFeedback && inputType !== 'fill_in_blanks') {
         const checkStatus = currentBlockCheckStatus;
         const isCorrect = checkStatus === 'correct';
         const isIncorrect = checkStatus === 'incorrect';
@@ -6634,7 +6678,11 @@ function renderViewerShell(session) {
       }
 
 
-      if (inputType === 'image_response') {
+      if (inputType === 'fill_in_blanks') {
+        card.classList.add('question-card--blanks');
+        helper.hidden=true;
+        control = createFillInBlanksControls({session,block,t,signal:scope.signal,refresh:()=>renderUI(),sharedStatusId:crossQuestionStatus.root.id,view:id=>navigateToBlockIndex(getOrderedBlocks().findIndex(b=>b.blockId===session.voiceParentId(id)))});
+      } else if (inputType === 'image_response') {
         control = createImageResponseControls({ session, block, signal: scope.signal });
       } else if (inputType === 'text' && !isLongText(block.responseConfig) && block.responseConfig?.displayMode === 'single_line') {
         control = document.createElement('input');
@@ -6905,6 +6953,7 @@ function renderViewerShell(session) {
     const update = () => {
       if (scope.signal.aborted) return;
       const activeElement = document.activeElement;
+      if (block.responseConfig?.inputType === 'fill_in_blanks') { control.update(); return; }
       // Keep every mounted answer synchronized, without rewriting hundreds of
       // unchanged off-screen controls on each keystroke or recording timer tick.
       const controlState = JSON.stringify([

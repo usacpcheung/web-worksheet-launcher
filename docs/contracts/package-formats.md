@@ -6,9 +6,9 @@ Reviewed against main `7bb19de` on 2026-10-06. Code authorities: `server/editor/
 
 | Content | Manifest `format` | Current export version / schema | Accepted compatibility |
 | --- | --- | --- | --- |
-| Plain worksheet with audio tracks | `worksheet-package` | 2 / 2 | Worksheet versions 1–7 are read; legacy JSON remains a separate import adapter. |
+| Plain worksheet with audio tracks | `worksheet-package` | 2 / 2 | Worksheet versions 1–8 are read; legacy JSON remains a separate import adapter. |
 | Worksheet containing limited Markdown | `worksheet-package` | 3 / 3 | Markdown in version 1/2 envelopes is rejected. |
-| Plain worksheet attempt | `worksheet-attempt-package` | 1 / 1 | Attempt versions 1–6 are read. |
+| Plain worksheet attempt | `worksheet-attempt-package` | 1 / 1 | Attempt versions 1–7 are read. |
 | Attempt containing limited Markdown | `worksheet-attempt-package` | 2 / 1 | Markdown in version 1 attempt envelopes is rejected. |
 | Worksheet containing option images | `worksheet-package` | 4 / 4 | Also supports limited Markdown; older readers reject this envelope. |
 | Attempt containing option images | `worksheet-attempt-package` | 3 / 1 | Also supports limited Markdown; older readers reject this envelope. |
@@ -18,6 +18,8 @@ Reviewed against main `7bb19de` on 2026-10-06. Code authorities: `server/editor/
 | Attempt containing long text | `worksheet-attempt-package` | 5 / 1 | Includes all earlier features; older readers reject it. |
 | Worksheet containing rich text | `worksheet-package` | 7 / 7 | Includes earlier features; rich fields require this envelope. |
 | Attempt containing rich text | `worksheet-attempt-package` | 6 / 1 | Includes earlier features and full rich documents. |
+| Worksheet containing fill-in-the-blanks | `worksheet-package` | 8 / 8 | Includes earlier features; blank passages require this envelope. |
+| Attempt containing fill-in-the-blanks | `worksheet-attempt-package` | 7 / 1 | Includes per-blank answer maps and earlier features. |
 | RolePlayScene | `roleplayscene-package` | 1 | Browser imports also accept plain project JSON and legacy root `project.json` ZIPs; server draft upload requires the current package envelope. |
 
 Worksheet/attempt ZIP helpers support stored (uncompressed) entries and validate entry sizes, CRCs and duplicate names. RolePlayScene uses bundled `fflate` archive reading and has separate API decompression resource limits; do not generalize its compression support to worksheet ZIP import.
@@ -198,3 +200,27 @@ provider input ceiling remains 2,000 Unicode code points for eligible questions.
 ## Rich text
 
 See [shared editor and rich-text-v1 contract](../worksheet/shared-rich-text-editor.md) for the restricted document, validation, legacy preservation, feature-version gates and deployment compatibility. Both server boundaries and browser readers validate the same document schema.
+
+## Fill-in-the-blanks responses
+
+`responseConfig.inputType: "fill_in_blanks"` requires worksheet package/schema
+**8/8** and attempt package/schema **7/1**. Earlier feature/version rules still
+apply; packages without blanks keep their previous export versions. Version gates
+prevent older readers from silently treating a blank map as an ordinary string.
+The API parser and browser assets must be deployed together; restart the API.
+No database migration or provider API changes are needed.
+
+The shared contract and safe renderer live in `server/app/fill-in-blanks.js`.
+See [blank authoring, answering and schema](../worksheet/fill-in-the-blanks.md).
+Answers are objects in `answers[questionId].value`, keyed by stable blank ID;
+unknown IDs, non-string values, over-limit values and invalid word inventories
+are rejected before server storage or browser import. Blank configuration is
+included in source fingerprints. Full-attempt image budgeting includes each
+blank's maximum text capacity and key overhead.
+
+Checked attempt packages retain the existing checking summary/items envelope.
+The viewer derives per-blank feedback from the embedded configuration and answer
+map when opening a checked attempt; it does not need the original live worksheet.
+Free responses are excluded from the automatic total. Checking totals therefore
+count graded blanks alongside other graded questions. All answer values are
+escaped as plain text in print; answer keys and recovery text are not printed.

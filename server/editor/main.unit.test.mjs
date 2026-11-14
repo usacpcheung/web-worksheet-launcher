@@ -149,7 +149,7 @@ test('modal load-status copies are visual-only and preserve the single shell ann
 
 async function loadEditorModule() {
   const filePath = path.resolve('server/editor/main.js');
-  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'../app/bridge/audio-generation.js'", JSON.stringify(new NodeURL('../app/bridge/audio-generation.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./rich-text-editor.js'", JSON.stringify(new NodeURL('./rich-text-editor.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
+  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'./question-type-conversion.js'", JSON.stringify(new NodeURL('./question-type-conversion.js', import.meta.url).href)).replaceAll("'../app/fill-in-blanks.js'", JSON.stringify(new NodeURL('../app/fill-in-blanks.js', import.meta.url).href)).replaceAll("'./fill-in-blanks-editor.js'", JSON.stringify(new NodeURL('./fill-in-blanks-editor.js', import.meta.url).href)).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'../app/bridge/audio-generation.js'", JSON.stringify(new NodeURL('../app/bridge/audio-generation.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./rich-text-editor.js'", JSON.stringify(new NodeURL('./rich-text-editor.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
 
   const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/option-images.js'", JSON.stringify(new NodeURL('../app/option-images.js', import.meta.url).href)).replaceAll("'./option-image-editor.js'", JSON.stringify(new NodeURL('./option-image-editor.js', import.meta.url).href)).replaceAll("'../app/api/publication-flow.js'", JSON.stringify(new NodeURL('../app/api/publication-flow.js', import.meta.url).href)).replaceAll("'../app/auth/mutation-auth.js'", JSON.stringify(new NodeURL('../app/auth/mutation-auth.js', import.meta.url).href)).replaceAll("'../app/auth/session-state-adapter.js'", JSON.stringify(new NodeURL('../app/auth/session-state-adapter.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-return.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-return.js', import.meta.url).href)).replaceAll("'../app/auth/session-coordinator.js'", JSON.stringify(new NodeURL('../app/auth/session-coordinator.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-flow.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-flow.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-prompt.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-prompt.js', import.meta.url).href)).replaceAll("'../app/api/deletion-flow.js'", JSON.stringify(new NodeURL('../app/api/deletion-flow.js', import.meta.url).href)).replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-drag-reorder.js'", JSON.stringify(new NodeURL('./block-drag-reorder.js', import.meta.url).href)), [
     {
@@ -2501,7 +2501,7 @@ test('question field updates map inputType, maxLength, and options through draft
 test('question input type change flow routes destructive switches through in-app confirm modal', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes("questionInputType.addEventListener('change', async () => {"), true);
-  assert.equal(source.includes("reason === 'confirm-switch-required'"), true);
+  assert.equal(source.includes("else if (impact.hasMeaningfulDataLoss)"), true);
   assert.equal(source.includes("title: t('editor.question.switchTypeConfirm.title')"), true);
   assert.equal(source.includes("confirmLabel: t('editor.question.switchTypeConfirm.confirmLabel')"), true);
   assert.equal(source.includes("descriptionText: t('editor.question.switchTypeConfirm.description'"), true);
@@ -6646,5 +6646,29 @@ test('rich edits retain media and IDs, switch block kind, and reject late result
   assert.deepEqual(session.state.draft.blocks.at(-1).content.document, field.document);
   session.setSelectedBlockKind('question');
   assert.deepEqual(session.state.draft.blocks.at(-1).prompt.document, field.document);
+  clearTimeout(session.autosaveTimer);
+});
+
+test('blank passage conversions keep media, allow empty instructions, and protect passage-only deletion', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  await session.createOrOpenByLocalDraftId(null);
+  const block = session.createBlock('question');
+  block.prompt = { text: 'Read water', mediaRefs: [{ usage: 'question_image', assetId: 'image' }] };
+  session.switchQuestionInputTypeWithImpactPolicy(block.blockId, 'fill_in_blanks', { promptPlacement: 'passage' });
+  const blank = session.findBlock(block.blockId);
+  assert.equal(blank.prompt.text, '');
+  assert.equal(blank.prompt.mediaRefs[0].assetId, 'image');
+  blank.responseConfig.passage.blocks[0].children = [{ tag: 'text', text: 'Read ' }, { tag: 'blank', id: 'water', text: 'water', checking: 'auto', alternatives: [] }];
+  assert.equal(session.validateCurrentDraft().errors.some(e => e.includes('prompt.text is required')), false);
+  blank.prompt.mediaRefs = [];
+  assert.equal(session.deleteBlockWithPolicy(block.blockId).reason, 'confirm-delete-required');
+  assert.equal(session.switchQuestionInputTypeWithImpactPolicy(block.blockId, 'text').reason, 'confirm-switch-required');
+  session.switchQuestionInputTypeWithImpactPolicy(block.blockId, 'text', { confirmSwitch: true });
+  assert.equal(session.findBlock(block.blockId).prompt.text, 'Read water');
+  assert.equal(session.findBlock(block.blockId).responseConfig.passage, undefined);
+  session.switchQuestionInputTypeWithImpactPolicy(block.blockId, 'fill_in_blanks', { promptPlacement: 'passage' });
+  session.setSelectedBlockKind('content');
+  assert.equal(session.findBlock(block.blockId).content.text, 'Read water');
   clearTimeout(session.autosaveTimer);
 });
