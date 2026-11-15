@@ -194,11 +194,11 @@ Contract expectations for viewer/server integration:
 
 The outer `bootstrapViewer` shows a start panel when no recognized source/auth-return intent is present. It can offer Resume/Discard for a saved local attempt; ordinary no-parameter boot does not automatically resume. Internal `ViewerAttemptSession.bootstrap` also has a resume-flag fallback for recovery paths, so it should not be described as identical to the outer entry behavior.
 
-For nonempty source values, current code precedence is:
+Reload/back-forward can restore the attempt identified by the current history entry. Explicit source navigation does not use that history recovery. For nonempty source values, source precedence is:
 
 1. `localAttemptId`: resume that attempt or fail.
 2. `publishedPackageId`: sign-in preflight, ZIP download and import or fail/recover authentication.
-3. `localDraftId` with `preview=1`: explicit editor preview; optional `draftUpdatedAt` freshness marker.
+3. `localDraftId` with `preview=1`: fresh isolated editor preview; optional `draftUpdatedAt` marker.
 4. `importedWorksheetId`: open that local imported source.
 5. `localDraftId` without preview: open the local draft-derived source.
 
@@ -206,7 +206,7 @@ This ordering follows `ViewerAttemptSession.bootstrap` and `loadViewerPayloadFro
 
 Actual errors include `LOCAL_ATTEMPT_RESUME_FAILED`, `LOCAL_DRAFT_NOT_FOUND`, `IMPORTED_WORKSHEET_NOT_FOUND`, `NO_CONTENT_SOURCE`, `INVALID_VIEWER_PAYLOAD`, and published not-found/auth/general boot errors. Do not rely on the unimplemented `LOCAL_DRAFT_PREVIEW_FAILED`/`PUBLISHED_PACKAGE_INVALID` names from old prose.
 
-Published authentication recovery retains the same package intent and retries it after sign-in readiness. Normal published opens always download/import; there is no implemented publication-ID cache lookup or ETag/hash-validated cache-first shortcut. The imported local record can be used for local attempts/resume, which is a separate path. See [runtime flow](architecture/runtime.md) and [loading feedback](worksheet/viewer-package-load-progress.md).
+Published authentication recovery retains the same package intent and retries it after sign-in readiness. Explicit published opens always download/import and create a fresh attempt (including the same worksheet); there is no implemented publication-ID cache lookup or ETag/hash-validated cache-first shortcut. The imported local record can be used for local attempts/resume, which is a separate path. Normal opening warns before replacing local recovery; login alone never replaces it. Editor preview does not change normal recovery. See [local models](contracts/local-models.md). See [runtime flow](architecture/runtime.md) and [loading feedback](worksheet/viewer-package-load-progress.md).
 
 ## Auth-return compatibility
 

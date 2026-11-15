@@ -4157,3 +4157,8 @@ html:has(.viewer-attempt-dialog[open]) { overflow:hidden; overflow-anchor:none; 
     padding: 26px 0;
   }
 }
+
+.viewer-preview-strip { display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; padding:10px 12px; border:1px solid #cbdcf5; border-radius:8px; background:#f1f7ff; font-size:1rem; }
+.viewer-preview-strip span { flex:1; min-width:160px; }
+.viewer-local-cleanup { border-top:1px solid #dbe3ee; padding-top:12px; display:flex; flex-wrap:wrap; gap:8px; }
+.viewer-local-cleanup p { width:100%; margin:0; }

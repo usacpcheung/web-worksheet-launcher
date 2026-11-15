@@ -26,6 +26,8 @@ try {
       const priorId = s.state.viewerPayload.blocks[0].responseConfig.options[0].mediaRefs[0].assetId;
       const priorAttempt = s.state.localAttemptId;
       const priorAsset = await viewerStorage.localAssets.get(priorId);
+      const counts = async () => [ (await viewerStorage.localAssets.list()).length, (await viewerStorage.importedWorksheets.list()).length ];
+      const beforeFailure = await counts();
       const put = viewerStorage.attempts.put;
       viewerStorage.attempts.put = async record => { await put(record); throw Error('Simulated failed acknowledgment'); };
       let rejected = false;
@@ -36,7 +38,7 @@ try {
         imageBytes: priorAsset.binary.length, answer: s.state.answers.q.value, failedImportRejected: rejected,
         previousAttemptPreserved: s.state.localAttemptId === priorAttempt,
         previousImagePreserved: JSON.stringify(Array.from(stillThere.binary)) === JSON.stringify(Array.from(png)),
-        invalidImports: [] };
+        beforeFailure, afterFailure: await counts(), invalidImports: [] };
       for (const kind of ['outside-media', 'duplicate-id', 'empty']) {
         const files = parseStoredZip(exported.bytes), manifest = JSON.parse(decodeUtf8(files.get('manifest.json')));
         const image = manifest.assets[0];
@@ -48,6 +50,15 @@ try {
         catch { output.invalidImports.push(true); }
       }
       await viewerStorage.localAssets.remove(priorId);
+      if (!await viewerStorage.localAssets.get(priorId)) throw Error('Referenced media must survive ordinary cleanup');
+      // Simulate corruption below the reference-aware storage API.
+      await new Promise((resolve, reject) => {
+        const open = indexedDB.open('worksheetLauncherStorage');
+        open.onsuccess = () => { const db = open.result, tx = db.transaction('localAssets', 'readwrite');
+          tx.objectStore('localAssets').delete(priorId);
+          tx.oncomplete = () => { db.close(); resolve(); }; tx.onerror = () => reject(tx.error); };
+        open.onerror = () => reject(open.error);
+      });
       let requests = 0; s.apiClient.uploadAttemptPackage = async () => { requests++; return { ok: true }; };
       const upload = await s.uploadCurrentAttemptPackage();
       const download = await s.exportCurrentAttemptPackage();
@@ -59,6 +70,7 @@ try {
     assert.equal(result.worksheetVersion, 4); assert.equal(result.attemptVersion, 3);
     assert.equal(result.imageBytes, 68); assert.equal(result.answer, 'o');
     assert.equal(result.failedImportRejected, true); assert.equal(result.previousAttemptPreserved, true); assert.equal(result.previousImagePreserved, true);
+    assert.deepEqual(result.afterFailure, result.beforeFailure, 'failed import must remove staging media and worksheet records');
     assert.deepEqual(result.invalidImports, [true, true, true]);
     assert.equal(result.missing.requests, 0); assert.equal(result.missing.uploadCode, 'MISSING_PACKAGE_MEDIA'); assert.equal(result.missing.downloadOk, false); assert.equal(result.missing.answer, 'o');
     assert.match(result.missing.message, locale === 'en' ? /media is missing/ : /媒體遺失/);

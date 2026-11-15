@@ -30,8 +30,9 @@ try {
   const data = await page.evaluate(async () => {
    const s = window.editorSession; await s.saveNow();
    const { parseWorksheetPackage } = await import('/server/editor/worksheet-package.js');
-   const parsed = parseWorksheetPackage(await s.buildCurrentDraftPackageZipBytes());
-   return { id: s.state.draft.localId, blockId: s.state.selectedBlockId, version: parsed.manifest.packageVersion, options: parsed.worksheet.blocks.find(b=>b.blockId===s.state.selectedBlockId).responseConfig.options };
+   const bytes = await s.buildCurrentDraftPackageZipBytes();
+   const parsed = parseWorksheetPackage(bytes);
+   return { bytes: [...bytes], id: s.state.draft.localId, blockId: s.state.selectedBlockId, version: parsed.manifest.packageVersion, options: parsed.worksheet.blocks.find(b=>b.blockId===s.state.selectedBlockId).responseConfig.options };
   });
   assert.equal(data.version,4); assert.equal(data.options[0].label,''); assert.ok(data.options[0].value); assert.equal(data.options[0].imageDescription,'圖片描述');
   assert.equal(await page.locator('.editor-option-preview-dialog, .editor-option-footer').count(), 0);
@@ -55,7 +56,12 @@ try {
   await page.keyboard.press('Escape');
   assert.equal(await page.evaluate(()=>JSON.stringify(window.viewerSession.state.answers)),before);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
-  const attempt = await page.evaluate(async()=>{
+  // Preview remains disposable. Package roundtrips use an explicitly opened normal worksheet.
+  await page.evaluate(async data => {
+   await viewerSession.startImportedWorksheetFromPackageFile(new Uint8Array(data.bytes));
+   viewerSession.setAnswer(data.blockId, data.options[0].value);
+  }, data);
+  const roundtrip = page.evaluate(async()=>{
    const s=window.viewerSession;const result=await s.buildUploadedAttemptPackage();
    const {buildWorksheetPrintReportModel,buildWorksheetPrintReportHtml} = await import('/server/viewer/main.js');
    const model=await buildWorksheetPrintReportModel({viewerPayload:s.state.viewerPayload,answers:s.state.answers,storage:s.storage});
@@ -66,6 +72,8 @@ try {
    await s.importAttemptPackageFromFile(result.bytes);
    return {version:result.manifest.packageVersion,assets:result.manifest.assets.length,option:s.state.viewerPayload.blocks.find(b=>b.kind==='question').responseConfig.options[0],printAlt:printed?.alt,printSource:printed?.src,restored:JSON.stringify(s.state.answers)===prior};
   });
+  await page.locator('.viewer-attempt-dialog button[type=submit]').click();
+  const attempt = await roundtrip;
   assert.equal(attempt.printAlt,'圖片描述');assert.match(attempt.printSource,/^data:image\/png/);assert.equal(attempt.restored,true);
   assert.equal(attempt.version,3);assert.equal(attempt.assets,1);assert.equal(attempt.option.imageDescription,'圖片描述');
   assert.deepEqual(errors,[]);await page.close();

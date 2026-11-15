@@ -114,7 +114,7 @@ test('active voice operation blocks submission, releases on cancel, and cannot m
 
 async function loadViewerModule(overrides = {}) {
   const filePath = path.resolve('server/viewer/main.js');
-  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'./feedback-ui.js'", JSON.stringify(new NodeURL('./feedback-ui.js', import.meta.url).href)).replaceAll("'../app/worksheet-feedback.js'", JSON.stringify(new NodeURL('../app/worksheet-feedback.js', import.meta.url).href)).replaceAll("'../app/fill-in-blanks.js'", JSON.stringify(new NodeURL('../app/fill-in-blanks.js', import.meta.url).href)).replaceAll("'./fill-in-blanks-ui.js'", JSON.stringify(new NodeURL('./fill-in-blanks-ui.js', import.meta.url).href)).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'./text-answer-input.js'", JSON.stringify(new NodeURL('./text-answer-input.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'./image-response-ui.js'", JSON.stringify(new NodeURL('./image-response-ui.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'../app/contracts/attempt-package-validator.js'", JSON.stringify(new NodeURL('../app/contracts/attempt-package-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
+  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'./attempt-opening.js'", JSON.stringify(new NodeURL('./attempt-opening.js', import.meta.url).href)).replaceAll("'./attempt-lifecycle.js'", JSON.stringify(new NodeURL('./attempt-lifecycle.js', import.meta.url).href)).replaceAll("'./attempt-lifecycle-ui.js'", JSON.stringify(new NodeURL('./attempt-lifecycle-ui.js', import.meta.url).href)).replaceAll("'./feedback-ui.js'", JSON.stringify(new NodeURL('./feedback-ui.js', import.meta.url).href)).replaceAll("'../app/worksheet-feedback.js'", JSON.stringify(new NodeURL('../app/worksheet-feedback.js', import.meta.url).href)).replaceAll("'../app/fill-in-blanks.js'", JSON.stringify(new NodeURL('../app/fill-in-blanks.js', import.meta.url).href)).replaceAll("'./fill-in-blanks-ui.js'", JSON.stringify(new NodeURL('./fill-in-blanks-ui.js', import.meta.url).href)).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'./text-answer-input.js'", JSON.stringify(new NodeURL('./text-answer-input.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'./image-response-ui.js'", JSON.stringify(new NodeURL('./image-response-ui.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'../app/contracts/attempt-package-validator.js'", JSON.stringify(new NodeURL('../app/contracts/attempt-package-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
   const bagName = `__viewerTestBag_${Math.random().toString(16).slice(2)}`;
 
   globalThis[bagName] = {
@@ -4096,6 +4096,12 @@ test('bootstrapViewer renders sign-in recovery for direct published package auth
     },
   });
 
+  // Exercise the unresolved-auth fallback, not the new explicit Login/Cancel cancellation path.
+  const originalPreflight = mod.ViewerAttemptSession.prototype.preflightPublishedSession;
+  mod.ViewerAttemptSession.prototype.preflightPublishedSession = async function(options) {
+    const result = await originalPreflight.call(this, options);
+    return result.result?.cancelled ? { ...result, result: { ...result.result, cancelled: false } } : result;
+  };
   await mod.bootstrapViewer();
 
   const panel = appRoot.children[0];
@@ -4172,6 +4178,12 @@ test('direct published package sign-in recovery retries same package and renders
     },
   });
 
+  // Exercise the unresolved-auth fallback, not the new explicit Login/Cancel cancellation path.
+  const originalPreflight = mod.ViewerAttemptSession.prototype.preflightPublishedSession;
+  mod.ViewerAttemptSession.prototype.preflightPublishedSession = async function(options) {
+    const result = await originalPreflight.call(this, options);
+    return result.result?.cancelled ? { ...result, result: { ...result.result, cancelled: false } } : result;
+  };
   await mod.bootstrapViewer();
   const signInBtn = findNodeByText(appRoot.children[0], 'viewer.boot.signInAndOpenWorksheet');
   assert.ok(signInBtn);
@@ -4275,6 +4287,12 @@ test('direct published package sign-in recovery keeps popup-blocked failures ret
     },
   });
 
+  // Exercise the unresolved-auth fallback, not the new explicit Login/Cancel cancellation path.
+  const originalPreflight = mod.ViewerAttemptSession.prototype.preflightPublishedSession;
+  mod.ViewerAttemptSession.prototype.preflightPublishedSession = async function(options) {
+    const result = await originalPreflight.call(this, options);
+    return result.result?.cancelled ? { ...result, result: { ...result.result, cancelled: false } } : result;
+  };
   await mod.bootstrapViewer();
   const signInBtn = findNodeByText(appRoot.children[0], 'viewer.boot.signInAndOpenWorksheet');
   await signInBtn.dispatch('click');

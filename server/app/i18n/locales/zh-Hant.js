@@ -1,6 +1,26 @@
 import roleplayscene from './roleplayscene/zh-Hant.js';
 
 export default {
+  attemptLifecycle: {
+    "replaceTitle": "開啟另一份工作紙？",
+    "replace": "開啟並取代",
+    "warning": "成功開啟這份工作紙後，目前的本機作答記錄將被取代。如需保留，請先匯出作答記錄套件或儲存至伺服器。單純登入不會取代目前的作答記錄。",
+    "cancelled": "已取消開啟。目前的本機作答記錄保持不變。",
+    "preview": "預覽",
+    "previewHelp": "測試作答屬暫存資料，不會取代目前的本機作答記錄。",
+    "previewNoExport": "預覽不提供匯出作答記錄或儲存至伺服器。如需測試，請先匯出工作紙，再於一般檢視器開啟。",
+    "restart": "重新開始預覽",
+    "restartHelp": "清除測試答案並重新開始這次預覽？目前的一般本機作答記錄不受影響。",
+    "cleanup": "檢視本機資料清理",
+    "later": "稍後",
+    "clean": "清理",
+    "cleanupNotice": "較舊的本機工作紙資料正在佔用儲存空間。你可以檢視清理項目，同時保留最近可恢復的作答記錄。",
+    "cleanupReview": "移除 {count} 份較舊的作答記錄及約 {size} MB 未使用的本機資料？最近的作答記錄、使用中的工作、已匯出的 ZIP 檔案及伺服器記錄均會保留。檢視後有更新或重新開啟的記錄也會保留。",
+    "nothingToClean": "沒有需要清理的未使用本機工作紙資料。",
+    "cleanupUnavailable": "此瀏覽器無法安全檢查其他分頁的使用情況，暫時無法清理。",
+    "cleaned": "已清理符合條件的未使用本機資料。使用中或最近有更新的工作已保留。",
+    "cleanupFailed": "未能完成清理，請再試。"
+},
   worksheetValidation: {
     fixBeforeContinuing: '請先修正以下問題，再匯出、上傳或預覽。你仍可儲存本機草稿。\n{details}',
     emptyReading: '第 {number} 個閱讀區塊是空白的。請輸入文字或刪除此區塊。',

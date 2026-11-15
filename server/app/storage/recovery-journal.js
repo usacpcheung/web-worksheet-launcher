@@ -30,6 +30,7 @@ export function withRecovery(store, api) {
   return {
     ...api,
     async get(id) {
+      if (await api.isDeleted?.(id)) { clearRecovery(store, id); return null; }
       let saved;
       let readError;
       try { saved = await api.get(id); } catch (error) { readError = error; }
@@ -54,6 +55,7 @@ export function withRecovery(store, api) {
         return recovered;
       }
       catch { /* Keep the journal and allow the user to recover/export their work. */ }
+      if (await api.isDeleted?.(id)) { clearRecovery(store, id); return null; }
       return pending;
     },
     async put(record) {

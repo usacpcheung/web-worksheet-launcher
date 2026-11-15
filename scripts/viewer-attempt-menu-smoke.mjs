@@ -134,7 +134,7 @@ try {
       await dialog.waitFor(); assert.equal(await dialog.locator('input').isEditable(), true);
       assert.equal(await dialog.locator('input').inputValue(), serverName);
       await dialog.getByRole('button', { name: await label('common.actions.cancel'), exact: true }).click();
-      // Resume through the active worksheet manager: old local attempt remains saved.
+      // A failed/cancelled manager replacement preserves the old attempt; acceptance opens the server copy.
       await openViewerAttemptMenu(page); await menu.locator('button').nth(1).click();
       const manager = page.locator('.viewer-attempts-modal');
       await manager.locator('.uploaded-draft-row').waitFor();
@@ -150,11 +150,17 @@ try {
       assert.equal(await page.evaluate(() => viewerSession.state.answers.q.value), 'Keep my answer 保留答案');
       failArtifact = false;
       await manager.getByRole('button', { name: await label('common.actions.resume'), exact: true }).click();
+      await page.locator('.viewer-attempt-dialog button[type=button]').click();
+      await page.waitForFunction(() => Object.keys(viewerSession.state.uploadedAttemptActionInFlightById).length === 0);
+      assert.equal(await page.evaluate(() => viewerSession.state.localAttemptId), 'menu-test');
+      assert.equal(await page.evaluate(async () => (await viewerSession.storage.attempts.get('menu-test')).answers.q.value), 'Keep my answer 保留答案');
+      await manager.getByRole('button', { name: await label('common.actions.resume'), exact: true }).click();
+      await page.locator('.viewer-attempt-dialog button[type=submit]').click();
       await page.waitForFunction(() => viewerSession.state.localAttemptId !== 'menu-test');
       assert.equal(await page.evaluate(() => viewerSession.state.studentName), '王同學');
       assert.equal(await page.evaluate(() => viewerSession.state.savedAttemptName), serverName);
       assert.equal(await page.evaluate(() => new URL(location.href).searchParams.get('localAttemptId')), await page.evaluate(() => viewerSession.state.localAttemptId));
-      assert.equal(await page.evaluate(async () => (await (await import('/server/viewer/storage/index.js')).viewerStorage.attempts.get('menu-test')).answers.q.value), 'Keep my answer 保留答案');
+      assert.equal(await page.evaluate(() => viewerSession.state.answers.q.value), 'Keep my answer 保留答案');
       // Set up a submitted attempt without identity, then exercise the actual print prompt.
       await page.evaluate(async () => {
         viewerSession.state.studentName = ''; viewerSession.state.studentNameResolved = false;

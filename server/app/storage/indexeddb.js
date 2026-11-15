@@ -1,12 +1,14 @@
+import { createLocalDataCleanup, LIFECYCLE_STORE, recordStamp, assetReferences } from './local-data-cleanup.js';
 import { imageQuestions, imageAnswerRefs } from '../image-response.js';
 const DB_NAME = 'worksheetLauncherStorage';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 const STORE_NAMES = {
   localDrafts: 'localDrafts',
   importedWorksheets: 'importedWorksheets',
   localAttempts: 'localAttempts',
   localAssets: 'localAssets',
+  localLifecycle: LIFECYCLE_STORE,
 };
 
 const REQUIRED_METADATA_FIELDS = ['localId', 'origin', 'updatedAt'];
@@ -76,7 +78,11 @@ function openDatabase() {
         }
       };
 
-      request.onsuccess = () => resolve(request.result);
+      request.onsuccess = () => {
+        const db = request.result;
+        db.onversionchange = () => { db.close(); dbPromise = undefined; };
+        resolve(db);
+      };
       request.onerror = () => {
         dbPromise = undefined;
         reject(request.error || new Error('Failed to open IndexedDB.'));
@@ -97,7 +103,7 @@ function runTransaction(storeName, mode, executor) {
   return openDatabase().then(
     (db) =>
       new Promise((resolve, reject) => {
-        const tx = db.transaction(storeName, mode);
+        const tx = db.transaction(storeName === STORE_NAMES.localAttempts ? [storeName, LIFECYCLE_STORE] : storeName, mode);
         const store = tx.objectStore(storeName);
 
         let result;
@@ -131,6 +137,10 @@ async function putRecord(storeName, record) {
   };
 
   await runTransaction(storeName, 'readwrite', (store) => {
+    if (storeName === STORE_NAMES.localAttempts) {
+      const deleted = store.transaction.objectStore(LIFECYCLE_STORE).get(`deleted:${persistedRecord.localId}`);
+      deleted.onsuccess = () => { if (deleted.result) store.transaction.abort(); };
+    }
     if (storeName === STORE_NAMES.localAttempts && imageQuestions(persistedRecord.viewerPayload?.blocks).length) {
       const request=store.get(persistedRecord.localId);
       request.onsuccess=()=>{
@@ -155,10 +165,16 @@ async function recoverRecord(storeName, record, expected, isCurrent) {
   let failure;
   try {
     await runTransaction(storeName, 'readwrite', store => {
+      let retired = false;
+      if (storeName === STORE_NAMES.localAttempts) {
+        const deleted = store.transaction.objectStore(LIFECYCLE_STORE).get(`deleted:${pending.localId}`);
+        deleted.onsuccess = () => { retired = Boolean(deleted.result); };
+      }
       const request = store.get(pending.localId);
       request.onsuccess = () => {
         try {
-          recovered = request.result;
+          recovered = retired ? null : request.result;
+          if (retired) return;
           // A newer write or deletion must win over this stale recovery read.
           if (!isCurrent() || JSON.stringify(recovered) !== JSON.stringify(expected)) return;
           if(storeName===STORE_NAMES.localAttempts && recovered && imageQuestions(recovered.viewerPayload?.blocks).some(q=>JSON.stringify(recovered.answers?.[q.blockId]?.value||[])!==JSON.stringify(pending.answers?.[q.blockId]?.value||[]))) return;
@@ -174,30 +190,16 @@ async function recoverRecord(storeName, record, expected, isCurrent) {
   return recovered;
 }
 
-// Reclaim only answer assets owned by the deleted attempt. Worksheet/shared media
-// has no ownerAttemptId and must survive local attempt deletion.
+const localCleanup = createLocalDataCleanup(openDatabase);
 async function deleteAttemptsAndOwnedImages(localId) {
-  const db = await openDatabase();
-  await new Promise((resolve, reject) => {
-    const tx = db.transaction([STORE_NAMES.localAttempts, STORE_NAMES.localAssets], 'readwrite');
-    tx.oncomplete = () => resolve();
-    tx.onerror = tx.onabort = () => reject(tx.error || new Error('Unable to remove attempt.'));
-    const attempts = tx.objectStore(STORE_NAMES.localAttempts);
-    if (localId === undefined) attempts.clear();
-    else attempts.delete(localId);
-    const request = tx.objectStore(STORE_NAMES.localAssets).openCursor();
-    request.onsuccess = () => {
-      const cursor = request.result;
-      if (!cursor) return;
-      const owner = cursor.value?.metadata?.ownerAttemptId;
-      if (owner && (localId === undefined || owner === localId)) cursor.delete();
-      cursor.continue();
-    };
-  });
+  const records = await listRecords(STORE_NAMES.localAttempts);
+  const candidates = Object.fromEntries(records.filter(a => localId === undefined || a.localId === localId).map(a => [a.localId, recordStamp(a)]));
+  return localCleanup.collect({ candidates });
 }
 
 async function deleteRecord(storeName, localId) {
   if (storeName === STORE_NAMES.localAttempts) return deleteAttemptsAndOwnedImages(localId);
+  if (storeName === STORE_NAMES.localAssets) return localCleanup.collect({ assetIds: [localId] });
   await runTransaction(storeName, 'readwrite', (store) => {
     store.delete(localId);
   });
@@ -271,7 +273,17 @@ async function commitAnswerImages({ attemptId, blockId, expected, next, asset, i
 function createStorageApi() {
   return {
     commitAnswerImages,
-    putLocalDraft: (record) => putRecord(STORE_NAMES.localDrafts, record),
+    localCleanup,
+    isAttemptDeleted: async id => Boolean(await getRecord(LIFECYCLE_STORE, `deleted:${id}`)),
+    putLocalDraft: async (record) => {
+      const previous = await getRecord(STORE_NAMES.localDrafts, record.localId);
+      const saved = await putRecord(STORE_NAMES.localDrafts, record);
+      const retained = assetReferences(record);
+      const removed = [...assetReferences(previous)].filter(id => !retained.has(id));
+      // Text autosaves do not scan media. Only losing references needs collection.
+      if (removed.length) await localCleanup.collect({ assetIds: removed }).catch(() => {});
+      return saved;
+    },
     getLocalDraft: (localId) => getRecord(STORE_NAMES.localDrafts, localId),
     recoverLocalDraft: (record, expected, isCurrent) => recoverRecord(STORE_NAMES.localDrafts, record, expected, isCurrent),
     listLocalDrafts: () => listRecords(STORE_NAMES.localDrafts),

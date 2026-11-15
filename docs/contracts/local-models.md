@@ -4,7 +4,7 @@ Reviewed against main `7bb19de` on 2026-10-06. Code authorities: `server/editor/
 
 ## Browser storage and identity
 
-Worksheet IndexedDB is `worksheetLauncherStorage`, version 2, with `localDrafts`, `importedWorksheets`, `localAttempts` and `localAssets`. Records use `localId`; required metadata includes `localId`, `origin`, `updatedAt`. Binary assets are kept in `localAssets`. Small restore/resume/preference flags use localStorage/sessionStorage helpers, rather than replacing IndexedDB payloads.
+Worksheet IndexedDB is `worksheetLauncherStorage`, version 3, with `localDrafts`, `importedWorksheets`, `localAttempts`, `localAssets`, and `localLifecycle`. The last store holds small deletion markers that prevent stale per-tab recovery journals from resurrecting cleaned attempts; it contains no worksheet answers or binary media. Records use `localId`; required metadata includes `localId`, `origin`, `updatedAt`. Binary assets are kept in `localAssets`. Small restore/resume/preference flags use localStorage/sessionStorage helpers, rather than replacing IndexedDB payloads.
 
 Editor/viewer autosave remains debounced. When a page hides or unloads with pending edits, `server/app/storage/recovery-journal.js` synchronously journals the current record in per-tab sessionStorage under `worksheetLauncher:pending:` and starts an immediate IndexedDB save. On reload, the storage adapter restores a newer pending record before returning it. The restore compares the current IndexedDB record with the original read inside one read/write transaction, so a concurrent save, deletion or clear wins over stale recovery. It then removes that consumed or superseded journal entry. Equal timestamps with different content preserve the pending record unless a concurrent write invalidates the original read. Explicitly discarded editor drafts cannot be journaled or autosaved while replacement cleanup is pending. A late autosave from an earlier opening of the same draft or viewer attempt cannot mark the reopened record’s new edits as saved or apply stale save errors. Asset binaries stay in IndexedDB. If sessionStorage is unavailable or full, the unload handler requests the browser's unsaved-work confirmation. This protects ordinary reload/navigation, not an OS/browser process termination without lifecycle events or recovery after closing the tab.
 
@@ -39,11 +39,59 @@ These are client compatibility shapes. They do not prove the server implements r
 
 ## Viewer attempt continuity
 
-Viewer creates a local attempt from a derived payload, with `sourceType`, `sourceId`, `sourceFingerprint`, source-local pointers where applicable, answer state and progress. `tryResumeAttempt` reconstructs local source content when available, falls back to its saved payload where supported, and rejects a recorded identity/fingerprint mismatch. The fingerprint is computed from viewer content; it is not the ZIP artifact's server SHA-256.
+Viewer creates a local attempt from a derived payload, with `sourceType`, `sourceId`, `sourceFingerprint`, source-local pointers where applicable, answer state and progress. `tryResumeAttempt` uses the saved worksheet snapshot for lifecycle-managed attempts (`runtimeMode: "normal" | "preview"`) and feedback-era attempts. Older records retain their source reconstruction/fingerprint compatibility path. The fingerprint is computed from viewer content; it is not the ZIP artifact's server SHA-256.
 
 A publication open downloads/imports a worksheet, then uses the imported-worksheet local source path. Current viewer code does not maintain a publication-ID cache lookup or a server revision-sync relationship for that attempt.
 
 Uploaded/local attempt ZIP restore uses its embedded worksheet and creates new imported and local attempt records. Package status `in_progress` maps to an editable local attempt; `submitted`/`checked` maps to completed review, with check metadata restored when present. Voice recovery is saved locally for retry but excluded from attempt packages, uploads and print. See [package formats](package-formats.md) and [voice recovery](../worksheet/viewer-voice-workflow.md).
+
+## Normal attempts, temporary preview, and cleanup
+
+Explicit worksheet opening always starts fresh, even for an identical published
+worksheet or imported worksheet ZIP. Resume is an explicit start-screen action.
+Attempt ZIP imports instead restore their embedded answers and submission status.
+The current normal attempt is selected by `viewer:lastSession`; background autosave
+from another tab must never select an older attempt over it.
+
+Replacement is owned by `server/viewer/attempt-lifecycle.js`. The existing shared
+Login / Cancel dialog accepts optional `warningText` for a protected worksheet
+opening; otherwise the viewer asks Open and replace / Cancel. No export/upload
+history is used to infer whether local work is backed up. Login does not replace
+anything. The incoming attempt must save before the Resume target changes. The
+previous record, including edits made while login/download was pending, is
+compared again before commit; changed work requires a new confirmation. Cancel or
+failed loading/saving leaves the previous normal attempt recoverable.
+
+Editor Preview starts a fresh `preview_…` session with `runtimeMode: "preview"`.
+Its snapshot and test answers are isolated from the normal Resume selection.
+History state restores the same session on refresh/back-forward; an explicit
+Preview navigation starts fresh. Restart preview resets testing without editing
+the worksheet draft. Preview retains answering, voice/rewrite, checking,
+submission, feedback and printing, but its handlers and menu disallow attempt
+export/server save. Test those actions by opening an exported worksheet in the
+normal viewer. Runtime mode and activity metadata are local-only, never exported.
+
+`server/app/storage/attempt-activity.js` coordinates lifecycle operations with
+Web Locks. Shared per-attempt locks protect active tabs, including background tabs;
+locks are released automatically on crashes. A one-minute navigation reservation
+bridges reload, and a fifteen-minute reservation protects same-tab authentication.
+If reliable cross-tab locking is unavailable, automatic/manual collection is
+withheld rather than assuming other work is inactive. Temporary previews and
+replaced normal attempts are marked for collection on subsequent viewer entry or
+replacement, once no active/reserved session needs them.
+
+The start screen offers Review local cleanup / Later for accumulated older data.
+Later dismisses the notice while leaving the review action available. Confirmation
+is limited to the records and estimated media shown in that review; concurrent
+changes and newly active work are retained. Recent orphan imports/media receive
+a one-hour staging grace period. Imported worksheets are reclaimed only when no
+retained attempt references them. Media reference checks include all retained
+drafts, imported worksheets and attempts and run in the same transaction as
+removal. Editor removal marks still-referenced media for later collection instead
+of deleting another session's bytes. Exported ZIP files and server records are
+outside this cleanup. IndexedDB upgrades close newer clients on version change;
+a pre-upgrade tab holding an older database connection may need to be closed or
+refreshed before the version-3 database can open.
 
 ## Text and response compatibility
 
@@ -104,7 +152,7 @@ Export holds an image-edit lock while collecting the immutable package snapshot.
 New answer assets have `metadata.ownerAttemptId`. Replacing/removing them reclaims
 unreferenced bytes in the same transaction; deleting an attempt also removes its
 owned answer assets. Imported answer-only assets receive the new attempt owner ID.
-Worksheet/shared assets retain their existing lifetime. Import uses fresh identities
+Worksheet/shared assets are retained while referenced by any stored draft, worksheet or attempt. Import uses fresh identities
 for both binaries and answer references; old packages and local records are unchanged.
 No database version migration is required.
 

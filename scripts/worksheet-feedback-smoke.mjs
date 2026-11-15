@@ -352,13 +352,15 @@ try {
       assert.match(exported.html, /print-feedback/);
       assert.match(exported.html, /Recovered reflection/);
       assert.match(exported.html, /★★★★★/);
-      await page.evaluate(async (bytes) => {
+      const importing = page.evaluate(async (bytes) => {
         const s = window.viewerSession;
         const result = await s.importAttemptPackageFromFile(
           new Uint8Array(bytes),
         );
         if (result?.ok === false) throw Error('Import failed');
       }, exported.bytes);
+      await page.locator('.viewer-attempt-dialog button[type=submit]').click();
+      await importing;
       const importedId = await page.evaluate(
         () => window.viewerSession.state.localAttemptId,
       );
