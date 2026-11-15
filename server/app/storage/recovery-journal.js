@@ -26,11 +26,16 @@ export function clearRecovery(store, id, savedRecord = null) {
     globalThis.sessionStorage.removeItem(keyFor(store, id));
   } catch { /* Unavailable browser storage must not break ordinary persistence. */ }
 }
+async function wasDeleted(api, id) {
+  if (!api.isDeleted) return false;
+  try { return Boolean(await api.isDeleted(id)); }
+  catch { return false; } // An unavailable database must not hide the tab's recovery journal.
+}
 export function withRecovery(store, api) {
   return {
     ...api,
     async get(id) {
-      if (await api.isDeleted?.(id)) { clearRecovery(store, id); return null; }
+      if (await wasDeleted(api, id)) { clearRecovery(store, id); return null; }
       let saved;
       let readError;
       try { saved = await api.get(id); } catch (error) { readError = error; }
@@ -55,7 +60,7 @@ export function withRecovery(store, api) {
         return recovered;
       }
       catch { /* Keep the journal and allow the user to recover/export their work. */ }
-      if (await api.isDeleted?.(id)) { clearRecovery(store, id); return null; }
+      if (await wasDeleted(api, id)) { clearRecovery(store, id); return null; }
       return pending;
     },
     async put(record) {

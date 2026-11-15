@@ -95,3 +95,25 @@ test('a failed initial read cannot consume recovery using an unknown comparison 
   assert.equal(recoverCalls, 0);
   assert.equal(readRecovery('localDrafts', 'draft').title, 'latest edits');
 });
+
+for (const outage of ['initial-read', 'recovery-write']) {
+  test(`attempt journal remains recoverable when deletion-marker lookup fails during ${outage}`, async t => {
+    storage(t); writeRecovery('localAttempts', record('Unsaved answer'));
+    let checks = 0;
+    const api = withRecovery('localAttempts', {
+      isDeleted: async () => { checks++; if (outage === 'initial-read' || checks > 1) throw Error('database unavailable'); return false; },
+      get: async () => { if (outage === 'initial-read') throw Error('database unavailable'); return record('old', 1); },
+      recover: async () => { throw Error('database unavailable'); },
+    });
+    assert.equal((await api.get('draft')).title, 'Unsaved answer');
+    assert.equal(readRecovery('localAttempts', 'draft').title, 'Unsaved answer');
+    assert.equal(checks, outage === 'initial-read' ? 1 : 2);
+  });
+}
+test('a confirmed deletion clears a stale journal without attempting recovery', async t => {
+  storage(t); writeRecovery('localAttempts', record('Deleted answer'));
+  const api = withRecovery('localAttempts', { isDeleted: async () => true,
+    get: async () => { throw Error('must not read deleted record'); } });
+  assert.equal(await api.get('draft'), null);
+  assert.equal(readRecovery('localAttempts', 'draft'), null);
+});
