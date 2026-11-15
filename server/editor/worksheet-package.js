@@ -1,3 +1,4 @@
+import { assertWorksheetReady } from '../app/contracts/worksheet-readiness.js';
 import { assertFeedbackConfig, cloneFeedback } from '../app/worksheet-feedback.js';
 import { hasFillInBlanks, assertBlankQuestions } from '../app/fill-in-blanks.js';
 import { hasLongText, assertTextQuestions } from '../app/text-answer.js';
@@ -172,6 +173,7 @@ function createWorksheetPackageFromDraft(draft, assetRecordsById = new Map()) {
     },
   };
 
+  assertWorksheetReady(worksheet, { authoring: true });
   const manifest = buildPackageManifest(draft);
   if (hasMarkdown(draftBlocks)) { manifest.packageVersion = 3; manifest.schemaVersion = 3; }
   if (hasOptionImages(draftBlocks)) { manifest.packageVersion = 4; manifest.schemaVersion = 4; }
@@ -215,7 +217,9 @@ function createWorksheetPackageFromDraft(draft, assetRecordsById = new Map()) {
   if (manifest.packageVersion >= 4) assertOptionImages(worksheet.blocks, assertPackageAssets(manifest.assets, new Map(entries.map(entry => [entry.path, entry.data]))));
   assertImageBudget(draftBlocks, manifest.assets, new TextEncoder().encode(entries[1].data).length * 4);
   entries[0] = { path: 'manifest.json', data: JSON.stringify(manifest, null, 2) };
-  return { manifest, worksheet, bytes: createStoredZip(entries) };
+  const bytes = createStoredZip(entries);
+  parseWorksheetPackage(bytes);
+  return { manifest, worksheet, bytes };
 }
 
 function parseWorksheetPackage(arrayBuffer) {

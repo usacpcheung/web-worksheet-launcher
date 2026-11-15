@@ -8,6 +8,10 @@ import path from 'node:path';
 import { rewriteModuleSourceForTests } from '../test-utils/module-source-test-helpers.mjs';
 import { createServerApiClient } from '../app/api/server-api-client.js';
 
+function readyBlocks() {
+  return [{ blockId: 'reading', position: 0, kind: 'content', content: { text: 'Reading text' } }];
+}
+
 function audioReady(session) {
   session._readAuth ||= { ensure: async () => ({ ok: true, isCurrent: () => true }), observe() {} };
   return session;
@@ -149,7 +153,7 @@ test('modal load-status copies are visual-only and preserve the single shell ann
 
 async function loadEditorModule() {
   const filePath = path.resolve('server/editor/main.js');
-  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'./feedback-editor.js'", JSON.stringify(new NodeURL('./feedback-editor.js', import.meta.url).href)).replaceAll("'../app/worksheet-feedback.js'", JSON.stringify(new NodeURL('../app/worksheet-feedback.js', import.meta.url).href)).replaceAll("'./question-type-conversion.js'", JSON.stringify(new NodeURL('./question-type-conversion.js', import.meta.url).href)).replaceAll("'../app/fill-in-blanks.js'", JSON.stringify(new NodeURL('../app/fill-in-blanks.js', import.meta.url).href)).replaceAll("'./fill-in-blanks-editor.js'", JSON.stringify(new NodeURL('./fill-in-blanks-editor.js', import.meta.url).href)).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'../app/bridge/audio-generation.js'", JSON.stringify(new NodeURL('../app/bridge/audio-generation.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./rich-text-editor.js'", JSON.stringify(new NodeURL('./rich-text-editor.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
+  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/contracts/worksheet-readiness.js'", JSON.stringify(new NodeURL('../app/contracts/worksheet-readiness.js', import.meta.url).href)).replaceAll("'./feedback-editor.js'", JSON.stringify(new NodeURL('./feedback-editor.js', import.meta.url).href)).replaceAll("'../app/worksheet-feedback.js'", JSON.stringify(new NodeURL('../app/worksheet-feedback.js', import.meta.url).href)).replaceAll("'./question-type-conversion.js'", JSON.stringify(new NodeURL('./question-type-conversion.js', import.meta.url).href)).replaceAll("'../app/fill-in-blanks.js'", JSON.stringify(new NodeURL('../app/fill-in-blanks.js', import.meta.url).href)).replaceAll("'./fill-in-blanks-editor.js'", JSON.stringify(new NodeURL('./fill-in-blanks-editor.js', import.meta.url).href)).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'../app/bridge/audio-generation.js'", JSON.stringify(new NodeURL('../app/bridge/audio-generation.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./rich-text-editor.js'", JSON.stringify(new NodeURL('./rich-text-editor.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
 
   const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/option-images.js'", JSON.stringify(new NodeURL('../app/option-images.js', import.meta.url).href)).replaceAll("'./option-image-editor.js'", JSON.stringify(new NodeURL('./option-image-editor.js', import.meta.url).href)).replaceAll("'../app/api/publication-flow.js'", JSON.stringify(new NodeURL('../app/api/publication-flow.js', import.meta.url).href)).replaceAll("'../app/auth/mutation-auth.js'", JSON.stringify(new NodeURL('../app/auth/mutation-auth.js', import.meta.url).href)).replaceAll("'../app/auth/session-state-adapter.js'", JSON.stringify(new NodeURL('../app/auth/session-state-adapter.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-return.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-return.js', import.meta.url).href)).replaceAll("'../app/auth/session-coordinator.js'", JSON.stringify(new NodeURL('../app/auth/session-coordinator.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-flow.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-flow.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-prompt.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-prompt.js', import.meta.url).href)).replaceAll("'../app/api/deletion-flow.js'", JSON.stringify(new NodeURL('../app/api/deletion-flow.js', import.meta.url).href)).replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-drag-reorder.js'", JSON.stringify(new NodeURL('./block-drag-reorder.js', import.meta.url).href)), [
     {
@@ -1101,7 +1105,7 @@ test('editor upload action runs silent session preflight and blocks when session
       },
     },
   });
-  session.state.draft = { localId: 'd1', title: 'Draft', metadata: { subject: '' }, blocks: [] };
+  session.state.draft = { localId: 'd1', title: 'Draft', metadata: { subject: '' }, blocks: readyBlocks() };
   session.buildCurrentDraftPackageZipBytes = async () => new Uint8Array([1, 2, 3]);
 
   const result = await session.uploadCurrentDraftToServer();
@@ -1134,7 +1138,7 @@ test('editor upload preflight surfaces transient server/non-auth errors without 
       },
     },
   });
-  session.state.draft = { localId: 'd1', title: 'Draft', metadata: { subject: '' }, blocks: [] };
+  session.state.draft = { localId: 'd1', title: 'Draft', metadata: { subject: '' }, blocks: readyBlocks() };
   session.buildCurrentDraftPackageZipBytes = async () => new Uint8Array([1, 2, 3]);
 
   const result = await session.uploadCurrentDraftToServer();
@@ -1153,7 +1157,7 @@ test('uploadCurrentDraftToServer emits ordered notifications for progress, succe
       listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
     },
   });
-  session.state.draft = { localId: 'draft_local_1', title: 'Draft 1', metadata: { subject: '' }, blocks: [] };
+  session.state.draft = { localId: 'draft_local_1', title: 'Draft 1', metadata: { subject: '' }, blocks: readyBlocks() };
   session.buildCurrentDraftPackageZipBytes = async () => new Uint8Array([1, 2, 3]);
 
   const result = await session.uploadCurrentDraftToServer();
@@ -1200,7 +1204,7 @@ test('uploadCurrentDraftToServer keeps in-progress notification visible while re
       listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
     },
   });
-  session.state.draft = { localId: 'draft_local_inflight', title: 'Draft inflight', metadata: { subject: '' }, blocks: [] };
+  session.state.draft = { localId: 'draft_local_inflight', title: 'Draft inflight', metadata: { subject: '' }, blocks: readyBlocks() };
   session.buildCurrentDraftPackageZipBytes = async () => new Uint8Array([1, 2, 3]);
 
   const pendingUpload = session.uploadCurrentDraftToServer();
@@ -1230,7 +1234,7 @@ test('uploadCurrentDraftToServer blocks duplicate upload triggers while request 
       listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
     },
   });
-  session.state.draft = { localId: 'draft_local_dupe', title: 'Draft dup', metadata: { subject: '' }, blocks: [] };
+  session.state.draft = { localId: 'draft_local_dupe', title: 'Draft dup', metadata: { subject: '' }, blocks: readyBlocks() };
   session.buildCurrentDraftPackageZipBytes = async () => new Uint8Array([1, 2, 3]);
 
   const first = session.uploadCurrentDraftToServer();
@@ -1260,7 +1264,7 @@ for (const errorCode of ['NETWORK_ERROR', 'UPLOAD_TIMEOUT', 'ABORTED', 'DRAFT_NA
       listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
     },
   });
-  session.state.draft = { localId: 'draft_local_net', title: 'Draft net', metadata: { subject: '' }, blocks: [] };
+  session.state.draft = { localId: 'draft_local_net', title: 'Draft net', metadata: { subject: '' }, blocks: readyBlocks() };
   session.buildCurrentDraftPackageZipBytes = async () => new Uint8Array([1, 2, 3]);
 
   const result = await session.uploadCurrentDraftToServer();
@@ -1280,7 +1284,7 @@ test('uploadCurrentDraftToServer emits refresh warning when uploaded drafts refr
       listUploadedDrafts: async () => ({ ok: false, error: { message: 'Unable to refresh uploaded drafts.' } }),
     },
   });
-  session.state.draft = { localId: 'draft_local_2', title: 'Draft 2', metadata: { subject: '' }, blocks: [] };
+  session.state.draft = { localId: 'draft_local_2', title: 'Draft 2', metadata: { subject: '' }, blocks: readyBlocks() };
   session.buildCurrentDraftPackageZipBytes = async () => new Uint8Array([1, 2, 3]);
 
   const result = await session.uploadCurrentDraftToServer();
@@ -1382,7 +1386,7 @@ test('validateCurrentDraft flags non-canonical responseConfig.inputType values',
   assert.equal(validation.valid, false);
   assert.equal(
     validation.errors.includes(
-      'draft.blocks[0].responseConfig.inputType must be one of: text, number, boolean, multiple_choice, image_response'
+      'draft.blocks[0].responseConfig.inputType must be one of: text, number, boolean, multiple_choice, image_response, fill_in_blanks'
     ),
     true
   );
@@ -1420,7 +1424,7 @@ test('validateCurrentDraft flags non-string responseConfig.inputType values', as
     );
     assert.equal(
       validation.errors.includes(
-        'draft.blocks[0].responseConfig.inputType must be one of: text, number, boolean, multiple_choice, image_response'
+        'draft.blocks[0].responseConfig.inputType must be one of: text, number, boolean, multiple_choice, image_response, fill_in_blanks'
       ),
       true,
       `expected canonical inputType error for inputType: ${JSON.stringify(badInputType)}`
@@ -1468,6 +1472,7 @@ test('import/save/export operations emit notification records for success and er
   const importPackageSuccess = session.state.notifications.find((item) => item.source === 'import.package_zip' && item.kind === 'success');
   assert.equal(Boolean(importPackageSuccess), true);
 
+  session.state.draft.blocks = readyBlocks();
   await session.saveNow();
   const manualSaveSuccess = session.state.notifications.find((item) => item.source === 'save.manual' && item.kind === 'success');
   assert.equal(Boolean(manualSaveSuccess), true);
@@ -2222,6 +2227,7 @@ test('exportCurrentDraftToPackageFile revokes object URL when click throws', asy
     localAssets: { get: async () => null, put: async () => {} },
   });
   await session.createOrOpenByLocalDraftId('draft_export_revoke_on_throw');
+  session.state.draft.blocks = readyBlocks();
   clearTimeout(session.autosaveTimer);
 
   const originalDocument = globalThis.document;
@@ -5809,8 +5815,8 @@ test('image attachment discards late writes after draft switch, reopening, targe
 test('export captures worksheet and metadata before asynchronous asset reads', async () => {
   const mod=await loadEditorModule();let release,enter;const entered=new Promise(r=>enter=r);const storage=createSessionForTests();
   storage.localAssets={get:async()=>{enter();await new Promise(r=>release=r);return {binary:new Uint8Array([1])};}};
-  const session=new mod.EditorDraftSession(storage);session.state.draft=mod.createDraftRecord({title:'Original',assets:[{assetId:'a',kind:'image',usage:'question_image',path:'media/a'}]});
-  const pending=session.buildCurrentDraftPackageZipBytes();await entered;session.state.draft=mod.createDraftRecord({title:'Replacement'});release();await pending;
+  const session=new mod.EditorDraftSession(storage);session.state.draft=mod.createDraftRecord({ blocks: readyBlocks(),title:'Original',assets:[{assetId:'a',kind:'image',usage:'question_image',path:'media/a'}]});
+  const pending=session.buildCurrentDraftPackageZipBytes();await entered;session.state.draft=mod.createDraftRecord({ blocks: readyBlocks(),title:'Replacement'});release();await pending;
   assert.equal(globalThis.__lastCreateWorksheetPackageCall.draft.title,'Original');assert.equal(globalThis.__lastCreateWorksheetPackageCall.assets.has('a'),true);
 });
 test('decimal-only questions retain whole-valued decimal answer keys', async () => {
@@ -5829,7 +5835,7 @@ test('cancel settles a stalled post-upload refresh without changing a successful
       entered(); signal.addEventListener('abort', () => resolve({ ok: false, error: { code: 'ABORTED', message: 'Refresh canceled' } }), { once: true });
     }),
   } });
-  session.state.draft = mod.createDraftRecord({ title: 'Original' });
+  session.state.draft = mod.createDraftRecord({ blocks: readyBlocks(), title: 'Original' });
   const upload = session.uploadCurrentDraftToServer({ preflight: false });
   await refreshing; session.uploadController.abort();
   assert.equal((await upload).ok, true);
@@ -5846,9 +5852,9 @@ test('upload stops when the selected draft is replaced during authentication', a
     listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
   } });
   session.ensureMutationSessionReady = session.ensureReadSessionReady = session.ensureServerSessionReady = () => new Promise(resolve => { release = resolve; });
-  session.state.draft = mod.createDraftRecord({ title: 'Original' });
+  session.state.draft = mod.createDraftRecord({ blocks: readyBlocks(), title: 'Original' });
   const upload = session.uploadCurrentDraftToServer();
-  session.state.draft = mod.createDraftRecord({ title: 'Replacement' });
+  session.state.draft = mod.createDraftRecord({ blocks: readyBlocks(), title: 'Replacement' });
   release({ ok: true, isCurrent: () => true }); await upload;
   assert.equal(received, undefined);
 });
@@ -6005,7 +6011,7 @@ test('upload flow retains prepared bytes and metadata across retries, rejects st
   const session = new mod.EditorDraftSession(createSessionForTests(), { apiClient: {
     uploadDraftPackage: async (bytes, metadata) => { calls.push({ bytes: [...bytes], ...metadata }); return { ok: false, error: { code: 'DRAFT_NAME_CONFLICT' } }; },
   } });
-  session.state.draft = mod.createDraftRecord({ title: 'Original' });
+  session.state.draft = mod.createDraftRecord({ blocks: readyBlocks(), title: 'Original' });
   session.state.draft.metadata.subject = 'Original subject';
   let builds = 0, current = true;
   session.buildCurrentDraftPackageZipBytes = async draft => { builds++; return new TextEncoder().encode(draft.title); };
@@ -6670,5 +6676,28 @@ test('blank passage conversions keep media, allow empty instructions, and protec
   session.switchQuestionInputTypeWithImpactPolicy(block.blockId, 'fill_in_blanks', { promptPlacement: 'passage' });
   session.setSelectedBlockKind('content');
   assert.equal(session.findBlock(block.blockId).content.text, 'Read water');
+  clearTimeout(session.autosaveTimer);
+});
+
+test('invalid drafts stay locally saveable but cannot export or upload, before auth or media reads', async () => {
+  const mod = await loadEditorModule();
+  const storage = createSessionForTests();
+  let saves = 0;
+  storage.drafts.put = async value => { saves++; return value; };
+  storage.localAssets = { get: () => assert.fail('Do not read assets for invalid content') };
+  const session = new mod.EditorDraftSession(storage);
+  session.ensureMutationSessionReady = () => assert.fail('Do not ask for login before correcting content');
+  session.state.draft = mod.createDraftRecord({ localId: 'invalid', blocks: [
+    { blockId: 'reading', kind: 'content', content: { text: '' } },
+    { blockId: 'q', kind: 'question', prompt: { text: 'Answer?' }, responseConfig: { inputType: 'text' } },
+  ] });
+  session.state.selectedBlockId = 'q';
+  await session.saveNow();
+  assert.ok(saves > 0);
+  await assert.rejects(() => session.exportCurrentDraftToPackageFile(), { code: 'WORKSHEET_NOT_READY' });
+  assert.equal(session.state.selectedBlockId, 'reading');
+  await assert.rejects(() => session.uploadCurrentDraftToServer(), { code: 'WORKSHEET_NOT_READY' });
+  assert.equal(session.state.isUploadingDraft, false);
+  assert.equal(session.state.lastExportedAt, null);
   clearTimeout(session.autosaveTimer);
 });

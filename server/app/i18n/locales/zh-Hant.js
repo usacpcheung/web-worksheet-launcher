@@ -1,6 +1,12 @@
 import roleplayscene from './roleplayscene/zh-Hant.js';
 
 export default {
+  worksheetValidation: {
+    fixBeforeContinuing: '請先修正以下問題，再匯出、上傳或預覽。你仍可儲存本機草稿。\n{details}',
+    emptyReading: '第 {number} 個閱讀區塊是空白的。請輸入文字或刪除此區塊。',
+    emptyPrompt: '第 {number} 個區塊沒有題目文字。請輸入題目或刪除此區塊。',
+    block: '第 {number} 個區塊：{reason}',
+  },
   feedback: {
     title: '評估與回饋',
     enable: '啟用工作紙評估與回饋',

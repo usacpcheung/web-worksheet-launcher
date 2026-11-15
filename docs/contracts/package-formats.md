@@ -234,3 +234,28 @@ map when opening a checked attempt; it does not need the original live worksheet
 Free responses are excluded from the automatic total. Checking totals therefore
 count graded blanks alongside other graded questions. All answer values are
 escaped as plain text in print; answer keys and recovery text are not printed.
+
+### Worksheet readiness before distribution
+
+The editor top-bar checks, Preview, ZIP export and Save to server share
+`server/app/contracts/worksheet-readiness.js`, built on the reader's block and
+response contract. Unfinished local drafts can still be saved and reopened.
+Blocking issues include empty reading blocks or ordinary question prompts,
+missing/unsupported question settings, invalid text/image/blank/feedback limits,
+empty or duplicate choice values, invalid answer keys, contradictory number
+ranges and duplicate block IDs. Fill-in-the-blanks instructions and optional
+answer keys may remain empty. Image-only choices remain supported.
+
+Failed actions identify the first affected block and explain that it must be
+corrected; empty reading blocks can be filled or removed. No download or server
+upload starts. The status count reflects current edits, without waiting for
+an autosave. The ZIP producer also checks its result with the package reader,
+so missing audio files cannot yield a ZIP rejected by that reader.
+
+The API repeats readiness checks on upload and on the stored artifact before
+publication, including artifacts uploaded before this fix. Invalid content
+returns `INVALID_WORKSHEET_PACKAGE` without storing a new artifact. Importing
+an older incomplete package into the editor remains available for repair;
+legacy viewer text-limit compatibility is preserved. Prompts over 500 spoken
+characters remain saveable/exportable, but publishing still returns
+`PROMPT_TOO_LONG`. No package version change is required.

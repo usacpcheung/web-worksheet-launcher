@@ -1,3 +1,4 @@
+import { completeDefaultReadingBlock } from './editor-test-helpers.mjs';
 // Isolated transport simulation: exercise real API recovery and UI cancel controls.
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
@@ -37,6 +38,7 @@ try {
         await page.goto(`${base}/server/viewer/?localAttemptId=cancel-ui`);
       }
       await page.waitForFunction(app => Boolean(window[`${app}Session`]?.state), app);
+      if (app === 'editor') await completeDefaultReadingBlock(page);
       if (app === 'editor') await page.locator('details').filter({ has: page.locator('[data-upload-cancel="editor"]') }).locator('summary').click();
       // Use the actual input so revision tracking protects the edit from an
       // older in-flight autosave. Direct state assignment bypasses that contract.

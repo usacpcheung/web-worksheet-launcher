@@ -1,3 +1,4 @@
+import { completeDefaultReadingBlock } from './editor-test-helpers.mjs';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 const base = process.env.VIEWER_SMOKE_URL || 'http://127.0.0.1:8765';
@@ -23,6 +24,7 @@ try {
       });
       await page.goto(`${base}/server/editor/`);
       await page.waitForFunction(() => window.editorSession?.state.serverSession.status === 'ready');
+      await completeDefaultReadingBlock(page);
       await page.locator('details').filter({ has: page.locator('[data-upload-cancel="editor"]') }).locator('summary').click();
       const keys = ['editor.server.uploadDraft', 'common.actions.cancel', 'editor.modal.uploadConflict.saveAsNewCopy', 'editor.modal.uploadConflict.replaceUploadedDraft', 'apiErrors.conflict'];
       const labels = await page.evaluate(async keys => {

@@ -8,7 +8,7 @@ const binaries = new Map([['img', { binary: new Uint8Array([1,2,3]) }]]);
 test('image-only worksheet roundtrip retains identity, descriptions and image asset usage', () => {
  const result=createWorksheetPackageFromDraft(draft(),binaries);assert.equal(result.manifest.packageVersion,4);
  const parsed=parseWorksheetPackage(result.bytes);assert.deepEqual(parsed.worksheet.blocks[0].responseConfig,result.worksheet.blocks[0].responseConfig);assert.equal(parsed.assets[0].usage,'option_image');
- const plain=draft();plain.blocks[0].responseConfig.options=[{value:'text',label:'Text'}];assert.equal(createWorksheetPackageFromDraft(plain,binaries).manifest.packageVersion,2);
+ const plain=draft();plain.blocks[0].responseConfig.options=[{value:'text',label:'Text'}];plain.blocks[0].responseConfig.correctAnswer='text';assert.equal(createWorksheetPackageFromDraft(plain,binaries).manifest.packageVersion,2);
 });
 test('image packages reject missing/invalid assets, duplicate identities, oversized descriptions and downgraded envelopes', () => {
  assert.throws(()=>createWorksheetPackageFromDraft(draft(),new Map()),/Missing or invalid/);

@@ -1,10 +1,11 @@
+import { validateWorksheetReadiness } from '../app/contracts/worksheet-readiness.js';
 import { createFeedbackEditor, feedbackStarIcon } from './feedback-editor.js';
-import { assertFeedbackConfig, feedbackEnabled, cloneFeedback } from '../app/worksheet-feedback.js';
+import { feedbackEnabled, cloneFeedback } from '../app/worksheet-feedback.js';
 import { questionTextConversion, passageToPrompt } from './question-type-conversion.js';
 import { createBlankPassageEditor } from './fill-in-blanks-editor.js';
-import { isFillInBlanks, emptyBlankConfig, assertBlankConfig } from '../app/fill-in-blanks.js';
+import { isFillInBlanks, emptyBlankConfig } from '../app/fill-in-blanks.js';
 import { isLongText, textLimitCeiling, textConfigError, STANDARD_TEXT_LIMIT, LONG_TEXT_LIMIT } from '../app/text-answer.js';
-import { imageQuestions, assertImageQuestions, imageBudget } from '../app/image-response.js';
+import { imageQuestions, imageBudget } from '../app/image-response.js';
 import { mountOptionImageEditor } from './option-image-editor.js';
 import { optionImageRef, optionHasContent, imageDescription } from '../app/option-images.js';
 import { runPublicationFlow, runPublicationAttempt } from '../app/api/publication-flow.js';
@@ -1512,43 +1513,10 @@ class EditorDraftSession {
     }
 
     const normalizedDraft = this.normalizeDraftForContracts(this.state.draft);
-    const errors = [];
-    if (!normalizedDraft.draftWorksheetId) errors.push('draft.draftWorksheetId must be a non-empty string');
-    if (!normalizedDraft.title?.trim()) errors.push('draft.title must be a non-empty string');
-    if (!Array.isArray(normalizedDraft.blocks) || normalizedDraft.blocks.length === 0) {
-      errors.push('draft.blocks must be a non-empty array');
-    }
-
-    try { assertFeedbackConfig(normalizedDraft.feedback); } catch { errors.push(t('feedback.invalidConfig')); }
-    try { assertImageQuestions(normalizedDraft.blocks); } catch(error) { errors.push(error.message); }
+    const errors = validateWorksheetReadiness({ ...this.state.draft, title: String(this.state.draft.title || 'Untitled worksheet') }, { authoring: true }).errors;
     normalizedDraft.blocks.forEach((block, index) => {
-      if (!block.blockId) errors.push(`draft.blocks[${index}].blockId must be a non-empty string`);
-      if (!Number.isInteger(block.position) || block.position < 0) {
-        errors.push(`draft.blocks[${index}].position must be a non-negative integer`);
-      }
-      if (block.kind === 'question') {
-        try { assertBlankConfig(block.responseConfig); } catch (error) { errors.push(`draft.blocks[${index}]: ${error.message}`); }
-        const textError = textConfigError(block.responseConfig, { authoring: true });
-        if (textError) errors.push(`draft.blocks[${index}]: ${t(isLongText(block.responseConfig) ? 'textAnswer.invalidLong' : 'textAnswer.invalid', { max: textLimitCeiling(block.responseConfig) })}`);
-        if (!isFillInBlanks(block.responseConfig) && !block?.prompt?.text?.trim()) errors.push(`draft.blocks[${index}].prompt.text is required for question blocks`);
-        if (promptTextState(block.prompt).exceedsLimit) errors.push(t('formatting.promptTooLong', { max: PROMPT_TEXT_LIMIT }));
-        if (!isRecord(block.responseConfig)) errors.push(`draft.blocks[${index}].responseConfig is required for question blocks`);
-        if (!CANONICAL_RESPONSE_INPUT_TYPES.has(block.responseConfig?.inputType)) {
-          errors.push(
-            `draft.blocks[${index}].responseConfig.inputType must be one of: text, number, boolean, multiple_choice, image_response`
-          );
-        }
-        if (block.responseConfig?.inputType === 'multiple_choice') {
-          if ((block.responseConfig.options || []).some(option => !optionHasContent(option))) errors.push(`draft.blocks[${index}].responseConfig.options: ${t('optionImages.required')}`);
-          const duplicateOptionValues = getDuplicateOptionValues(block.responseConfig.options);
-          if (duplicateOptionValues.length > 0) {
-            errors.push(
-              `draft.blocks[${index}].responseConfig.options contains duplicate values: ${duplicateOptionValues.join(', ')}`
-            );
-          }
-        }
-      } else if (!block?.content?.text?.trim()) {
-        errors.push(`draft.blocks[${index}].content.text is required for content blocks`);
+      if (block.kind === 'question' && promptTextState(block.prompt).exceedsLimit) {
+        errors.push(`draft.blocks[${index}]: ${t('formatting.promptTooLong', { max: PROMPT_TEXT_LIMIT })}`);
       }
     });
 
@@ -3776,14 +3744,43 @@ class EditorDraftSession {
     }
   }
 
+  requireReadyWorksheet(draft = this.state.draft) {
+    const validation = validateWorksheetReadiness({ ...draft, title: String(draft?.title || 'Untitled worksheet') }, { authoring: true });
+    if (validation.valid) return;
+    const messages = validation.errors.map(message => {
+      const match = message.match(/draft\.blocks\[(\d+)\]/);
+      const number = match ? Number(match[1]) + 1 : null;
+      if (message.startsWith('feedback:')) return t('feedback.invalidConfig');
+      if (number && /Text maxLength|Long text requires|Invalid textMode/.test(message)) {
+        const config = draft.blocks[number - 1]?.responseConfig;
+        return t('worksheetValidation.block', { number, reason: t(isLongText(config) ? 'textAnswer.invalidLong' : 'textAnswer.invalid', { max: textLimitCeiling(config) }) });
+      }
+      if (message.includes('.content.text is required')) return t('worksheetValidation.emptyReading', { number });
+      if (message.includes('.prompt.text is required')) return t('worksheetValidation.emptyPrompt', { number });
+      return number ? t('worksheetValidation.block', { number, reason: message.replace(/^draft\.blocks\[\d+\]\.?/, '') }) : message;
+    });
+    const firstBlock = validation.errors.find(message => /draft\.blocks\[\d+\]/.test(message));
+    if (draft?.localId === this.state.draft?.localId) {
+      if (firstBlock) {
+        const index = Number(firstBlock.match(/draft\.blocks\[(\d+)\]/)[1]);
+        this.selectBlock(draft.blocks[index]?.blockId);
+      } else if (validation.errors.some(message => /feedback/i.test(message))) {
+        this.state.feedbackSettingsDraftId = draft.localId;
+      }
+    }
+    const error = new Error(t('worksheetValidation.fixBeforeContinuing', { details: messages.join('\n') }));
+    error.code = 'WORKSHEET_NOT_READY';
+    throw error;
+  }
+
   async buildCurrentDraftPackageZipBytes(draft = cloneDraftForPersistence(this.state.draft)) {
     if (!draft) {
       throw new Error(editorNotification('export.noActiveDraft'));
     }
+    this.requireReadyWorksheet(draft);
     if (collectLegacyAudioTargets(draft.blocks).length > 0) {
       throw new Error('Legacy audio must be migrated before preview, export, or upload.');
     }
-    if (draft.blocks.some(block => block.responseConfig?.inputType === 'multiple_choice' && (block.responseConfig.options || []).some(option => !optionHasContent(option)))) throw new Error(t('optionImages.required'));
     const assets = new Map();
     const draftAssets = normalizeDraftAssets(draft.assets);
     for (const asset of draftAssets) {
@@ -4059,6 +4056,7 @@ class EditorDraftSession {
       // separate Save actions. The API client still assigns each request its ID.
       let prepared = packageFlow?.preparedPackage;
       const uploadDraft = prepared ? null : cloneDraftForPersistence(this.state.draft);
+      if (uploadDraft) this.requireReadyWorksheet(uploadDraft);
       if (options.preflight !== false) {
         const sessionReady = await this.ensureMutationSessionReady({ isCurrent: () => operation.canPublish(), signal: operation.signal, intent: { kind: 'mutation', operation: 'upload' } });
         if (sessionReady.ok) accountCurrent = sessionReady.isCurrent;
@@ -8714,7 +8712,7 @@ function renderEditorShell(session) {
     lastSavedLabel.className = 'editor-label';
     lastSavedLabel.textContent = t('editor.labels.lastSaved');
     lastSavedEl.replaceChildren(lastSavedLabel, document.createTextNode(` ${formatLastSavedLabel(session.state.lastSavedAt)}`));
-    const validationIssues = session.state.lastSavedLocalValidationIssueCount + session.state.lastContractValidationIssueCount;
+    const validationIssues = session.state.validationErrors.length;
     validationEl.innerHTML = `<span class="editor-pill ${validationIssues > 0 ? 'editor-pill--warn' : 'editor-pill--ok'}">${createEditorIcon('shield')}${getEditorIssueCountLabel(validationIssues)}</span>`;
     const validationTooltip = [];
     if (session.state.lastValidationWarning) {
@@ -8967,11 +8965,11 @@ function renderEditorShell(session) {
   });
   openViewerBtn.addEventListener('click', async () => {
     try {
-      assertFeedbackConfig(session.state.draft?.feedback);
-    } catch {
+      session.requireReadyWorksheet();
+    } catch (error) {
       session.pushNotification({
         kind: 'error',
-        text: t('feedback.invalidConfig'),
+        text: error.message,
       });
       updateSummary();
       return;
@@ -8990,6 +8988,13 @@ function renderEditorShell(session) {
       return;
     }
     await session.saveNow();
+    if (session.state.draft?.localId !== localDraftId) return;
+    try { session.requireReadyWorksheet(); }
+    catch (error) {
+      session.pushNotification({ kind: 'error', category: 'editor', text: error.message });
+      updateSummary();
+      return;
+    }
     updateSummary();
     const draftUpdatedAt = session.state.draft?.metadata?.updatedAt || null;
     try {
@@ -9305,12 +9310,19 @@ function renderEditorShell(session) {
     updateSummary();
   });
   exportBtn.addEventListener('click', async () => {
-    await session.exportCurrentDraftToPackageFile();
+    try { await session.exportCurrentDraftToPackageFile(); }
+    catch { /* The export method reports the validation or package error. */ }
     updateSummary();
   });
   syncDraftBtn.addEventListener('click', async () => {
     if (session.state.isUploadDraftFlowActive || session.state.isUploadingDraft) return;
     if (syncDraftBtn.disabled) return;
+    try { session.requireReadyWorksheet(); }
+    catch (error) {
+      session.pushNotification({ kind: 'error', category: 'editor', text: error.message });
+      updateSummary();
+      return;
+    }
     const draftId = session.state.draft?.localId;
     const generation = session._audioDraftGeneration;
     session.uploadFlows ??= new UploadOperationSlot();

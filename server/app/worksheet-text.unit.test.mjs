@@ -42,7 +42,7 @@ test('Markdown ZIP version prevents old readers from treating it as plain text',
     { path: 'content/worksheet.json', data: JSON.stringify(output.worksheet) },
   ]);
   assert.throws(() => parseWorksheetPackage(bad), /version 3/);
-  assert.equal(createWorksheetPackageFromDraft({ ...draft, blocks: [{ kind: 'content', content: { text: '**plain**' } }] }).manifest.packageVersion, 2);
+  assert.equal(createWorksheetPackageFromDraft({ ...draft, blocks: [{ blockId: 'c', kind: 'content', content: { text: '**plain**' } }] }).manifest.packageVersion, 2);
 });
 test('large unmatched punctuation has bounded processing cost', { timeout: 3000 }, () => {
   const text = '['.repeat(50000) + '* '.repeat(20000);

@@ -1,3 +1,4 @@
+import { completeDefaultReadingBlock } from './editor-test-helpers.mjs';
 import { openViewerAttemptMenu, confirmViewerSaveDetails } from './viewer-navigation-test-helpers.mjs';
 // Network-isolated acceptance of login preparation; no production resources.
 import assert from 'node:assert/strict';
@@ -39,6 +40,7 @@ try {
         });
         await page.goto(`${base}/server/viewer/?localAttemptId=mutation-qa`);
       }
+      if (area === 'editor') await completeDefaultReadingBlock(page);
       const label = key => page.evaluate(async key => (await import('/server/app/i18n/index.js')).t(key), key);
       const clickUpload = async () => {
         if (area === 'editor') {

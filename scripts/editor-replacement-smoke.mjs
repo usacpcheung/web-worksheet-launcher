@@ -29,7 +29,7 @@ try {
           await session.autosave();
           window.outgoingId = session.state.draft.localId;
           const { createWorksheetPackageFromDraft } = await import('/server/editor/worksheet-package.js');
-          const bytes = createWorksheetPackageFromDraft({ ...session.state.draft, title: 'Incoming worksheet' }).bytes;
+          const bytes = createWorksheetPackageFromDraft({ ...session.state.draft, title: 'Incoming worksheet', blocks: [{ blockId: 'incoming-content', kind: 'content', position: 0, content: { text: 'Incoming reading text.' } }] }).bytes;
           session.state.serverSession = { status: 'ready', user: { sub: 'fixture' } };
           session.ensureServerSessionReady = async () => ({ ok: true });
           session.apiClient.listPublishedPackages = async () => ({ ok: true, data: { items: [{ published_package_id: 'pkg1', title: 'Incoming worksheet' }] } });

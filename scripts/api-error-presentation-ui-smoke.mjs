@@ -1,3 +1,4 @@
+import { completeDefaultReadingBlock } from './editor-test-helpers.mjs';
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
@@ -24,6 +25,7 @@ try {
     });
     await page.goto(`${base}/server/viewer/?localAttemptId=error-fixture`);
    }
+   if (app === 'editor') await completeDefaultReadingBlock(page);
    if(app==='roleplayscene'){
     const save=page.locator('#server-save-btn');
     if(!await save.isVisible())await page.locator('#toolbar-more-btn').click();

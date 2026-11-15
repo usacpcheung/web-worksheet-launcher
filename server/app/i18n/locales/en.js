@@ -1,6 +1,12 @@
 import roleplayscene from './roleplayscene/en.js';
 
 export default {
+  worksheetValidation: {
+    fixBeforeContinuing: 'Fix these issues before exporting, uploading, or previewing. Your local draft can still be saved.\n{details}',
+    emptyReading: 'Reading block {number} is empty. Enter some text or delete this block.',
+    emptyPrompt: 'Block {number} has no question text. Enter a prompt or delete this block.',
+    block: 'Block {number}: {reason}',
+  },
   feedback: {
     title: 'Assessment & feedback',
     enable: 'Enable worksheet assessment and feedback',
