@@ -12,6 +12,12 @@ or Cmd+Shift+Up/Down (macOS) moves that block one position. These shortcuts do n
 apply in text fields or elsewhere in the editor. The menu shows the shortcuts,
 supports arrow/Home/End navigation, and Escape returns focus to its trigger.
 
+Typing, selection and autosave update existing sidebar rows in place. Only
+changed title previews and selection styles are written; opening feedback leaves
+all question rows neutral. Background saves keep an open reorder menu and its
+focused action intact. Add/remove, kind, order or worksheet changes rebuild the
+affected list with current position-dependent commands and focus restoration.
+
 Moves retain block identifiers, content and media references, use the existing
 autosave path, and preserve the selected inspector block. Focus follows the
 moved row; only the block list scrolls as needed to reveal it. The position

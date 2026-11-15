@@ -38,15 +38,14 @@ try {
       const order = () => page.evaluate(() => window.editorSession.state.draft.blocks.map(block => block.blockId));
       const open = async id => { await row(id).locator('.block-reorder-trigger').click(); await menu().waitFor(); };
       await open(0);
+      await menu().evaluate(el => { window.openReorderMenu = el; window.focusedReorderAction = document.activeElement; });
       await page.evaluate(() => window.editorSession.autosave());
-      await menu().waitFor({ state: 'detached' });
-      assert.equal(await row(0).locator('.block-reorder-trigger').evaluate(el => el === document.activeElement), true,
-        'autosave restores focus to the rebuilt menu trigger');
-      await page.keyboard.press('Enter');
-      await menu().waitFor();
+      assert.equal(await menu().evaluate(el => el === window.openReorderMenu && document.activeElement === window.focusedReorderAction), true,
+        'autosave keeps the menu and focused action mounted');
       await page.evaluate(() => window.editorSession.notifyStateChange());
-      assert.equal(await row(0).locator('.block-reorder-trigger').evaluate(el => el === document.activeElement), true,
-        'other background refreshes preserve the keyboard continuation point');
+      assert.equal(await menu().evaluate(el => el === window.openReorderMenu && document.activeElement === window.focusedReorderAction), true,
+        'background refreshes do not close the menu or move focus');
+      await page.keyboard.press('Escape');
       await open(0);
       assert.equal(await menu().getByRole('menuitem', { name: labels.beginning, exact: true }).isDisabled(), true);
       await menu().getByRole('menuitem', { name: labels.end, exact: true }).click();

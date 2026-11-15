@@ -99,9 +99,20 @@ try {
         false,
       );
       await page.locator('#editor-feedback-enabled').check();
+      await page.evaluate(() => {
+        const list = document.querySelector('.block-list');
+        window.feedbackSidebarRows = [...list.children];
+        window.feedbackSidebarMutations = [];
+        window.feedbackSidebarObserver = new MutationObserver(records => {
+          window.feedbackSidebarMutations.push(...records.map(record => record.type));
+        });
+        window.feedbackSidebarObserver.observe(list, {
+          childList: true, subtree: true, attributes: true, attributeFilter: ['class'],
+        });
+      });
       await page
         .locator('[data-feedback-target]')
-        .fill('I can explain my ideas.');
+        .pressSequentially('I can explain my ideas.', { delay: 5 });
       await page.locator('#editor-feedback-add-target').click();
       await page
         .locator('[data-feedback-target]')
@@ -115,6 +126,18 @@ try {
         await window.editorSession.saveNow();
         return window.editorSession.state.draft.localId;
       });
+      assert.deepEqual(await page.evaluate(() => {
+        window.feedbackSidebarObserver.disconnect();
+        const rows = [...document.querySelector('.block-list').children];
+        return {
+          stable: rows.length === window.feedbackSidebarRows.length && rows.every((row, i) => row === window.feedbackSidebarRows[i]),
+          mutations: window.feedbackSidebarMutations,
+          selected: document.querySelectorAll('.block-list .selected').length,
+        };
+      }), { stable: true, mutations: [], selected: 0 }, 'Feedback typing and saving must not rebuild or flash question rows');
+      await page.locator('.block-list .block-select').first().click();
+      assert.equal(await page.locator('.block-list .selected').count(), 1);
+      assert.equal(await page.locator('#editor-block-editor').isVisible(), true);
       await page.reload();
       await page.locator('#editor-feedback-nav').click();
       assert.equal(await page.locator('[data-feedback-target]').count(), 2);

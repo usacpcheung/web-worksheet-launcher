@@ -6807,13 +6807,35 @@ function renderEditorShell(session) {
     body.querySelector('button:not(:disabled)')?.focus({ preventScroll: true });
   };
 
+  let blockListStructureSignature = null;
+  const blockPreview = block => {
+    const source = worksheetTextToPlain(block.kind === 'question'
+      ? (isFillInBlanks(block.responseConfig) ? passageToPrompt(block) : block.prompt) : block.content);
+    return String(source || '').replace(/\s+/g, ' ').trim().slice(0, 60) || '—';
+  };
   const renderBlockList = () => {
     // Autosave/status updates must not remove the native drag source. A real
     // worksheet/order change cancels the gesture rather than applying a stale drop.
     if (blockDrag.active && blockDrag.current()) return;
     blockDrag.cancel();
+    const feedbackSelected = session.state.feedbackSettingsDraftId === session.state.draft?.localId;
+    const blocks = (session.state.draft?.blocks || []).slice().sort((a, b) => a.position - b.position);
+    // Typing, selection and autosave keep the same row controls mounted. Only
+    // structural changes need new rows and their position-dependent handlers.
+    const signature = JSON.stringify([session.state.draft?.localId, blocks.map(block => [block.blockId, block.kind])]);
+    if (signature === blockListStructureSignature) {
+      blocks.forEach((block, index) => {
+        const item = blockList.children[index];
+        const selected = !feedbackSelected && block.blockId === session.state.selectedBlockId;
+        if (item.classList.contains('selected') !== selected) item.classList.toggle('selected', selected);
+        const title = item.querySelector('.block-select__title');
+        const preview = blockPreview(block);
+        if (title.textContent !== preview) title.textContent = preview;
+      });
+      return;
+    }
     // The menu lives under document.body, not blockList. Capture its owning
-    // trigger before rebuilding rows so background saves cannot strand focus.
+    // trigger before structural changes so removing rows cannot strand focus.
     const focused = blockList.contains(document.activeElement) ? document.activeElement
       : activeBlockReorderAnchor && document.activeElement?.closest('.block-reorder-menu')
         ? activeBlockReorderAnchor : null;
@@ -6824,12 +6846,11 @@ function renderEditorShell(session) {
     const previousScrollTop = blockList.scrollTop;
     closeBlockReorderMenu();
     blockList.innerHTML = '';
-    const blocks = (session.state.draft?.blocks || []).slice().sort((a, b) => a.position - b.position);
     blocks.forEach((block, index) => {
       const isFirst = index === 0;
       const isLast = index === blocks.length - 1;
       const item = document.createElement('li');
-      item.className = `block-item ${block.blockId === session.state.selectedBlockId ? 'selected' : ''}`;
+      item.className = `block-item ${!feedbackSelected && block.blockId === session.state.selectedBlockId ? 'selected' : ''}`;
       item.dataset.blockId = block.blockId;
       item.dataset.blockIndex = String(index);
       const row = document.createElement('div');
@@ -6848,9 +6869,7 @@ function renderEditorShell(session) {
       button.type = 'button';
       button.className = 'block-select';
       const displayIndex = index + 1;
-      const previewSource = worksheetTextToPlain(block.kind === 'question'
-        ? (isFillInBlanks(block.responseConfig) ? passageToPrompt(block) : block.prompt) : block.content);
-      const preview = String(previewSource || '').replace(/\s+/g, ' ').trim().slice(0, 60) || '—';
+      const preview = blockPreview(block);
       const blockIndex = document.createElement('span');
       blockIndex.className = 'block-select__index';
       blockIndex.textContent = `${displayIndex}.`;
@@ -6919,6 +6938,7 @@ function renderEditorShell(session) {
     });
     blockList.scrollTop = previousScrollTop;
     if (focusedId) focusMovedBlock(focusedId, focusedClass, false);
+    blockListStructureSignature = signature;
   };
 
   const computeDetailSignature = (selectedBlock) => {
@@ -8670,9 +8690,6 @@ function renderEditorShell(session) {
     );
     if (feedbackSelected) {
       feedbackEditor.update(session.state.draft);
-      blockList
-        .querySelectorAll('.selected')
-        .forEach((el) => el.classList.remove('selected'));
     }
 
     if (!preserveDetailEditor) {
