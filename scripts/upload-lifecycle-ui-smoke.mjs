@@ -1,3 +1,4 @@
+import { completeDefaultReadingBlock } from './editor-test-helpers.mjs';
 import { openViewerAttemptMenu, clickViewerSave, confirmViewerSaveDetails } from './viewer-navigation-test-helpers.mjs';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
@@ -41,6 +42,7 @@ try {
         await page.goto(`${base}/server/viewer/?localAttemptId=cancel-ui`);
       }
       await page.waitForFunction(app => ['ready','logged_in'].includes(window[`${app}Session`]?.state.serverSession.status), app);
+      if (app === 'editor') await completeDefaultReadingBlock(page);
       if (app === 'editor') await page.locator('details').filter({ has: page.locator('[data-upload-cancel="editor"]') }).locator('summary').click();
       const labels = await page.evaluate(async app => {
         const { t } = await import('/server/app/i18n/index.js');

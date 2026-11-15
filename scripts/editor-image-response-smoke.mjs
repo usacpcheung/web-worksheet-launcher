@@ -24,6 +24,7 @@ try {
         s.state.draft.blocks = [];
         for (let i = 0; i < 3; i++) {
           s.createBlock('question');
+          s.updateBlockContent(s.state.selectedBlockId, 'Upload your drawing.');
           s.updateQuestionInputType(s.state.selectedBlockId, 'image_response');
         }
         s.notifyStateChange();
@@ -43,6 +44,7 @@ try {
       assert.deepEqual(result.counts, [3, 3, 2]);
       await page.evaluate(() => {
         editorSession.createBlock('question');
+        editorSession.updateBlockContent(editorSession.state.selectedBlockId, 'Explain your drawing.');
         editorSession.notifyStateChange();
       });
       assert(await page.locator('#editor-question-input-type option[value="image_response"]').isDisabled());

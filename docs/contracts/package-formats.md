@@ -6,9 +6,9 @@ Reviewed against main `7bb19de` on 2026-10-06. Code authorities: `server/editor/
 
 | Content | Manifest `format` | Current export version / schema | Accepted compatibility |
 | --- | --- | --- | --- |
-| Plain worksheet with audio tracks | `worksheet-package` | 2 / 2 | Worksheet versions 1–8 are read; legacy JSON remains a separate import adapter. |
+| Plain worksheet with audio tracks | `worksheet-package` | 2 / 2 | Worksheet versions 1–9 are read; legacy JSON remains a separate import adapter. |
 | Worksheet containing limited Markdown | `worksheet-package` | 3 / 3 | Markdown in version 1/2 envelopes is rejected. |
-| Plain worksheet attempt | `worksheet-attempt-package` | 1 / 1 | Attempt versions 1–7 are read. |
+| Plain worksheet attempt | `worksheet-attempt-package` | 1 / 1 | Attempt versions 1–8 are read. |
 | Attempt containing limited Markdown | `worksheet-attempt-package` | 2 / 1 | Markdown in version 1 attempt envelopes is rejected. |
 | Worksheet containing option images | `worksheet-package` | 4 / 4 | Also supports limited Markdown; older readers reject this envelope. |
 | Attempt containing option images | `worksheet-attempt-package` | 3 / 1 | Also supports limited Markdown; older readers reject this envelope. |
@@ -20,11 +20,21 @@ Reviewed against main `7bb19de` on 2026-10-06. Code authorities: `server/editor/
 | Attempt containing rich text | `worksheet-attempt-package` | 6 / 1 | Includes earlier features and full rich documents. |
 | Worksheet containing fill-in-the-blanks | `worksheet-package` | 8 / 8 | Includes earlier features; blank passages require this envelope. |
 | Attempt containing fill-in-the-blanks | `worksheet-attempt-package` | 7 / 1 | Includes per-blank answer maps and earlier features. |
+| Worksheet containing feedback configuration | `worksheet-package` | 9 / 9 | Includes earlier features; disabled saved configuration also requires this version. |
+| Attempt containing feedback configuration/responses | `worksheet-attempt-package` | 8 / 1 | Includes the worksheet-owned settings and separate feedback responses. |
 | RolePlayScene | `roleplayscene-package` | 1 | Browser imports also accept plain project JSON and legacy root `project.json` ZIPs; server draft upload requires the current package envelope. |
 
 Worksheet/attempt ZIP helpers support stored (uncompressed) entries and validate entry sizes, CRCs and duplicate names. RolePlayScene uses bundled `fflate` archive reading and has separate API decompression resource limits; do not generalize its compression support to worksheet ZIP import.
 
 ## Worksheet ZIP
+
+Optional `worksheet.feedback` is a single configuration with `enabled`,
+`assessment`, `targets` (stable `id`, plain `text`), shared `categories`
+(`student`, `teacher`, `peer`) and `text.student`/`text.teacher`
+(`enabled`, `prompt`, `limit`). Attempt `feedback` contains separate `ratings`
+and `text` maps. Missing configuration means disabled; legacy packages are not
+retrofitted. Responses are optional and require submission when populated.
+See [feedback limits, rendering and persistence](../worksheet/worksheet-feedback.md).
 
 ```text
 manifest.json
@@ -224,3 +234,28 @@ map when opening a checked attempt; it does not need the original live worksheet
 Free responses are excluded from the automatic total. Checking totals therefore
 count graded blanks alongside other graded questions. All answer values are
 escaped as plain text in print; answer keys and recovery text are not printed.
+
+### Worksheet readiness before distribution
+
+The editor top-bar checks, Preview, ZIP export and Save to server share
+`server/app/contracts/worksheet-readiness.js`, built on the reader's block and
+response contract. Unfinished local drafts can still be saved and reopened.
+Blocking issues include empty reading blocks or ordinary question prompts,
+missing/unsupported question settings, invalid text/image/blank/feedback limits,
+empty or duplicate choice values, invalid answer keys, contradictory number
+ranges and duplicate block IDs. Fill-in-the-blanks instructions and optional
+answer keys may remain empty. Image-only choices remain supported.
+
+Failed actions identify the first affected block and explain that it must be
+corrected; empty reading blocks can be filled or removed. No download or server
+upload starts. The status count reflects current edits, without waiting for
+an autosave. The ZIP producer also checks its result with the package reader,
+so missing audio files cannot yield a ZIP rejected by that reader.
+
+The API repeats readiness checks on upload and on the stored artifact before
+publication, including artifacts uploaded before this fix. Invalid content
+returns `INVALID_WORKSHEET_PACKAGE` without storing a new artifact. Importing
+an older incomplete package into the editor remains available for repair;
+legacy viewer text-limit compatibility is preserved. Prompts over 500 spoken
+characters remain saveable/exportable, but publishing still returns
+`PROMPT_TOO_LONG`. No package version change is required.

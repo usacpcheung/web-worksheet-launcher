@@ -49,6 +49,7 @@ export function createWorksheetNavigation({ t, actions, navigate, operationPanel
   const primary = make('div', 'viewer-primary-actions');
   primary.append(actions.save, actions.submit, actions.check);
   if (compactPrint) primary.append(compactPrint);
+  if (actions.feedback) primary.append(actions.feedback);
   panel.append(ring, progress, browse, context, nav, primary);
   const launcher = button('viewer-actions-launcher');
   launcher.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>';

@@ -28,7 +28,7 @@ export function createVoiceStatus({ session, t, view }) {
     const questions = session.state.viewerPayload.blocks.filter(block => block.kind === 'question');
     const number = questions.findIndex(block => block.blockId === (session.voiceParentId?.(op.blockId) || op.blockId)) + 1;
     const stage = t(`viewer.voice.stages.${op.state}`);
-    const text = own ? stage : t('viewer.voice.otherQuestion', { stage, number });
+    const text = session.voiceBlock?.(op.blockId)?.responseConfig?.feedbackTarget ? t('feedback.voiceStatus',{stage}) : own ? stage : t('viewer.voice.otherQuestion', { stage, number });
     if (label.textContent !== text) label.textContent = text;
     root.classList.toggle('is-recording', op.state === 'recording');
     timer.hidden = op.state !== 'recording';
@@ -38,7 +38,7 @@ export function createVoiceStatus({ session, t, view }) {
   } };
 }
 
-export function createVoiceControls({ session, block, control, t, view, applied, signal, sharedStatusId, canRestoreFocus, requestSignIn, keepCaretOnBlur, navigationBlockId }) {
+export function createVoiceControls({ session, block, control, t, view, applied, signal, sharedStatusId, canRestoreFocus, requestSignIn, keepCaretOnBlur, navigationBlockId, allowCompleted = false, isActive }) {
   let intent = null;
   let authNotice = null;
   let placedSelection = null;
@@ -129,7 +129,7 @@ export function createVoiceControls({ session, block, control, t, view, applied,
   root.append(hint, recovery);
   let lastApplied = null;
   function update() {
-    const completed = session.state.status === 'completed';
+    const completed = session.state.status === 'completed' && !allowCompleted;
     const op = session.voice.active;
     const own = op?.blockId === block.blockId;
     root.hidden = completed;
@@ -180,7 +180,7 @@ export function createVoiceControls({ session, block, control, t, view, applied,
     if (value?.blockId === block.blockId && value.id !== lastApplied && !op
       && (session.answerForVoice ? session.answerForVoice(block.blockId) : String(session.state.answers?.[block.blockId]?.value ?? '')) === value.text) {
       lastApplied = value.id; intent = null;
-      const visible = (session.state.lastActiveBlockId === (navigationBlockId || block.blockId)) && !document.hidden && control.isConnected
+      const visible = (isActive ? isActive() : session.state.lastActiveBlockId === (navigationBlockId || block.blockId)) && !document.hidden && control.isConnected
         && (!canRestoreFocus || canRestoreFocus());
       applied(value, visible);
       if (visible) {

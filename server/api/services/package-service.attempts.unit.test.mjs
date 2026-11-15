@@ -5,6 +5,39 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PackageService } from './package-service.js';
 import { createStoredZip } from '../../editor/zip-utils.js';
+import { createFeedbackConfig } from '../../app/worksheet-feedback.js';
+
+test('feedback attempts persist intact and reject invalid responses before consuming a slot', async () => {
+  const config = createFeedbackConfig('goal');
+  config.enabled = true;
+  config.targets[0].text = 'Explain a choice';
+  const makeZip = (status, rating) => createStoredZip([
+    { path: 'manifest.json', data: JSON.stringify({ format: 'worksheet-attempt-package', packageVersion: 8, schemaVersion: 1, assets: [] }) },
+    { path: 'content/worksheet.json', data: JSON.stringify({ title: 'Feedback', blocks: [{ blockId: 'q', kind: 'question', responseConfig: { inputType: 'text', maxLength: 200 } }], feedback: config }) },
+    { path: 'content/attempt.json', data: JSON.stringify({ schemaVersion: 1, kind: 'worksheet-attempt', status, answers: { q: { value: 'Locked answer' } }, submittedAt: '2026-11-15T00:00:00Z', feedback: { ratings: { goal: { student: rating } }, text: { teacher: 'Keep explaining your choices.' } } }) },
+  ]);
+  let stored;
+  const db = createAttemptDb();
+  const service = createService({ db, artifactStore: {
+    async storeArtifact({ bytes }) {
+      stored = bytes;
+      return { artifactPath: 'attempts/fixture.zip', absolutePath: '/tmp/feedback-fixture.zip', artifactSha256: 'fixture', artifactSizeBytes: bytes.length };
+    },
+  } });
+  const bytes = makeZip('submitted', 4);
+  const uploaded = await service.uploadAttempt({ identity: { sub: 'fixture' }, title: 'Feedback', zipBytes: bytes });
+  assert.equal(uploaded.ok, true, JSON.stringify(uploaded));
+  assert.deepEqual(stored, bytes);
+  assert.equal(db.state.commits, 1);
+  for (const [status, rating] of [['in_progress', 4], ['submitted', 6]]) {
+    const queryCount = db.state.queries.length;
+    stored = null;
+    const result = await service.uploadAttempt({ identity: { sub: 'fixture' }, title: 'Invalid', zipBytes: makeZip(status, rating) });
+    assert.equal(result.error.code, 'INVALID_ATTEMPT_PACKAGE');
+    assert.equal(db.state.queries.length, queryCount);
+    assert.equal(stored, null);
+  }
+});
 
 function createValidAttemptZip() {
   return createStoredZip([

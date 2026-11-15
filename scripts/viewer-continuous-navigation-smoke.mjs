@@ -59,7 +59,9 @@ try {
   await page.evaluate(() => document.fonts.ready);
   await page.waitForFunction(() => document.querySelector('[data-block-id="q1"]').getBoundingClientRect().top >= 0
    && document.querySelector('[data-block-id="q1"]').getBoundingClientRect().top < innerHeight / 2);
-  assert.equal(await page.locator('.viewer-block-section').count(), 5);
+  // Feedback shares section styling but is not a navigable worksheet block.
+  assert.equal(await page.locator('.viewer-block-section[data-block-id]').count(), 5);
+  assert.equal(await page.locator('#viewer-feedback-section').isVisible(), false);
   await page.evaluate(() => {
    window.scrollCalls = []; const originalScroll = window.scrollTo.bind(window); window.scrollTo = (...args) => { window.scrollCalls.push(args); return originalScroll(...args); };
    window.transitions = [];

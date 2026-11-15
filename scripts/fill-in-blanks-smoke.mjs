@@ -183,6 +183,12 @@ try {
       const payload = await page.evaluate(async (id) => {
         const { createWorksheetPackageFromDraft, parseWorksheetPackage } =
           await import('/server/editor/worksheet-package.js');
+        // Complete the default reading block before testing a distributable ZIP.
+        for (const block of window.editorSession.state.draft.blocks) {
+          if (block.kind === 'content' && !block.content.text.trim()) {
+            window.editorSession.updateBlockContent(block.blockId, 'Fill in the blanks below.');
+          }
+        }
         const draft = await window.editorSession.saveNow();
         const pkg = createWorksheetPackageFromDraft(draft);
         if (pkg.manifest.packageVersion !== 8)

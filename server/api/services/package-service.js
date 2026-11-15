@@ -1,3 +1,4 @@
+import { assertWorksheetReady } from '../../app/contracts/worksheet-readiness.js';
 import { createUploadOperation, replayUploadOperation, recordUploadOperation, getUploadOperation } from './upload-operation.js';
 import { assertAttemptPackage } from '../../app/contracts/attempt-package-validator.js';
 import crypto from 'node:crypto';
@@ -23,8 +24,9 @@ function normalizeUploadConflictAction(value) {
 
 function validateUploadedWorksheetPackage(zipBytes) {
   try {
-    parseWorksheetPackage(zipBytes);
-    return { ok: true };
+    const worksheet = parseWorksheetPackage(zipBytes).worksheet;
+    assertWorksheetReady(worksheet);
+    return { ok: true, worksheet };
   } catch (error) {
     return {
       ok: false,
@@ -823,7 +825,12 @@ export class PackageService {
       }
 
       const bytes = await this.artifactStore.readArtifact(draft.artifact_path);
-      const worksheet = parseWorksheetPackage(bytes).worksheet;
+      const validation = validateUploadedWorksheetPackage(bytes);
+      if (!validation.ok) {
+        await client.query('ROLLBACK');
+        return { ...validation, statusCode: 400 };
+      }
+      const worksheet = validation.worksheet;
       if (worksheet.blocks.some(block => block.kind === 'question' && promptTextState(block.prompt).exceedsLimit)) {
         await client.query('ROLLBACK');
         return { ok: false, statusCode: 400, error: { code: 'PROMPT_TOO_LONG', message: `Question prompts must be within ${PROMPT_TEXT_LIMIT} spoken-text characters to publish.`, details: { max: PROMPT_TEXT_LIMIT } } };

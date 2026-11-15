@@ -191,7 +191,7 @@ function createValidWorksheetZip({ title = 'T' } = {}) {
         worksheet: { title },
       }),
     },
-    { path: 'content/worksheet.json', data: JSON.stringify({ title, blocks: [] }) },
+    { path: 'content/worksheet.json', data: JSON.stringify({ title, blocks: [{ blockId: 'reading', kind: 'content', position: 0, content: { text: 'Read this.' } }] }) },
   ]);
 }
 
@@ -377,7 +377,7 @@ test('uploadDraft save-as-copy stores artifact with server-selected copy title i
         worksheet: { title: 'T' },
       }),
     },
-    { path: 'content/worksheet.json', data: JSON.stringify({ title: 'T', blocks: [] }) },
+    { path: 'content/worksheet.json', data: JSON.stringify({ title: 'T', blocks: [{ blockId: 'reading', kind: 'content', position: 0, content: { text: 'Read this.' } }] }) },
   ]);
 
   const result = await service.uploadDraft({
@@ -417,7 +417,7 @@ test('uploadDraft save-as-copy advances generated suffix instead of nesting suff
         worksheet: { title: 'T (2)' },
       }),
     },
-    { path: 'content/worksheet.json', data: JSON.stringify({ title: 'T (2)', blocks: [] }) },
+    { path: 'content/worksheet.json', data: JSON.stringify({ title: 'T (2)', blocks: [{ blockId: 'reading', kind: 'content', position: 0, content: { text: 'Read this.' } }] }) },
   ]);
 
   const result = await service.uploadDraft({
@@ -1203,4 +1203,33 @@ test('rich-text worksheet v7 passes upload and publication with its document int
   assert.equal((await service.publishFromDraft({ identity: { sub: 'oidc-sub' }, uploadedDraftId: 'u' })).ok, true);
   assert.equal(writes, 2);
   assert.deepEqual(parseWorksheetPackage(bytes).worksheet.blocks[0].prompt.document, field.document);
+});
+
+test('upload and publish reject unreadable content even inside a well-formed legacy ZIP', async () => {
+  for (const blocks of [
+    [],
+    [{ blockId: 'c', kind: 'content', position: 0, content: { text: '' } }],
+    [{ blockId: 'q', kind: 'question', position: 0, prompt: { text: '' }, responseConfig: { inputType: 'text' } }],
+    [{ blockId: 'q', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: { inputType: 'number', min: 10, max: 1 } }],
+  ]) {
+    const bytes = createStoredZip([
+      { path: 'manifest.json', data: JSON.stringify({ format: 'worksheet-package', packageVersion: 1, assets: [] }) },
+      { path: 'content/worksheet.json', data: JSON.stringify({ title: 'Invalid content', blocks }) },
+    ]);
+    // Import remains available to repair older packages in the editor.
+    assert.doesNotThrow(() => parseWorksheetPackage(bytes));
+    const db = createFakeDb();
+    const service = createService({ db, artifactStore: {
+      readArtifact: async () => bytes,
+      storeArtifact: () => assert.fail('Invalid content must not create an artifact'),
+    } });
+    const upload = await service.uploadDraft({ identity: { sub: 'oidc-sub' }, title: 'Invalid', zipBytes: bytes });
+    assert.equal(upload.error.code, 'INVALID_WORKSHEET_PACKAGE');
+    assert.equal(db.state.queries.length, 0);
+    const publish = await service.publishFromDraft({ identity: { sub: 'oidc-sub' }, uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000' });
+    assert.equal(publish.error.code, 'INVALID_WORKSHEET_PACKAGE');
+    assert.equal(publish.statusCode, 400);
+    assert.ok(db.state.queries.includes('ROLLBACK'));
+    assert.ok(!db.state.queries.some(sql => sql.includes('INSERT INTO published_packages')));
+  }
 });

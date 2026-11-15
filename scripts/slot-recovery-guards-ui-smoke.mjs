@@ -1,3 +1,4 @@
+import { completeDefaultReadingBlock } from './editor-test-helpers.mjs';
 import { clickViewerSave, continueViewerSaveAfterDeletion } from './viewer-navigation-test-helpers.mjs';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
@@ -76,6 +77,7 @@ try {
      assert.equal(warning.saved,warning.expected);
      assert.equal(warning.reopened,warning.expected);
    }
+   if (app === 'editor') await completeDefaultReadingBlock(page);
    await (app === 'viewer' ? clickViewerSave(page) : button.click()); await confirmDelete(); await waitUntil(()=>deletions===1);
    const deleteButton=page.getByRole('dialog').getByRole('button',{name:labels.delete,exact:true});
    assert.equal(await deleteButton.isDisabled(),true);

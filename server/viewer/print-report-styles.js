@@ -344,4 +344,6 @@ export const PRINT_REPORT_CSS = `
 .print-blank { border-bottom: 1px solid #9aacc1; padding: 0 3px; overflow-wrap: anywhere; }
 .print-blank sup { font-size: .7em; color: #61738b; }
 .print-blank small { font-size: .75em; color: #61738b; }
+
+.print-feedback{margin-top:8mm}.print-feedback table{border-collapse:collapse;width:100%;table-layout:fixed;font-size:10pt}.print-feedback th,.print-feedback td{border:1px solid #aebbd0;padding:3mm;overflow-wrap:anywhere;vertical-align:top}.print-feedback th:first-child{width:38%}.print-feedback td:not(:first-child){text-align:center}.print-feedback tr{break-inside:avoid}.print-feedback thead{display:table-header-group}.print-feedback-stars{white-space:nowrap;font-size:12pt}.print-feedback-text{margin-top:6mm}.print-feedback-answer{white-space:pre-wrap;overflow-wrap:anywhere;min-height:20mm;border-bottom:1px solid #b3c0d1}.print-feedback-blank{height:22mm;border-bottom:1px solid #b3c0d1}.print-feedback h2,.print-feedback h3{break-after:avoid}
 `;

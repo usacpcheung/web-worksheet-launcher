@@ -1,3 +1,4 @@
+import { assertFeedbackResponses } from '../worksheet-feedback.js';
 import { hasFillInBlanks, assertBlankQuestions, assertBlankAnswers } from '../fill-in-blanks.js';
 import { hasLongText, assertTextQuestions } from '../text-answer.js';
 import { hasImageResponses, assertImageQuestions, assertImageAnswers, ATTEMPT_BYTES } from '../image-response.js';
@@ -8,12 +9,14 @@ import { assertWorksheetTextFormats, hasMarkdown, hasRichText } from '../workshe
 // Share the package/worksheet boundary. Local readers retain their historical
 // envelope defaults and answer coercion; uploads keep the existing strict envelope.
 export function assertAttemptPackage(manifest, worksheet, attempt, { allowLegacyEnvelope = false, files } = {}) {
-  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3, 4, 5, 6, 7].includes(manifest.packageVersion)) {
+  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3, 4, 5, 6, 7, 8].includes(manifest.packageVersion)) {
     throw new Error('Unsupported attempt package format/version.');
   }
   if (!Array.isArray(worksheet?.blocks) || worksheet.blocks.length === 0) {
     throw new Error('Attempt worksheet must contain at least one block.');
   }
+  assertFeedbackResponses(worksheet.feedback, attempt?.feedback, attempt?.status);
+  if ((worksheet.feedback !== undefined || attempt?.feedback !== undefined) && manifest.packageVersion < 8) throw new Error('Feedback requires attempt package version 8.');
   assertWorksheetTextFormats(worksheet.blocks);
   assertTextQuestions(worksheet.blocks);
   assertBlankQuestions(worksheet.blocks);

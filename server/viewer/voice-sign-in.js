@@ -14,7 +14,7 @@ export function requestVoiceSignIn(session, { blockId, signal, isCurrent = () =>
   const record = getVoiceRecovery(session.state.voiceRecovery, blockId);
   const current = () => record?.code === 'AUTH_REQUIRED' && !signal?.aborted && isCurrent()
     && session.state.localAttemptId === attemptId && session.state.viewerPayload === payload
-    && session.state.status !== 'completed' && !session.state.isFinalizing
+    && (session.canEditVoiceTarget ? session.canEditVoiceTarget(blockId) : session.state.status !== 'completed' && !session.state.isFinalizing)
     && getVoiceRecovery(session.state.voiceRecovery, blockId) === record;
   const rewriting = record?.mode === 'rewrite';
   const descriptionKey = !isInitialAuthRecovery(record) && (hasRecoveryText(record) || record?.phase === 'capture')

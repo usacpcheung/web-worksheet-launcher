@@ -70,6 +70,7 @@ function mapDraftToSnapshot(draft, publishMetadata) {
     publishedByUserId: publishMetadata.publishedByUserId,
     sourceDraftRevision: publishMetadata.sourceDraftRevision,
     title: draft.title,
+    ...(draft.feedback !== undefined ? { feedback: cloneValue(draft.feedback) } : {}),
     description: draft.description || '',
     blocks: sortBlocksByPosition(draft.blocks).map(sanitizeDraftBlockForSnapshot),
     integrity: cloneValue(publishMetadata.integrity) || null,
@@ -107,6 +108,7 @@ function mapSnapshotToViewerPayload(snapshot) {
     snapshotId: snapshot.snapshotId,
     snapshotVersion: snapshot.snapshotVersion,
     title: snapshot.title,
+    ...(snapshot.feedback !== undefined ? { feedback: cloneValue(snapshot.feedback) } : {}),
     blocks: sortBlocksByPosition(snapshot.blocks).map(sanitizeSnapshotBlockForViewer),
   };
 }

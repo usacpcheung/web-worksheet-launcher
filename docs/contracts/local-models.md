@@ -16,6 +16,16 @@ When reopening an editor draft, its displayed last-save time comes from the pers
 
 ## Compatibility modules
 
+Optional worksheet `feedback` configuration is preserved across draft, snapshot,
+viewer payload and attempt storage. Feedback-enabled (or explicitly disabled)
+attempts own a deep-copied worksheet snapshot and resume from it rather than
+reading a later source draft. Local attempt `feedback` holds separate rating and
+written-response maps. These remain editable after submission while `answers`
+stay locked. The ordinary autosave and recovery journal cover both. Completed
+attempts retain pending feedback voice recovery locally but do not export it.
+Legacy records without configuration continue with feedback disabled. See the
+[feedback contract](../worksheet/worksheet-feedback.md).
+
 The validators/mappers in `server/app/contracts/` retain these model boundaries:
 
 - editable draft with `draftWorksheetId`, blocks and transient authoring fields;

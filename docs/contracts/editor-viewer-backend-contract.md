@@ -20,6 +20,13 @@ Primary shared API client and editor call paths:
 
 ## Backend endpoints currently used by editor
 
+Worksheet feedback adds no endpoint or identity/permission model. Existing
+worksheet upload/publish accepts worksheet v9, and attempt upload accepts v8,
+using shared feedback configuration/response validation. Server saves remain
+explicit and keep current slot/conflict behavior. See
+[package formats](package-formats.md) and
+[feedback](../worksheet/worksheet-feedback.md).
+
 Base path is fixed to the same-origin `'/api/worksheet-launcher/v1'`:
 
 1. **Session readiness preflight**
