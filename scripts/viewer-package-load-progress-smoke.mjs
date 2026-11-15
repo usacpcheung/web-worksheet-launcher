@@ -15,7 +15,8 @@ const zip = Buffer.from(createStoredZip([
   { path: 'content/worksheet.json', data: JSON.stringify({ title: 'Progress fixture', blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Fixture question' }, responseConfig: { inputType: 'text', maxLength: 200 } }] }) },
   { path: 'padding.bin', data: new Uint8Array(65536) },
 ]));
-let pending;
+let pending, notifyPending;
+const awaitPending = () => pending ? Promise.resolve() : new Promise(resolve => { notifyPending = resolve; });
 let mode = 'known';
 let requests = 0;
 const server = createServer(async (req, res) => {
@@ -39,6 +40,7 @@ const server = createServer(async (req, res) => {
       },
       finish() { res.end(mode === 'invalid' ? undefined : zip.subarray(Math.ceil(zip.length / 2))); },
     };
+    notifyPending?.(); notifyPending = null;
     return;
   }
   if (path.startsWith('/api/')) return json({ items: [] });
@@ -70,6 +72,7 @@ try {
     }
     const label = entry === 'browse' ? page.locator('.viewer-package-load-button').first() : page.locator('.viewer-package-load-status');
     await page.waitForFunction(() => document.body.innerText.includes('Downloading') || document.body.innerText.includes('下載中'));
+    await awaitPending();
     assert.ok(pending);
     const before = requests;
     if (entry === 'browse') {
@@ -77,7 +80,7 @@ try {
       assert.equal(await page.locator('.viewer-package-load-button').first().isDisabled(), true);
     }
     const rect = await label.boundingBox();
-    pending.first();
+    await awaitPending(); pending.first();
     await page.waitForFunction(() => document.body.innerText.includes('50%'));
     assert.match(await label.innerText(), /50%/);
     assert.equal((await label.boundingBox()).width, rect.width);
@@ -122,7 +125,7 @@ try {
       await open.click();
       await page.waitForFunction(() => document.body.innerText.includes('Downloading') || document.body.innerText.includes('下載中'));
       assert.equal(await error.isHidden(), true);
-      pending.first(); pending.finish();
+      await awaitPending(); pending.first(); pending.finish();
       await page.locator('.question-card').waitFor();
       console.log(`PASS classified publication-row errors and successful retry ${locale}/${width}`);
     } finally { await context.close(); }
@@ -135,7 +138,7 @@ try {
     mode = currentMode; pending = null;
     await page.locator('.viewer-package-load-button').first().click();
     await page.waitForFunction(() => document.body.innerText.includes('Downloading'));
-    pending.first();
+    await awaitPending(); pending.first();
     assert.equal(await page.locator('.viewer-package-load-button').first().innerText(), 'Downloading…');
     pending.finish();
     if (mode === 'invalid') {
@@ -151,7 +154,7 @@ try {
   await page.waitForFunction(() => document.body.innerText.includes('Downloading'));
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   assert.equal(await browse.evaluate(e => e === document.activeElement), true);
-  pending.first();
+  await awaitPending(); pending.first();
   pending.finish();
   await page.waitForTimeout(150);
   assert.equal(await page.locator('.question-card').count(), 0, 'closed browser must not apply a late package');
@@ -160,7 +163,8 @@ try {
   pending = null;
   await page.locator('.viewer-package-load-button').first().click();
   await page.waitForFunction(() => document.body.innerText.includes('Downloading'));
-  pending.first(); pending.finish();
+  await awaitPending(); pending.first(); pending.finish();
+  await page.locator('.viewer-attempt-dialog button[type=submit]').click();
   await page.locator('.question-card').waitFor();
   console.log('PASS: streamed progress, both entries/locales/widths, loading surfaces fit viewport, no unexpected console errors, concurrent load prevention, unknown size, invalid ZIP retry and close/focus behavior');
 } finally {

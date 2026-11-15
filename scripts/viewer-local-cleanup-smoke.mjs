@@ -12,12 +12,16 @@ try {
     const { viewerStorage: s } = await import('/server/viewer/storage/index.js');
     const now = new Date().toISOString();
     const payload = { worksheetId:'a',snapshotId:'s',snapshotVersion:1,title:'A',blocks:[{blockId:'q',kind:'question',position:0,prompt:{text:'A'},responseConfig:{inputType:'text'}}]};
-    await s.attempts.put({localId:'a',localAttemptId:'a',runtimeMode:'normal',status:'in_progress',viewerPayload:payload,answers:{q:{value:'Keep A'}},metadata:{localId:'a',origin:'local_source',updatedAt:now}});
+    await s.attempts.put({localId:'a',localAttemptId:'a',sourceType:'local_draft_preview',status:'in_progress',viewerPayload:payload,answers:{q:{value:'Keep A'}},metadata:{localId:'a',origin:'local_source',updatedAt:now}});
     s.resumeFlags.set('viewer:lastSession',{localId:'a',store:'localAttempts'});
     await s.drafts.put({localId:'b',title:'B',blocks:payload.blocks,metadata:{localId:'b',origin:'editor',updatedAt:now}});
   });
+  // Pre-upgrade previews were normal attempts: do not hide the user's existing Resume.
+  await a.goto(`${base}/server/viewer/`);
+  await a.locator('.viewer-resume-card').waitFor();
   await a.goto(`${base}/server/viewer/?localAttemptId=a`);
   await a.waitForFunction(()=>window.viewerSession?.state.localAttemptId==='a');
+  assert.equal(await a.evaluate(() => viewerSession.state.runtimeMode), 'normal');
   const b = await context.newPage(); b.setDefaultTimeout(10000);
   await b.goto(`${base}/server/viewer/?localDraftId=b`);
   await b.locator('.viewer-attempt-dialog button[type=submit]').click();
@@ -47,7 +51,29 @@ try {
   await c.locator('.viewer-fatal-panel').waitFor();
   assert.equal(await b.evaluate(()=>JSON.parse(localStorage.getItem('worksheetLauncher:resumeFlags'))['viewer:lastSession'].localId),bId);
   assert.equal(await b.evaluate(async id=>!!await viewerSession.storage.attempts.get(id),bId),true);
-  console.log('PASS active-tab protection, background autosave ownership, expired navigation hold, recovery tombstone, failed incoming save');
+  // A concurrent edit after B's replacement has been staged requires fresh consent.
+  await c.goto(`${base}/server/viewer/?localDraftId=b`);
+  await c.locator('.viewer-attempt-dialog').waitFor();
+  await c.evaluate(async currentId => {
+    const { viewerStorage: s } = await import('/server/viewer/storage/index.js');
+    const put = s.attempts.put; let first = true;
+    s.attempts.put = async record => {
+      const result = await put(record);
+      if (first && record.localId !== currentId) {
+        first = false; window.stagedReplacement = record.localId;
+        const current = await s.attempts.get(currentId);
+        current.answers.q = { value: 'Changed during replacement persistence' }; await put(current);
+      }
+      return result;
+    };
+  }, bId);
+  await c.locator('.viewer-attempt-dialog button[type=submit]').click();
+  await c.waitForFunction(() => window.stagedReplacement);
+  await c.locator('.viewer-attempt-dialog button[type=button]').click();
+  await c.locator('.viewer-resume-card').waitFor();
+  assert.equal(await c.evaluate(async () => !!await (await import('/server/viewer/storage/index.js')).viewerStorage.attempts.get(window.stagedReplacement)), false);
+  assert.equal(await b.evaluate(() => JSON.parse(localStorage.getItem('worksheetLauncher:resumeFlags'))['viewer:lastSession'].localId), bId);
+  console.log('PASS active-tab protection, background autosave ownership, recovery tombstone, failed save and cancelled staged replacement');
   await b.evaluate(async () => {
     const s = viewerSession.storage, original = await s.attempts.get(viewerSession.state.localAttemptId);
     for (const id of ['legacy-one', 'legacy-two']) await s.attempts.put({ ...original, localId: id, localAttemptId: id,

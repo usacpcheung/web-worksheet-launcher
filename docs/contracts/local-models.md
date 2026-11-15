@@ -62,6 +62,10 @@ previous record, including edits made while login/download was pending, is
 compared again before commit; changed work requires a new confirmation. Cancel or
 failed loading/saving leaves the previous normal attempt recoverable.
 
+Pre-upgrade attempts without `runtimeMode` retain their normal Resume behavior,
+including records created by the old editor-preview flow. They are not silently
+reclassified or hidden during upgrade.
+
 Editor Preview starts a fresh `preview_…` session with `runtimeMode: "preview"`.
 Its snapshot and test answers are isolated from the normal Resume selection.
 History state restores the same session on refresh/back-forward; an explicit

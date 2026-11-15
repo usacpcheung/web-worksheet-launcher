@@ -6,7 +6,9 @@ import { t } from '../app/i18n/index.js';
 import { attemptDialog } from './attempt-menu.js';
 
 export const NORMAL_RESUME_KEY = 'viewer:lastSession';
-export const isPreviewAttempt = record => record?.runtimeMode === 'preview' || record?.sourceType === 'local_draft_preview';
+// Older previews were ordinary resumable attempts. Preserve that work on upgrade;
+// only explicitly tagged new sessions use the disposable preview policy.
+export const isPreviewAttempt = record => record?.runtimeMode === 'preview';
 export const openingCancelled = () => Object.assign(new Error(t('attemptLifecycle.cancelled')), { code: 'ATTEMPT_OPEN_CANCELLED', cancelled: true });
 const changed = () => Object.assign(new Error('The local attempt changed.'), { code: 'ATTEMPT_REPLACEMENT_CHANGED' });
 const confirm = description => attemptDialog({ title: t('attemptLifecycle.replaceTitle'), description,
@@ -67,9 +69,16 @@ export class AttemptLifecycle {
     assertFeedbackResponses(record.viewerPayload?.feedback, record.feedback, record.status);
     record.runtimeMode = preview ? 'preview' : 'normal';
     const previousPreview = this.mode === 'preview' ? this.activeId : null;
-    let release;
+    let release, staged = false;
     for (;;) {
-      const expected = preview ? null : await this.permission(isCurrent, replacementKey);
+      let expected;
+      try { expected = preview ? null : await this.permission(isCurrent, replacementKey); }
+      catch (error) {
+        // A previous save may have lost the consent recheck. If the user now
+        // cancels, retire that staging record instead of leaving an orphan.
+        if (staged) await this.storage.attempts.remove(record.localId).catch(() => {});
+        throw error;
+      }
       try {
         await withAttemptLock(async () => {
           if (!isCurrent()) throw openingCancelled();
@@ -78,6 +87,7 @@ export class AttemptLifecycle {
           release = await holdAttempt(record.localId);
           try {
             await this.storage.attempts.put(record);
+            staged = true;
             if (!isCurrent()) throw openingCancelled();
             // Recheck after persistence: another tab may have autosaved A.
             if (!preview && recordStamp(await this.snapshot()) !== recordStamp(expected)) throw changed();
