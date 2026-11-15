@@ -6,9 +6,9 @@ Reviewed against main `7bb19de` on 2026-10-06. Code authorities: `server/editor/
 
 | Content | Manifest `format` | Current export version / schema | Accepted compatibility |
 | --- | --- | --- | --- |
-| Plain worksheet with audio tracks | `worksheet-package` | 2 / 2 | Worksheet versions 1–8 are read; legacy JSON remains a separate import adapter. |
+| Plain worksheet with audio tracks | `worksheet-package` | 2 / 2 | Worksheet versions 1–9 are read; legacy JSON remains a separate import adapter. |
 | Worksheet containing limited Markdown | `worksheet-package` | 3 / 3 | Markdown in version 1/2 envelopes is rejected. |
-| Plain worksheet attempt | `worksheet-attempt-package` | 1 / 1 | Attempt versions 1–7 are read. |
+| Plain worksheet attempt | `worksheet-attempt-package` | 1 / 1 | Attempt versions 1–8 are read. |
 | Attempt containing limited Markdown | `worksheet-attempt-package` | 2 / 1 | Markdown in version 1 attempt envelopes is rejected. |
 | Worksheet containing option images | `worksheet-package` | 4 / 4 | Also supports limited Markdown; older readers reject this envelope. |
 | Attempt containing option images | `worksheet-attempt-package` | 3 / 1 | Also supports limited Markdown; older readers reject this envelope. |
@@ -20,11 +20,21 @@ Reviewed against main `7bb19de` on 2026-10-06. Code authorities: `server/editor/
 | Attempt containing rich text | `worksheet-attempt-package` | 6 / 1 | Includes earlier features and full rich documents. |
 | Worksheet containing fill-in-the-blanks | `worksheet-package` | 8 / 8 | Includes earlier features; blank passages require this envelope. |
 | Attempt containing fill-in-the-blanks | `worksheet-attempt-package` | 7 / 1 | Includes per-blank answer maps and earlier features. |
+| Worksheet containing feedback configuration | `worksheet-package` | 9 / 9 | Includes earlier features; disabled saved configuration also requires this version. |
+| Attempt containing feedback configuration/responses | `worksheet-attempt-package` | 8 / 1 | Includes the worksheet-owned settings and separate feedback responses. |
 | RolePlayScene | `roleplayscene-package` | 1 | Browser imports also accept plain project JSON and legacy root `project.json` ZIPs; server draft upload requires the current package envelope. |
 
 Worksheet/attempt ZIP helpers support stored (uncompressed) entries and validate entry sizes, CRCs and duplicate names. RolePlayScene uses bundled `fflate` archive reading and has separate API decompression resource limits; do not generalize its compression support to worksheet ZIP import.
 
 ## Worksheet ZIP
+
+Optional `worksheet.feedback` is a single configuration with `enabled`,
+`assessment`, `targets` (stable `id`, plain `text`), shared `categories`
+(`student`, `teacher`, `peer`) and `text.student`/`text.teacher`
+(`enabled`, `prompt`, `limit`). Attempt `feedback` contains separate `ratings`
+and `text` maps. Missing configuration means disabled; legacy packages are not
+retrofitted. Responses are optional and require submission when populated.
+See [feedback limits, rendering and persistence](../worksheet/worksheet-feedback.md).
 
 ```text
 manifest.json

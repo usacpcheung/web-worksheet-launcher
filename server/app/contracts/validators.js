@@ -1,3 +1,4 @@
+import { assertFeedbackConfig } from '../worksheet-feedback.js';
 import { assertBlankConfig, assertBlankQuestions, isFillInBlanks } from '../fill-in-blanks.js';
 import { textConfigError } from '../text-answer.js';
 import { assertImageQuestions } from '../image-response.js';
@@ -218,6 +219,7 @@ function validateDraftSchema(draft) {
     errors.push('draft.description must be a string when provided');
   }
 
+  try { assertFeedbackConfig(draft.feedback); } catch (error) { errors.push(error.message); }
   validateBlocks(draft.blocks, 'draft.blocks', errors);
 
   return {
@@ -255,6 +257,7 @@ function validateSnapshotSchema(snapshot) {
     errors.push('snapshot.publishedByUserId must be a non-empty string');
   }
 
+  try { assertFeedbackConfig(snapshot.feedback); } catch (error) { errors.push(error.message); }
   validateBlocks(snapshot.blocks, 'snapshot.blocks', errors);
 
   return {
@@ -283,6 +286,7 @@ function validateViewerPayloadSchema(viewerPayload) {
     errors.push('viewerPayload.snapshotVersion must be a positive integer when provided');
   }
 
+  try { assertFeedbackConfig(viewerPayload.feedback); } catch (error) { errors.push(error.message); }
   validateBlocks(viewerPayload.blocks, 'viewerPayload.blocks', errors);
 
   return {

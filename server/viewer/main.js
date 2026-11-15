@@ -1,3 +1,5 @@
+import { createFeedbackView, feedbackPrintHtml } from './feedback-ui.js';
+import { assertFeedbackConfig, assertFeedbackResponses, feedbackEnabled, cloneFeedback, emptyFeedbackResponses, feedbackVoiceTargets, resolveFeedbackTarget, FEEDBACK_SECTION_ID } from '../app/worksheet-feedback.js';
 import { createFillInBlanksControls } from './fill-in-blanks-ui.js';
 import { hasFillInBlanks, isFillInBlanks, assertBlankConfig, assertBlankQuestions, normalizeBlankAnswer, blankDefinitions, blankAnswered, checkBlanks, renderBlankPassage, resolveBlankVoiceTarget, withBlankVoiceTargets, blankLength } from '../app/fill-in-blanks.js';
 import { isLongText, hasLongText, acceptsTextEdit, LONG_TEXT_LIMIT } from '../app/text-answer.js';
@@ -845,7 +847,7 @@ function parseUploadedAttemptPackage(zipBytes) {
     throw new Error('Uploaded attempt package is missing required files.');
   }
   const manifest = JSON.parse(decodeUtf8(manifestEntry));
-  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3, 4, 5, 6, 7].includes(manifest?.packageVersion)) {
+  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3, 4, 5, 6, 7, 8].includes(manifest?.packageVersion)) {
     throw new Error('Uploaded attempt package format is not supported.');
   }
   const worksheet = JSON.parse(decodeUtf8(worksheetEntry));
@@ -897,7 +899,7 @@ function parseLocalAttemptPackage(zipBytes) {
   if (manifest?.format === 'worksheet-package') {
     throw new Error(t('viewer.notifications.localAttemptImport.worksheetPackageNotAttempt'));
   }
-  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3, 4, 5, 6, 7].includes(manifest?.packageVersion)) {
+  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2, 3, 4, 5, 6, 7, 8].includes(manifest?.packageVersion)) {
     throw new Error(t('viewer.notifications.localAttemptImport.invalidPackage'));
   }
 
@@ -1015,6 +1017,7 @@ function computeViewerPayloadFingerprint(payload) {
     worksheetId: normalized.worksheetId || null,
     snapshotId: normalized.snapshotId || null,
     title: normalized.title || '',
+    ...(normalized.feedback !== undefined ? { feedback: normalized.feedback } : {}),
     blocks: (normalized.blocks || []).map((block) => ({
       blockId: block.blockId,
       kind: block.kind,
@@ -1215,6 +1218,7 @@ function normalizeViewerPayload(payload, fallbackLabel = 'Local worksheet') {
     throw new Error('Viewer payload must include at least one normalized block.');
   }
   assertBlankQuestions(blocks);
+  assertFeedbackConfig(payload.feedback);
 
   return {
     worksheetId: payload.worksheetId || createLocalId('ws'),
@@ -1236,6 +1240,7 @@ function normalizeViewerPayload(payload, fallbackLabel = 'Local worksheet') {
     owner_name: firstNonBlankString(payload.owner_name, payload.metadata?.owner_name),
     owner_sub: firstNonBlankString(payload.owner_sub, payload.metadata?.owner_sub),
     blocks,
+    ...(payload.feedback !== undefined ? { feedback: cloneFeedback(payload.feedback) } : {}),
   };
 }
 
@@ -1382,6 +1387,7 @@ function mapDraftRecordToViewerPayload(draftRecord) {
       title: draftRecord.title || 'Local draft worksheet',
       subject: draftRecord?.subject || draftRecord?.metadata?.subject || '',
       blocks: draftRecord.blocks || [],
+      feedback: draftRecord.feedback,
     },
     'Local draft worksheet'
   );
@@ -1859,6 +1865,7 @@ async function resolvePrintQuestionImage(questionImageRef, storage) {
 async function buildWorksheetPrintReportModel({
   viewerPayload,
   answers = {},
+  feedback = {},
   studentName = '',
   submittedAt = '',
   schoolName = getDefaultViewerPrintSchoolName(),
@@ -1867,6 +1874,7 @@ async function buildWorksheetPrintReportModel({
   storage = null,
   localAttemptId = 'attempt',
 } = {}) {
+  const feedbackHtml = feedbackPrintHtml(cloneFeedback(viewerPayload?.feedback), structuredClone(feedback), t);
   const orderedQuestions = getQuestionBlocksInOrder(viewerPayload);
   const checkedSummary = checkResult
     ? t('viewer.print.checkedSummary', {
@@ -1967,6 +1975,7 @@ async function buildWorksheetPrintReportModel({
     studentName: String(studentName || '').trim(),
     submittedAtLabel: formatTimestampForReportHeader(submittedAt),
     checkedSummary,
+    feedbackHtml,
     questions,
     sections,
     locale: getLocale(),
@@ -2102,6 +2111,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
       </dl>
     </header>
     ${sectionsHtml}
+    ${reportModel.feedbackHtml || ''}
   </main>
   <script>
     (function () {
@@ -2172,6 +2182,7 @@ async function startWorksheetPrintFlow({
   const reportModel = await buildWorksheetPrintReportModel({
     viewerPayload: session.state.viewerPayload,
     answers: session.state.answers,
+    feedback: session.state.feedback,
     studentName: session.state.studentName,
     submittedAt: session.state.submittedAt || session.state.submitted_at || null,
     schoolName: session.state.printSchoolName,
@@ -2407,6 +2418,7 @@ function resolveImportedWorksheetPayload(importedRecord) {
         owner_name: worksheet.owner_name || importedRecord.owner_name || importedRecord.metadata?.owner_name || '',
         owner_sub: worksheet.owner_sub || importedRecord.owner_sub || importedRecord.metadata?.owner_sub || '',
         blocks: worksheet.blocks,
+        feedback: worksheet.feedback,
       },
       'Imported worksheet'
     );
@@ -2447,6 +2459,7 @@ class ViewerAttemptSession {
       localAttemptId: null,
       viewerPayload: null,
       answers: {},
+      feedback: emptyFeedbackResponses(),
       status: 'in_progress',
       startedAt: null,
       lastSavedAt: null,
@@ -2527,7 +2540,7 @@ class ViewerAttemptSession {
         attemptId: this.state.localAttemptId,
         contextKey: this.state.viewerPayload,
         recovery: getVoiceRecovery(this.state.voiceRecovery, blockId),
-        editable: this.state.status !== 'completed' && !this.state.isFinalizing,
+        editable: this.canEditVoiceTarget(blockId),
         block: this.voiceBlock(blockId),
         answer: this.answerForVoice(blockId),
       }),
@@ -3010,6 +3023,9 @@ class ViewerAttemptSession {
   }
 
   async reconstructViewerPayloadFromAttempt(attemptRecord = {}) {
+    // Feedback-era attempts own an immutable worksheet snapshot; never retrofit
+    // changed targets from the original draft into existing responses.
+    if (attemptRecord.viewerPayload?.feedback !== undefined) return attemptRecord.viewerPayload;
     const sourceType = attemptRecord.sourceType || attemptRecord.metadata?.origin || 'inline_payload';
     const sourceLocalDraftId = attemptRecord.sourceLocalDraftId || attemptRecord.metadata?.sourceLocalDraftId || null;
     const sourceImportedWorksheetId =
@@ -3026,6 +3042,7 @@ class ViewerAttemptSession {
   }
 
   createLocalAttemptState(viewerPayload, source, options = {}) {
+    if (viewerPayload?.feedback !== undefined) viewerPayload = structuredClone(viewerPayload);
     const localAttemptId = createLocalId('attempt');
     const startedAt = nowIso();
     const sourceDraftUpdatedAt = options.sourceDraftUpdatedAt || null;
@@ -3101,8 +3118,10 @@ class ViewerAttemptSession {
     this._uploadContextGeneration = (this._uploadContextGeneration || 0) + 1;
     this.voice.teardown();
     this.state.voiceApplied = null;
-    this.state.voiceRecovery = attemptRecord.status === 'completed' ? {} : normalizeVoiceRecovery(
-      attemptRecord.voiceRecovery, withBlankVoiceTargets(attemptRecord.viewerPayload?.blocks || []));
+    assertFeedbackResponses(attemptRecord.viewerPayload?.feedback, attemptRecord.feedback, attemptRecord.status);
+    this.state.feedback = structuredClone(attemptRecord.feedback || emptyFeedbackResponses());
+    this.state.voiceRecovery = normalizeVoiceRecovery(attemptRecord.voiceRecovery, attemptRecord.status === 'completed'
+      ? feedbackVoiceTargets(attemptRecord.viewerPayload) : withBlankVoiceTargets(attemptRecord.viewerPayload?.blocks || []));
     this.state.localAttemptId = attemptRecord.localAttemptId || attemptRecord.localId;
     this.state.viewerPayload = attemptRecord.viewerPayload;
     this.state.answers = attemptRecord.answers || {};
@@ -3173,13 +3192,39 @@ class ViewerAttemptSession {
     }
   }
 
-  voiceParentId(id) { return resolveBlankVoiceTarget(this.state.viewerPayload?.blocks, id)?.parent.blockId || id; }
-  voiceBlock(id) { return resolveBlankVoiceTarget(this.state.viewerPayload?.blocks, id)?.block || this.state.viewerPayload?.blocks?.find(b=>b.blockId===id); }
+  canEditVoiceTarget(id) {
+    return (
+      !this.state.isFinalizing &&
+      (resolveFeedbackTarget(this.state.viewerPayload, id)
+        ? this.state.status === 'completed'
+        : this.state.status !== 'completed')
+    );
+  }
+  voiceParentId(id) {
+    if (resolveFeedbackTarget(this.state.viewerPayload, id))
+      return FEEDBACK_SECTION_ID;
+    return (
+      resolveBlankVoiceTarget(this.state.viewerPayload?.blocks, id)?.parent
+        .blockId || id
+    );
+  }
+  voiceBlock(id) {
+    return (
+      resolveFeedbackTarget(this.state.viewerPayload, id) ||
+      resolveBlankVoiceTarget(this.state.viewerPayload?.blocks, id)?.block ||
+      this.state.viewerPayload?.blocks?.find((b) => b.blockId === id)
+    );
+  }
+
   answerForVoice(id) {
+    const feedback = resolveFeedbackTarget(this.state.viewerPayload,id);
+    if (feedback) return this.state.feedback.text[feedback.responseConfig.feedbackTarget] || '';
     const target=resolveBlankVoiceTarget(this.state.viewerPayload?.blocks,id);
     return String(target ? this.state.answers?.[target.parent.blockId]?.value?.[target.blank.id] ?? '' : this.state.answers?.[id]?.value ?? '');
   }
   setAnswer(blockId, value, { restoreUndo = false } = {}) {
+    const feedback = resolveFeedbackTarget(this.state.viewerPayload,blockId);
+    if (feedback) return this.setFeedbackText(feedback.responseConfig.feedbackTarget, value);
     if (!blockId || this.state.status === 'completed') {
       return;
     }
@@ -3213,6 +3258,69 @@ class ViewerAttemptSession {
     this.state.attemptRevision += 1;
     this.scheduleAutosave();
     this.persistResumeMetadata();
+  }
+
+  setFeedbackText(role, value) {
+    if (
+      this.state.status !== 'completed' ||
+      this.state.isFinalizing ||
+      !feedbackEnabled(this.state.viewerPayload?.feedback)
+    )
+      return false;
+    const next = structuredClone(this.state.feedback);
+    Object.defineProperty(next.text, role, {
+      value,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    return this.setFeedbackResponses(next);
+  }
+  setFeedbackRating(id, role, value) {
+    if (
+      this.state.status !== 'completed' ||
+      this.state.isFinalizing ||
+      !feedbackEnabled(this.state.viewerPayload?.feedback)
+    )
+      return false;
+    const next = structuredClone(this.state.feedback);
+    if (!this.state.viewerPayload.feedback.targets.some((t) => t.id === id))
+      return false;
+    const ratings = {
+      ...(Object.hasOwn(next.ratings, id) ? next.ratings[id] : {}),
+    };
+    if (value === null) delete ratings[role];
+    else
+      Object.defineProperty(ratings, role, {
+        value,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    if (Object.keys(ratings).length) next.ratings[id] = ratings;
+    else delete next.ratings[id];
+    return this.setFeedbackResponses(next);
+  }
+  setFeedbackResponses(next) {
+    if (
+      this.state.status !== 'completed' ||
+      this.state.isFinalizing ||
+      !feedbackEnabled(this.state.viewerPayload?.feedback)
+    )
+      return false;
+    try {
+      assertFeedbackResponses(
+        this.state.viewerPayload.feedback,
+        next,
+        this.state.status,
+      );
+    } catch {
+      return false;
+    }
+    this.state.feedback = next;
+    this.state.attemptRevision++;
+    this.scheduleAutosave();
+    return true;
   }
 
   async completeLocalAttempt() {
@@ -3345,7 +3453,8 @@ class ViewerAttemptSession {
       completedAt: this.state.completedAt,
       submittedAt: this.state.submittedAt || null,
       answers: normalizedAnswers,
-      voiceRecovery: normalizeVoiceRecovery(this.state.voiceRecovery, withBlankVoiceTargets(this.state.viewerPayload.blocks)),
+      ...(this.state.viewerPayload.feedback !== undefined ? { feedback: structuredClone(this.state.feedback) } : {}),
+      voiceRecovery: normalizeVoiceRecovery(this.state.voiceRecovery, this.state.status === 'completed' ? feedbackVoiceTargets(this.state.viewerPayload) : withBlankVoiceTargets(this.state.viewerPayload.blocks)),
       subject: persistedSubject,
       owner: persistedOwner,
       // checkResult is transient UI state and must not be persisted.
@@ -3677,6 +3786,7 @@ class ViewerAttemptSession {
       updatedAt,
       submittedAt: packageStatus === 'in_progress' ? null : (this.state.submittedAt || updatedAt),
       answers: this.state.answers || {},
+      ...(this.state.viewerPayload.feedback !== undefined ? { feedback: structuredClone(this.state.feedback) } : {}),
       checking,
     };
   }
@@ -3710,6 +3820,7 @@ class ViewerAttemptSession {
       );
       const worksheet = {
         title: String(this.state.viewerPayload.title || 'Untitled worksheet'),
+        ...(this.state.viewerPayload.feedback !== undefined ? { feedback: cloneFeedback(this.state.viewerPayload.feedback) } : {}),
         subject: worksheetSubject,
         owner: worksheetOwner,
         blocks: structuredClone(Array.isArray(this.state.viewerPayload.blocks) ? this.state.viewerPayload.blocks : []),
@@ -3725,7 +3836,7 @@ class ViewerAttemptSession {
       assertWorksheetTextFormats(worksheet.blocks);
       const manifest = {
         format: 'worksheet-attempt-package',
-        packageVersion: hasFillInBlanks(worksheet.blocks) ? 7 : hasRichText(worksheet.blocks) ? 6 : hasLongText(worksheet.blocks) ? 5 : hasImageResponses(worksheet.blocks) ? 4 : hasOptionImages(worksheet.blocks) ? 3 : hasMarkdown(worksheet.blocks) ? 2 : 1,
+        packageVersion: worksheet.feedback !== undefined ? 8 : hasFillInBlanks(worksheet.blocks) ? 7 : hasRichText(worksheet.blocks) ? 6 : hasLongText(worksheet.blocks) ? 5 : hasImageResponses(worksheet.blocks) ? 4 : hasOptionImages(worksheet.blocks) ? 3 : hasMarkdown(worksheet.blocks) ? 2 : 1,
         schemaVersion: 1,
         generatedAt: nowIso(),
         worksheet: {
@@ -4294,6 +4405,7 @@ class ViewerAttemptSession {
       completedAt: isInProgress ? null : (rawAttempt.submittedAt || restoredUpdatedAt),
       submittedAt: isInProgress ? null : (rawAttempt.submittedAt || null),
       answers: rawAttempt.answers && typeof rawAttempt.answers === 'object' ? rawAttempt.answers : {},
+      feedback: rawAttempt.feedback,
       subject: restoredSubject,
       owner: restoredOwner,
       restoredAttemptCheckResult: checkResult,
@@ -5999,10 +6111,11 @@ function renderViewerShell(session) {
   nextBtn.setAttribute('aria-label', t('viewer.navigation.nextSection'));
   nextBtn.title = t('viewer.navigation.nextSection');
   const crossQuestionStatus = createVoiceStatus({ session, t,
-    view: blockId => navigateToBlockIndex(getOrderedBlocks().findIndex(block => block.blockId === blockId)),
+    view: blockId => blockId === FEEDBACK_SECTION_ID ? feedbackView.view() : navigateToBlockIndex(getOrderedBlocks().findIndex(block => block.blockId === blockId)),
   });
   crossQuestionStatus.root.id = 'viewer-operation-status';
   crossQuestionStatus.root.classList.add('viewer-operation-panel');
+  const feedbackView=createFeedbackView({session,t,signal,sharedStatusId:crossQuestionStatus.root.id,icon:createViewerIcon});
   let sectionNavigation;
   let entryMotion;
   const numberInputErrors = new Map();
@@ -7141,6 +7254,7 @@ function renderViewerShell(session) {
     sectionLabels = new Map(sectionDescriptions.map(item => [item.id, item.label]));
     sectionNumbers = new Map(sectionDescriptions.map(item => [item.id, item.number]));
     blockViewHost.update(orderedBlocks, currentBlock.blockId);
+    feedbackView.update();
 
     const summary = computeAnswerSummary(session.state.viewerPayload, session.state.answers);
     navigation.update(orderedBlocks, currentBlockIndex, session.state.answers, summary);
@@ -7361,14 +7475,14 @@ function renderViewerShell(session) {
     header.append(back, returnError);
   }
   header.append(headerTop, answerSummary, resumeWarning);
-  blockSection.append(blockHeading, blockList, crossQuestionStatus.root);
-  shell.append(header, createViewerAuthFeedback(), blockSection);
+  blockSection.append(blockHeading, blockList, feedbackView.root, crossQuestionStatus.root);
+  shell.append(header, feedbackView.reminder, createViewerAuthFeedback(), blockSection);
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';
   app.append(shell, detailsModal);
   const navigation = createWorksheetNavigation({ t, signal, operationPanel: crossQuestionStatus.root,
     utilityActions: headerActions, utilityHome: headerTop, compactPrint: drawerPrint,
-    actions: { previous: prevBtn, next: nextBtn, save: saveBtn, submit: completeBtn, check: checkBtn, print: drawerPrintBtn },
+    actions: { previous: prevBtn, next: nextBtn, save: saveBtn, submit: completeBtn, check: checkBtn, print: drawerPrintBtn, feedback: feedbackView.nav },
     navigate: index => navigateToBlockIndex(index),
   });
   shell.prepend(navigation.root);

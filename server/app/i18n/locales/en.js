@@ -1,6 +1,62 @@
 import roleplayscene from './roleplayscene/en.js';
 
 export default {
+  feedback: {
+    title: 'Assessment & feedback',
+    enable: 'Enable worksheet assessment and feedback',
+    enabled: 'Enabled',
+    disabled: 'Disabled',
+    editorIntro:
+      'One feedback section per worksheet. Learners see it only after submission.',
+    disabledHelp:
+      'New worksheets and older packages have no feedback section unless you enable it.',
+    assessment: 'Learning-target assessment',
+    categoryHelp: 'Use these categories for every target. Select at least one.',
+    categoryRequired: 'Keep at least one assessment category.',
+    targets: 'Learning targets · {count} / 5',
+    learningTargets: 'Learning targets',
+    targetNumber: 'Learning target {number}',
+    moveUp: 'Move target up',
+    moveDown: 'Move target down',
+    remove: 'Remove target',
+    removeTitle: 'Remove learning target?',
+    removeHelp:
+      'Remove this target from the worksheet settings? Existing attempt snapshots are unchanged.',
+    addTarget: '+ Add target',
+    written: 'Written feedback',
+    prompt: 'Instruction · optional',
+    limit: 'Character limit',
+    toolsHelp:
+      'Standard text tools: Add by voice, Rewrite and Undo. Both feedback fields are optional after submission.',
+    invalidConfig:
+      'Enter 1–5 nonempty targets when assessment is enabled, select a category, and enable at least one component. Text limits must be 1–1,200; instructions at most 500 characters.',
+    serverFeatures: 'Server features',
+    login: 'Log in',
+    viewerIntro:
+      'You may fill this in now or later. It does not change your submitted answers or score.',
+    starHelp: 'More stars mean greater achievement of the learning target.',
+    stars: '{count} out of 5 stars',
+    clear: 'Clear',
+    clearRating: 'Clear {role} rating for {target}',
+    unrated: 'Not rated',
+    reminder: 'Optional assessment & feedback',
+    go: 'Go →',
+    saved:
+      'Changes are saved on this device. Save to the server or export again to update those copies.',
+    saving: 'Saving changes on this device…',
+    saveError:
+      'Changes could not be saved on this device. Keep this page open and try Save again.',
+    voiceStatus: 'Assessment & feedback · {stage}',
+    roles: {
+      student: 'Self-assessment',
+      teacher: 'Teacher assessment',
+      peer: 'Peer / parent',
+    },
+    textRoles: {
+      student: 'Student reflection',
+      teacher: 'Teacher feedback',
+    },
+  },
   editorLayout: {
     toContentTitle: "Convert passage to a reading section?",
     toContentDescription: "Instructions and the passage become reading text. Blank settings and question media associations are removed; text formatting is kept.",

@@ -1,3 +1,4 @@
+import { assertFeedbackConfig, cloneFeedback } from '../app/worksheet-feedback.js';
 import { hasFillInBlanks, assertBlankQuestions } from '../app/fill-in-blanks.js';
 import { hasLongText, assertTextQuestions } from '../app/text-answer.js';
 import { hasImageResponses, assertImageQuestions, assertImageBudget } from '../app/image-response.js';
@@ -150,6 +151,7 @@ function createWorksheetPackageFromDraft(draft, assetRecordsById = new Map()) {
   if (!isRecord(draft)) {
     throw new Error('Draft record is required for package export.');
   }
+  assertFeedbackConfig(draft.feedback);
   assertBlankQuestions(draft.blocks);
   assertImageQuestions(draft.blocks);
   assertTextQuestions(draft.blocks, { authoring: true });
@@ -160,6 +162,7 @@ function createWorksheetPackageFromDraft(draft, assetRecordsById = new Map()) {
   }
 
   const worksheet = {
+    ...(draft.feedback !== undefined ? { feedback: cloneFeedback(draft.feedback) } : {}),
     title: String(draft.title || 'Untitled worksheet'),
     blocks: normalizeWorksheetBlocks(draft.blocks),
     metadata: {
@@ -176,6 +179,7 @@ function createWorksheetPackageFromDraft(draft, assetRecordsById = new Map()) {
   if (hasLongText(draftBlocks)) { manifest.packageVersion = 6; manifest.schemaVersion = 6; }
   if (hasRichText(draftBlocks)) { manifest.packageVersion = 7; manifest.schemaVersion = 7; }
   if (hasFillInBlanks(draftBlocks)) { manifest.packageVersion = 8; manifest.schemaVersion = 8; }
+  if (draft.feedback !== undefined) { manifest.packageVersion = 9; manifest.schemaVersion = 9; }
   const entries = [
     { path: 'manifest.json', data: JSON.stringify(manifest, null, 2) },
     { path: 'content/worksheet.json', data: JSON.stringify(worksheet, null, 2) },
@@ -243,16 +247,18 @@ function parseWorksheetPackage(arrayBuffer) {
 
   if (
     manifest?.format !== PACKAGE_FORMAT
-    || ![LEGACY_PACKAGE_VERSION, PACKAGE_VERSION, 3, 4, 5, 6, 7, 8].includes(manifest?.packageVersion)
+    || ![LEGACY_PACKAGE_VERSION, PACKAGE_VERSION, 3, 4, 5, 6, 7, 8, 9].includes(manifest?.packageVersion)
   ) {
     throw new Error('Unsupported worksheet package format or packageVersion.');
   }
   if (manifest.packageVersion === PACKAGE_VERSION && manifest.schemaVersion !== CONTENT_SCHEMA_VERSION) {
     throw new Error('Unsupported worksheet package schemaVersion.');
   }
-  if ([3, 4, 5, 6, 7, 8].includes(manifest.packageVersion) && manifest.schemaVersion !== manifest.packageVersion) throw new Error('Unsupported worksheet package schemaVersion.');
+  if ([3, 4, 5, 6, 7, 8, 9].includes(manifest.packageVersion) && manifest.schemaVersion !== manifest.packageVersion) throw new Error('Unsupported worksheet package schemaVersion.');
   assertWorksheetTextFormats(worksheet.blocks);
   assertTextQuestions(worksheet.blocks);
+  assertFeedbackConfig(worksheet.feedback);
+  if (worksheet.feedback !== undefined && manifest.packageVersion < 9) throw new Error('Feedback requires worksheet package version 9.');
   assertBlankQuestions(worksheet.blocks);
   if (hasFillInBlanks(worksheet.blocks) && manifest.packageVersion < 8) throw new Error('Fill in the blanks requires worksheet package version 8.');
   if (hasRichText(worksheet.blocks) && manifest.packageVersion < 7) throw new Error('Rich text requires worksheet package version 7.');

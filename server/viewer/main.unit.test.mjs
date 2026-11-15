@@ -114,7 +114,7 @@ test('active voice operation blocks submission, releases on cancel, and cannot m
 
 async function loadViewerModule(overrides = {}) {
   const filePath = path.resolve('server/viewer/main.js');
-  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/fill-in-blanks.js'", JSON.stringify(new NodeURL('../app/fill-in-blanks.js', import.meta.url).href)).replaceAll("'./fill-in-blanks-ui.js'", JSON.stringify(new NodeURL('./fill-in-blanks-ui.js', import.meta.url).href)).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'./text-answer-input.js'", JSON.stringify(new NodeURL('./text-answer-input.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'./image-response-ui.js'", JSON.stringify(new NodeURL('./image-response-ui.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'../app/contracts/attempt-package-validator.js'", JSON.stringify(new NodeURL('../app/contracts/attempt-package-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
+  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'./feedback-ui.js'", JSON.stringify(new NodeURL('./feedback-ui.js', import.meta.url).href)).replaceAll("'../app/worksheet-feedback.js'", JSON.stringify(new NodeURL('../app/worksheet-feedback.js', import.meta.url).href)).replaceAll("'../app/fill-in-blanks.js'", JSON.stringify(new NodeURL('../app/fill-in-blanks.js', import.meta.url).href)).replaceAll("'./fill-in-blanks-ui.js'", JSON.stringify(new NodeURL('./fill-in-blanks-ui.js', import.meta.url).href)).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'./text-answer-input.js'", JSON.stringify(new NodeURL('./text-answer-input.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'./image-response-ui.js'", JSON.stringify(new NodeURL('./image-response-ui.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'../app/contracts/attempt-package-validator.js'", JSON.stringify(new NodeURL('../app/contracts/attempt-package-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
   const bagName = `__viewerTestBag_${Math.random().toString(16).slice(2)}`;
 
   globalThis[bagName] = {
@@ -7409,4 +7409,33 @@ test('blank maps, virtual voice targets, free-response grading and package versi
   assert.deepEqual(mod.parseLocalAttemptPackage(zip.bytes).attempt.answers.q.value,saved.answers.q.value);
   const model=await mod.buildWorksheetPrintReportModel({viewerPayload:payload,answers:saved.answers,checkResult:checked,storage:{}}),html=mod.buildWorksheetPrintReportHtml(model);
   assert.equal(model.questions[0].layoutMode,'flow');assert.equal(model.questions[0].sectionBreakModes.answer,'flow');assert.match(html,/print-blank-passage/);assert.match(html,/WATER/);assert.match(html,/Teacher review|fillBlanks.teacher_review/);
+});
+
+test('submitted feedback owns its snapshot, saves separately, and round-trips through attempt packages', async () => {
+  const mod=await loadViewerModule();
+  const {createFeedbackConfig,feedbackVoiceTargets}=await import('../app/worksheet-feedback.js');
+  const config=createFeedbackConfig('goal');config.enabled=true;config.targets[0].text='Original goal';
+  const payload={worksheetId:'feedback-w',snapshotId:'feedback-s',title:'Feedback',blocks:[{blockId:'q',kind:'question',position:0,prompt:{text:'Question'},responseConfig:{inputType:'text',maxLength:200}}],feedback:config};
+  let saved;
+  const storage={attempts:{put:async record=>(saved=structuredClone(record))},resumeFlags:{get(){},set(){}},drafts:{get:async()=>{throw Error('Must not read changed original draft')}}};
+  const session=new mod.ViewerAttemptSession(storage);
+  session.applyAttemptState(session.createLocalAttemptState(payload,'local_draft',{sourceLocalDraftId:'source'}));
+  assert.equal(session.setFeedbackText('student','Too early'),false);
+  session.setAnswer('q','Locked answer');await session.completeLocalAttempt();
+  assert.equal(session.setFeedbackText('student','Reflection'),true);assert.equal(session.setFeedbackRating('goal','teacher',4),true);
+  session.setAnswer('q','Unexpected change');assert.equal(session.state.answers.q.value,'Locked answer');
+  payload.feedback.targets[0].text='Changed source';
+  assert.equal((await session.reconstructViewerPayloadFromAttempt(session.createRecoveryRecord())).feedback.targets[0].text,'Original goal');
+  const id=feedbackVoiceTargets(session.state.viewerPayload)[0].blockId;
+  assert.equal(session.canEditVoiceTarget(id),true);assert.equal(session.canEditVoiceTarget('q'),false);
+  session.state.voiceRecovery[id]={phase:'text',text:'Pending transcript',snapshot:'Reflection',index:10,mode:'voice'};
+  await session.autosave();session.applyAttemptState(saved);
+  assert.equal(session.state.voiceRecovery[id].text,'Pending transcript');
+  const pkg=await session.buildUploadedAttemptPackage();assert.equal(pkg.manifest.packageVersion,8);
+  const parsed=mod.parseLocalAttemptPackage(pkg.bytes);assert.equal(parsed.attempt.feedback.text.student,'Reflection');assert.equal(parsed.attempt.feedback.ratings.goal.teacher,4);
+  assert.equal(parsed.worksheet.feedback.targets[0].text,'Original goal');assert.equal(Object.keys(parsed.attempt.answers).length,1);
+  assert.equal(JSON.stringify(parsed).includes('Pending transcript'),false);
+  const report=await mod.buildWorksheetPrintReportModel({viewerPayload:session.state.viewerPayload,answers:session.state.answers,feedback:session.state.feedback});
+  const html=mod.buildWorksheetPrintReportHtml(report);assert.match(html,/Reflection/);assert.match(html,/★★★★☆/);
+  clearTimeout(session.autosaveTimer);
 });

@@ -1,3 +1,5 @@
+import { createFeedbackEditor, feedbackStarIcon } from './feedback-editor.js';
+import { assertFeedbackConfig, feedbackEnabled, cloneFeedback } from '../app/worksheet-feedback.js';
 import { questionTextConversion, passageToPrompt } from './question-type-conversion.js';
 import { createBlankPassageEditor } from './fill-in-blanks-editor.js';
 import { isFillInBlanks, emptyBlankConfig, assertBlankConfig } from '../app/fill-in-blanks.js';
@@ -1123,6 +1125,7 @@ function createDraftRecord(overrides = {}) {
   return {
     localId,
     title: overrides.title || 'Untitled worksheet',
+    ...(overrides.feedback !== undefined ? { feedback: cloneFeedback(overrides.feedback) } : {}),
     blocks: normalizeBlocks(overrides.blocks),
     assets: normalizeDraftAssets(overrides.assets),
     metadata: {
@@ -1470,6 +1473,7 @@ class EditorDraftSession {
   normalizeDraftForContracts(draft) {
     return {
       draftWorksheetId: draft.localId,
+      ...(draft.feedback !== undefined ? { feedback: cloneFeedback(draft.feedback) } : {}),
       title: String(draft.title || '').trim() || 'Untitled worksheet',
       blocks: normalizeBlocks(draft.blocks).map((block, index) => {
         const base = {
@@ -1515,6 +1519,7 @@ class EditorDraftSession {
       errors.push('draft.blocks must be a non-empty array');
     }
 
+    try { assertFeedbackConfig(normalizedDraft.feedback); } catch { errors.push(t('feedback.invalidConfig')); }
     try { assertImageQuestions(normalizedDraft.blocks); } catch(error) { errors.push(error.message); }
     normalizedDraft.blocks.forEach((block, index) => {
       if (!block.blockId) errors.push(`draft.blocks[${index}].blockId must be a non-empty string`);
@@ -3147,6 +3152,7 @@ class EditorDraftSession {
       this.transientQuestionBlockIds.add(block.blockId);
     }
     this.state.draft.blocks = [...this.state.draft.blocks, block];
+    this.state.feedbackSettingsDraftId = null;
     this.state.selectedBlockId = block.blockId;
     this.touchDraft();
     return block;
@@ -3288,6 +3294,7 @@ class EditorDraftSession {
   }
 
   selectBlock(blockId) {
+    this.state.feedbackSettingsDraftId = null;
     this.state.selectedBlockId = blockId || null;
     this.persistRestoreMetadata();
   }
@@ -3613,6 +3620,7 @@ class EditorDraftSession {
 
       const draft = createDraftRecord({
       title: parsedPackage.worksheet.title || 'Imported worksheet',
+      feedback: parsedPackage.worksheet.feedback,
       blocks: remappedBlocks,
       assets: parsedPackage.assets.map((asset) => {
         const remappedAssetId = assetIdRemap.get(asset.assetId) || asset.assetId;
@@ -4987,6 +4995,29 @@ function renderEditorShell(session) {
   leftPanel.className = 'editor-panel left';
   const rightPanel = document.createElement('section');
   rightPanel.className = 'editor-panel right';
+  const feedbackEditor = createFeedbackEditor({
+    t,
+    changed: () => session.touchDraft(),
+    confirm: (options) => showConfirmDialog(options),
+    createTargetId: () => createLocalId('target'),
+  });
+  const feedbackButton = document.createElement('button');
+  feedbackButton.type = 'button';
+  feedbackButton.id = 'editor-feedback-nav';
+  feedbackButton.className = 'sidebar-action-btn';
+  const feedbackCaption = document.createElement('span');
+  feedbackCaption.className = 'feedback-nav-caption';
+  feedbackCaption.innerHTML = feedbackStarIcon;
+  const feedbackLabel = document.createElement('span');
+  feedbackLabel.textContent = t('feedback.title');
+  feedbackCaption.append(feedbackLabel);
+  const feedbackBadge = document.createElement('span');
+  feedbackBadge.className = 'feedback-config-badge';
+  feedbackButton.append(feedbackCaption, feedbackBadge);
+  feedbackButton.onclick = () => {
+    session.state.feedbackSettingsDraftId = session.state.draft?.localId;
+    updateSummary();
+  };
 
   const leftHeading = document.createElement('h2');
   leftHeading.textContent = t('editor.sections.blocks');
@@ -5008,7 +5039,7 @@ function renderEditorShell(session) {
   const moreActions = document.createElement('details');
   moreActions.className = 'editor-more-actions';
   const moreActionsSummary = document.createElement('summary');
-  moreActionsSummary.textContent = t('editor.actions.more');
+  moreActionsSummary.textContent = t('feedback.serverFeatures');
   moreActions.appendChild(moreActionsSummary);
 
   const blockKind = document.createElement('select');
@@ -6324,7 +6355,7 @@ function renderEditorShell(session) {
   manageUploadedDraftsBtn.textContent = t('editor.uploadedDraft.manage');
   const signInBtn = document.createElement('button');
   signInBtn.type = 'button';
-  signInBtn.textContent = t('auth.signInForServerFeatures');
+  signInBtn.textContent = t('feedback.login');
   const serverSessionStatus = document.createElement('p');
   serverSessionStatus.className = 'muted';
   const activityFeed = document.createElement('section');
@@ -8620,6 +8651,30 @@ function renderEditorShell(session) {
     session.validateCurrentDraft();
     syncFormControls();
     renderBlockList();
+    const feedbackSelected =
+      session.state.feedbackSettingsDraftId === session.state.draft?.localId;
+    rightPanel.hidden = feedbackSelected;
+    feedbackEditor.root.hidden = !feedbackSelected;
+    feedbackButton.setAttribute(
+      'aria-current',
+      feedbackSelected ? 'page' : 'false',
+    );
+    feedbackBadge.textContent = t(
+      feedbackEnabled(session.state.draft?.feedback)
+        ? 'feedback.enabled'
+        : 'feedback.disabled',
+    );
+    feedbackBadge.classList.toggle(
+      'is-disabled',
+      !feedbackEnabled(session.state.draft?.feedback),
+    );
+    if (feedbackSelected) {
+      feedbackEditor.update(session.state.draft);
+      blockList
+        .querySelectorAll('.selected')
+        .forEach((el) => el.classList.remove('selected'));
+    }
+
     if (!preserveDetailEditor) {
       renderDetailEditor();
     }
@@ -8894,6 +8949,17 @@ function renderEditorShell(session) {
     updateSummary();
   });
   openViewerBtn.addEventListener('click', async () => {
+    try {
+      assertFeedbackConfig(session.state.draft?.feedback);
+    } catch {
+      session.pushNotification({
+        kind: 'error',
+        text: t('feedback.invalidConfig'),
+      });
+      updateSummary();
+      return;
+    }
+
     const localDraftId = session.state.draft?.localId;
     if (!localDraftId) return;
     const returnState = {
@@ -9292,6 +9358,7 @@ function renderEditorShell(session) {
 
   worksheetActionsRow.appendChild(startNewWorksheetBtn);
   controlsRow.append(addContentBtn, addQuestionBtn);
+  for(const button of [saveBtn,exportBtn,importBtn,openViewerBtn])button.classList.add('sidebar-action-btn');
   metaRow.append(saveBtn, exportBtn, importBtn, openViewerBtn);
   protectedActionsColumn.append(
     serverSessionStatus,
@@ -9308,16 +9375,17 @@ function renderEditorShell(session) {
     worksheetActionsRow,
     controlsRow,
     blockList,
+    feedbackButton,
+    metaRow,
     moreActions,
     activityFeedToggle,
-    metaRow,
     importFileInput,
     questionImageInput,
     questionAudioInput,
     optionAudioInput
   );
   rightPanel.append(rightHeading, statusRow);
-  layout.append(leftPanel, rightPanel);
+  layout.append(leftPanel, rightPanel, feedbackEditor.root);
   const languageSelector = createLanguageSelector({
     onChange: () => {
       renderEditorShell(session);

@@ -35,6 +35,7 @@ Contributor instructions, discoverable UI skills, colocated module/font notes an
 - [Audio voice choices](worksheet/editor-voice-choice.md)
 - [Image-response questions, limits and persistence](worksheet/image-response-investigation.md)
 - [Fill-in-the-blanks authoring, answering and package contract](worksheet/fill-in-the-blanks.md)
+- [Worksheet assessment and feedback](worksheet/worksheet-feedback.md)
 - [Learner voice, rewrite, recovery and Undo](worksheet/viewer-voice-workflow.md)
 - [Published loading feedback](worksheet/viewer-package-load-progress.md)
 - [Viewer UI target design and staged implementation plan](worksheet/viewer-ui-refactor-plan.md)
