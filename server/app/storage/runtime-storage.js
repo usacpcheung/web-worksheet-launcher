@@ -14,6 +14,7 @@ function createRuntimeStorage() {
 
   return {
     commitAnswerImages: db.commitAnswerImages,
+    localCleanup: db.localCleanup,
     drafts: withRecovery('localDrafts', {
       put: db.putLocalDraft,
       get: db.getLocalDraft,
@@ -30,6 +31,7 @@ function createRuntimeStorage() {
       clear: db.clearImportedWorksheets,
     },
     attempts: withRecovery('localAttempts', {
+      isDeleted: db.isAttemptDeleted,
       put: db.putLocalAttempt,
       get: db.getLocalAttempt,
       recover: db.recoverLocalAttempt,

@@ -70,3 +70,15 @@ request retry. Default recovery for other consumers remains enabled.
 
 Save/upload and deletion retain their separate mutation confirmation rules.
 Authentication success never authorizes an automatic mutation.
+
+## Optional context in the shared login prompt
+
+`promptForReadSignIn` accepts optional plain-text `warningText`. Its shared dialog
+renders an accessible warning paragraph only when supplied; callers across editor,
+viewer and RolePlayScene otherwise remain unchanged. Viewer publication/attempt
+opening supplies the local replacement warning, so signed-out users do not receive
+two consecutive confirmations for unchanged work. Consent is tied to the incoming
+resource and outgoing attempt snapshot, rechecked after loading, and not retained
+for unrelated operations. A matching same-tab read return can carry that consent
+for at most fifteen minutes. Login alone never deletes or selects a local attempt.
+See [local models](local-models.md) for commit and collection boundaries.

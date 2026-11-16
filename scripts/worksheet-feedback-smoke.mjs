@@ -153,7 +153,7 @@ try {
         await page.locator('.editor-activity-panel').getAttribute('open'),
         null,
       );
-      await page.evaluate(async () => {
+      const worksheetBytes = await page.evaluate(async () => {
         const s = window.editorSession,
           m = await import('/server/editor/worksheet-package.js');
         const pkg = m.createWorksheetPackageFromDraft(s.state.draft);
@@ -162,6 +162,7 @@ try {
         const parsed = m.parseWorksheetPackage(pkg.bytes);
         if (parsed.worksheet.feedback.targets.length !== 2)
           throw Error('Lost settings');
+        return [...pkg.bytes];
       });
       if (shots)
         await page.screenshot({
@@ -330,6 +331,15 @@ try {
         .click();
       await page.waitForFunction(() => !window.viewerSession.voice.active);
       assert.match(await input.inputValue(), /Recovered reflection/);
+      // Preview feedback/voice/recovery remains covered above. Export testing
+      // starts a normal worksheet package and supplies the same completed answers.
+      await page.evaluate(async bytes => {
+        const s = viewerSession;
+        const answers = structuredClone(s.state.answers), feedback = structuredClone(s.state.feedback);
+        await s.startImportedWorksheetFromPackageFile(new Uint8Array(bytes));
+        for (const [id, answer] of Object.entries(answers)) s.setAnswer(id, answer.value);
+        await s.completeLocalAttempt(); s.setFeedbackResponses(feedback); await s.autosave();
+      }, worksheetBytes);
       const exported = await page.evaluate(async () => {
         const s = window.viewerSession,
           m = await import('/server/viewer/main.js');
@@ -352,13 +362,15 @@ try {
       assert.match(exported.html, /print-feedback/);
       assert.match(exported.html, /Recovered reflection/);
       assert.match(exported.html, /★★★★★/);
-      await page.evaluate(async (bytes) => {
+      const importing = page.evaluate(async (bytes) => {
         const s = window.viewerSession;
         const result = await s.importAttemptPackageFromFile(
           new Uint8Array(bytes),
         );
         if (result?.ok === false) throw Error('Import failed');
       }, exported.bytes);
+      await page.locator('.viewer-attempt-dialog button[type=submit]').click();
+      await importing;
       const importedId = await page.evaluate(
         () => window.viewerSession.state.localAttemptId,
       );

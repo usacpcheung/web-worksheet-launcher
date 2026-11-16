@@ -1,6 +1,26 @@
 import roleplayscene from './roleplayscene/en.js';
 
 export default {
+  attemptLifecycle: {
+    "replaceTitle": "Open another worksheet?",
+    "replace": "Open and replace",
+    "warning": "Successfully opening this worksheet will replace your current local attempt. To keep it, export an attempt package or save it to the server first. Signing in alone does not replace your work.",
+    "cancelled": "Opening cancelled. Your current local attempt is unchanged.",
+    "preview": "Preview",
+    "previewHelp": "Test answers are temporary. Your normal local attempt is unchanged.",
+    "previewNoExport": "Attempt export and server save are unavailable in preview. Open an exported worksheet in the normal viewer to test these actions.",
+    "restart": "Restart preview",
+    "restartHelp": "Clear the test answers and start this preview again? Your normal local attempt is unchanged.",
+    "cleanup": "Review local cleanup",
+    "later": "Later",
+    "clean": "Clean up",
+    "cleanupNotice": "Older local worksheet data is taking up storage. You can review cleanup while keeping your latest recoverable attempt.",
+    "cleanupReview": "Remove {count} older attempts and approximately {size} MB of unused local data? Your latest attempt, active sessions, exported ZIP files and server records will be kept. Records changed or opened since this review are also kept.",
+    "nothingToClean": "There is no unused local worksheet data to clean up.",
+    "cleanupUnavailable": "Cleanup is unavailable because this browser cannot safely check other active tabs.",
+    "cleaned": "Eligible unused local data was cleaned up. Active or recently changed work was kept.",
+    "cleanupFailed": "Cleanup could not finish. Please try again."
+},
   worksheetValidation: {
     fixBeforeContinuing: 'Fix these issues before exporting, uploading, or previewing. Your local draft can still be saved.\n{details}',
     emptyReading: 'Reading block {number} is empty. Enter some text or delete this block.',

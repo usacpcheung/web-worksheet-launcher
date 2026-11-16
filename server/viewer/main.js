@@ -1,3 +1,6 @@
+import { createAttemptOpeningMethods } from './attempt-opening.js';
+import { AttemptLifecycle, isPreviewAttempt, openingCancelled } from './attempt-lifecycle.js';
+import { mountPreviewControls, mountLocalCleanup } from './attempt-lifecycle-ui.js';
 import { createFeedbackView, feedbackPrintHtml } from './feedback-ui.js';
 import { assertFeedbackConfig, assertFeedbackResponses, feedbackEnabled, cloneFeedback, emptyFeedbackResponses, feedbackVoiceTargets, resolveFeedbackTarget, FEEDBACK_SECTION_ID } from '../app/worksheet-feedback.js';
 import { createFillInBlanksControls } from './fill-in-blanks-ui.js';
@@ -2790,6 +2793,7 @@ class ViewerAttemptSession {
   }
 
   async bootstrap() {
+    if (await this.lifecycle?.restoreHistory()) return this.state;
     const params = new URLSearchParams(window.location.search);
     const previewIntent = this.parsePreviewIntent(params);
     const freshnessMarker = params.get('draftUpdatedAt') || null;
@@ -2826,6 +2830,7 @@ class ViewerAttemptSession {
     if (publishedPackageId) {
       const result = await this.startFromPublishedPackage(publishedPackageId);
       if (!result?.ok) {
+        if (result?.cancelled || result?.skipped) throw openingCancelled();
         const errorCode = String(result?.error?.code || '').trim().toUpperCase();
         if (errorCode === 'PUBLISHED_PACKAGE_NOT_FOUND') {
           throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_NOT_FOUND, {
@@ -2867,7 +2872,8 @@ class ViewerAttemptSession {
       }
     );
     attempt.checkResult = null;
-    this.applyAttemptState(attempt, { markDirty: true });
+    await this.lifecycle?.replace(attempt, { preview: Boolean(previewIntent?.preview) });
+    this.applyAttemptState(attempt, { markDirty: !this.lifecycle });
     this.persistResumeMetadata();
 
     return this.state;
@@ -2931,6 +2937,7 @@ class ViewerAttemptSession {
         ? attemptRecord.restoredAttemptCheckResult
         : null;
 
+      await this.lifecycle?.attach(attemptRecord);
       this.applyAttemptState(
         {
           ...attemptRecord,
@@ -3025,7 +3032,7 @@ class ViewerAttemptSession {
   async reconstructViewerPayloadFromAttempt(attemptRecord = {}) {
     // Feedback-era attempts own an immutable worksheet snapshot; never retrofit
     // changed targets from the original draft into existing responses.
-    if (attemptRecord.viewerPayload?.feedback !== undefined) return attemptRecord.viewerPayload;
+    if (attemptRecord.runtimeMode || attemptRecord.viewerPayload?.feedback !== undefined) return attemptRecord.viewerPayload;
     const sourceType = attemptRecord.sourceType || attemptRecord.metadata?.origin || 'inline_payload';
     const sourceLocalDraftId = attemptRecord.sourceLocalDraftId || attemptRecord.metadata?.sourceLocalDraftId || null;
     const sourceImportedWorksheetId =
@@ -3043,7 +3050,7 @@ class ViewerAttemptSession {
 
   createLocalAttemptState(viewerPayload, source, options = {}) {
     if (viewerPayload?.feedback !== undefined) viewerPayload = structuredClone(viewerPayload);
-    const localAttemptId = createLocalId('attempt');
+    const localAttemptId = createLocalId(source === 'local_draft_preview' ? 'preview' : 'attempt');
     const startedAt = nowIso();
     const sourceDraftUpdatedAt = options.sourceDraftUpdatedAt || null;
     const sourceSubject = firstNonBlankString(
@@ -3122,6 +3129,7 @@ class ViewerAttemptSession {
     this.state.feedback = structuredClone(attemptRecord.feedback || emptyFeedbackResponses());
     this.state.voiceRecovery = normalizeVoiceRecovery(attemptRecord.voiceRecovery, attemptRecord.status === 'completed'
       ? feedbackVoiceTargets(attemptRecord.viewerPayload) : withBlankVoiceTargets(attemptRecord.viewerPayload?.blocks || []));
+    this.state.runtimeMode = isPreviewAttempt(attemptRecord) ? 'preview' : 'normal';
     this.state.localAttemptId = attemptRecord.localAttemptId || attemptRecord.localId;
     this.state.viewerPayload = attemptRecord.viewerPayload;
     this.state.answers = attemptRecord.answers || {};
@@ -3382,6 +3390,7 @@ class ViewerAttemptSession {
   }
 
   scheduleAutosave() {
+    this.lifecycle?.updateResume();
     clearTimeout(this.autosaveTimer);
     this.state.autosavePending = true;
     this.notifyStateChange();
@@ -3429,6 +3438,7 @@ class ViewerAttemptSession {
     const attemptRecord = {
       localId: this.state.localAttemptId,
       localAttemptId: this.state.localAttemptId,
+      runtimeMode: this.state.runtimeMode,
       viewerPayload: this.state.viewerPayload,
       learnerId: DEFAULT_LEARNER_ID,
       worksheetId: this.state.viewerPayload?.worksheetId || null,
@@ -3559,129 +3569,8 @@ class ViewerAttemptSession {
     return this.tryResumeAttempt(localId);
   }
 
-  async startImportedWorksheetFromJsonText(rawJson) {
-    let parsedWorksheet;
-    try {
-      parsedWorksheet = JSON.parse(rawJson);
-    } catch (error) {
-      throw new Error(`Unable to parse worksheet JSON. ${error?.message || String(error)}`);
-    }
 
-    let mappedPackage;
-    try {
-      mappedPackage = mapLegacyJsonToPackageModel(parsedWorksheet);
-    } catch (error) {
-      throw new Error(`Imported worksheet is invalid. ${error?.message || String(error)}`);
-    }
 
-    return this.startImportedWorksheetFromPackageModel(mappedPackage);
-  }
-
-  async startImportedWorksheetFromPackageFile(fileOrBytes, options = {}) {
-    let packageModel;
-    try {
-      packageModel = parseWorksheetPackage(fileOrBytes);
-    } catch (error) {
-      throw new Error(`Unable to import worksheet package. ${error?.message || String(error)}`);
-    }
-    return this.startImportedWorksheetFromPackageModel(packageModel, options);
-  }
-
-  async startImportedWorksheetFromPackageModel(packageModel, options = {}) {
-    packageModel = isolateReadPackageAssets(packageModel);
-    const worksheet = packageModel?.worksheet;
-    if (!worksheet || typeof worksheet !== 'object') {
-      throw new Error('Imported worksheet package is missing worksheet content.');
-    }
-    if (options.isCurrent && !options.isCurrent()) return skippedReadImport();
-    const importedAt = nowIso();
-    const packageAssets = Array.isArray(packageModel?.assets) ? packageModel.assets : [];
-
-    const importedRecord = {
-      localId: createLocalId('imported'),
-      worksheet,
-      importedAt,
-    };
-    importedRecord.metadata = {
-      localId: importedRecord.localId,
-      origin: 'imported_file',
-      updatedAt: importedRecord.importedAt,
-    };
-
-    const payload = resolveImportedWorksheetPayload(importedRecord);
-    try { await this.validateViewerPayload(payload); }
-    catch (error) { if (options.isCurrent && !options.isCurrent()) return skippedReadImport(); throw error; }
-    if (options.isCurrent && !options.isCurrent()) return skippedReadImport();
-
-    const persistedAssetIds = [];
-    try {
-      assertReadImportCurrent(options);
-      await this.storage.importedWorksheets.put(importedRecord);
-
-      assertReadImportCurrent(options);
-      if (packageAssets.length > 0 && this.storage.localAssets?.put) {
-        try {
-          for (const asset of packageAssets) {
-            if (!asset || typeof asset !== 'object' || typeof asset.assetId !== 'string' || !asset.assetId.trim()) {
-              continue;
-            }
-            if (!(asset.binary instanceof Uint8Array) || asset.binary.byteLength === 0) {
-              continue;
-            }
-            assertReadImportCurrent(options);
-            persistedAssetIds.push(asset.assetId);
-            await this.storage.localAssets.put({
-              localId: asset.assetId,
-              binary: asset.binary,
-              metadata: {
-                localId: asset.assetId,
-                origin: 'imported_package_asset',
-                updatedAt: importedAt,
-                kind: asset.kind || null,
-                usage: asset.usage || null,
-                mimeType: asset.mimeType || null,
-                path: asset.path || null,
-              },
-            });
-            assertReadImportCurrent(options);
-          }
-        } catch (error) {
-          if (error?.code === 'READ_IMPORT_SUPERSEDED') throw error;
-          throw new Error(`Failed to save imported package assets. ${error?.message || String(error)}`);
-        }
-      }
-    } catch (error) {
-      await Promise.all(
-        persistedAssetIds.map((assetId) => this.storage.localAssets?.remove?.(assetId).catch(() => {}))
-      );
-      await this.storage.importedWorksheets?.remove?.(importedRecord.localId).catch(() => {});
-      if (error?.code === 'READ_IMPORT_SUPERSEDED' || (options.isCurrent && !options.isCurrent())) return skippedReadImport();
-      if (String(error?.message || '').startsWith('Failed to save imported package assets.')) {
-        throw error;
-      }
-      throw new Error(`Failed to save imported worksheet. ${error?.message || String(error)}`);
-    }
-
-    try {
-      assertReadImportCurrent(options);
-      const attempt = this.createLocalAttemptState(payload, 'imported_worksheet', {
-        sourceImportedWorksheetId: importedRecord.localId,
-        sourceSubject: options?.sourceSubject || worksheet?.subject || '',
-        sourceOwner: options?.sourceOwner || worksheet?.owner || '',
-      });
-      attempt.checkResult = null;
-      this.applyAttemptState(attempt, { markDirty: true });
-      this.persistResumeMetadata();
-      return this.state;
-    } catch (error) {
-      await Promise.all(
-        persistedAssetIds.map((assetId) => this.storage.localAssets?.remove?.(assetId).catch(() => {}))
-      );
-      await this.storage.importedWorksheets?.remove?.(importedRecord.localId).catch(() => {});
-      if (error?.code === 'READ_IMPORT_SUPERSEDED' || (options.isCurrent && !options.isCurrent())) return skippedReadImport();
-      throw new Error(`Imported worksheet is invalid. ${error?.message || String(error)}`);
-    }
-  }
 
   applyUiRestoreState(_ui = {}) {
     this.persistResumeMetadata();
@@ -3792,6 +3681,7 @@ class ViewerAttemptSession {
   }
 
   async buildUploadedAttemptPackage() {
+    if (this.state.runtimeMode === 'preview') throw new Error(t('attemptLifecycle.previewNoExport'));
     if (this.imagePending) throw new Error(t('imageResponse.pending'));
     if (!this.state.viewerPayload) {
       throw new Error('No active worksheet is loaded.');
@@ -3900,6 +3790,7 @@ class ViewerAttemptSession {
 
 
   async exportCurrentAttemptPackage() {
+    if (this.state.runtimeMode === 'preview') return { ok: false, error: { code: 'PREVIEW_ACTION_DISABLED', message: t('attemptLifecycle.previewNoExport') } };
     if (!this.state.localAttemptId || !this.state.viewerPayload) {
       const message = t('viewer.notifications.localAttemptExport.noActiveAttempt');
       this.state.utilityMessage = message;
@@ -3933,39 +3824,9 @@ class ViewerAttemptSession {
     }
   }
 
-  async importAttemptPackageFromFile(fileOrBytes) {
-    const file = fileOrBytes && typeof fileOrBytes === 'object' && 'arrayBuffer' in fileOrBytes ? fileOrBytes : null;
-    const name = String(file?.name || '').toLowerCase();
-    if (file && !name.endsWith('.zip')) {
-      throw new Error(t('viewer.notifications.localAttemptImport.zipRequired'));
-    }
-    const bytes = file
-      ? new Uint8Array(await file.arrayBuffer())
-      : ensureUint8Array(fileOrBytes);
-    if (!bytes) throw new Error(t('viewer.notifications.localAttemptImport.zipRequired'));
-    try {
-      const packageModel = parseLocalAttemptPackage(bytes);
-      return await this.restoreAttemptPackageAsLocalAttempt(packageModel, {
-        subject: packageModel?.worksheet?.subject || '',
-        owner: packageModel?.worksheet?.owner || '',
-        worksheetOrigin: 'local_attempt_package_import',
-        assetOrigin: 'local_attempt_package_import',
-        attemptOrigin: 'imported_attempt_package',
-        successMessage: t('viewer.notifications.uploadedAttempt.restored'),
-        serverActionMessage: null,
-      });
-    } catch (error) {
-      const message = error?.message || t('viewer.notifications.localAttemptImport.invalidPackage');
-      const safeMessages = new Set([
-        t('viewer.notifications.localAttemptImport.zipRequired'),
-        t('viewer.notifications.localAttemptImport.invalidPackage'),
-        t('viewer.notifications.localAttemptImport.worksheetPackageNotAttempt'),
-      ]);
-      throw new Error(safeMessages.has(message) ? message : t('viewer.notifications.localAttemptImport.failed'));
-    }
-  }
 
   async uploadCurrentAttemptPackage(intentPayload = {}, options = {}) {
+    if (this.state.runtimeMode === 'preview') return { ok: false, error: { code: 'PREVIEW_ACTION_DISABLED', message: t('attemptLifecycle.previewNoExport') } };
     if (!this.state.localAttemptId || !this.state.viewerPayload) {
       const message = t('viewer.notifications.uploadAttempt.noActiveAttempt');
       this.state.serverActionMessage = message;
@@ -4310,6 +4171,7 @@ class ViewerAttemptSession {
       });
       return { ok: true };
     } finally {
+      this.lifecycle?.clearConsent(`attempt:${uploadedAttemptId}`);
       const next = { ...this.state.uploadedAttemptActionInFlightById };
       delete next[uploadedAttemptId];
       this.state.uploadedAttemptActionInFlightById = next;
@@ -4317,171 +4179,7 @@ class ViewerAttemptSession {
     }
   }
 
-  mapUploadedAttemptCheckResult(checking) {
-    if (!checking || typeof checking !== 'object') return null;
-    const items = checking.items && typeof checking.items === 'object' ? checking.items : {};
-    const byBlockId = {};
-    const statusByBlockId = {};
-    Object.entries(items).forEach(([blockId, item]) => {
-      if (typeof blockId !== 'string' || !blockId) return;
-      const status = normalizeRestoredCheckStatus(item?.result);
-      if (!status) return;
-      statusByBlockId[blockId] = status;
-      if (status === 'correct' || status === 'incorrect') {
-        byBlockId[blockId] = status === 'correct';
-      }
-    });
-    return {
-      statusByBlockId,
-      byBlockId,
-      correctCount: Number(checking.correctCount) || 0,
-      totalQuestions: Number(checking.totalQuestions) || 0,
-      checkedAt: checking.checkedAt || nowIso(),
-    };
-  }
 
-  async restoreAttemptPackageAsLocalAttempt(packageModel, options = {}) {
-    packageModel = isolateReadPackageAssets(packageModel);
-    if (options.isCurrent && !options.isCurrent()) return skippedReadImport();
-    const importedAt = nowIso();
-    const rawAttempt = packageModel?.attempt && typeof packageModel.attempt === 'object' ? packageModel.attempt : {};
-    const attemptStatus = String(rawAttempt.status || 'in_progress');
-    const isInProgress = attemptStatus === 'in_progress';
-    const isChecked = attemptStatus === 'checked';
-    const isSubmitted = attemptStatus === 'submitted';
-    if (!isInProgress && !isChecked && !isSubmitted) {
-      throw new Error(options.unsupportedStatusMessage || t('viewer.notifications.localAttemptImport.invalidPackage'));
-    }
-
-    const importedRecord = {
-      localId: createLocalId('imported'),
-      worksheet: packageModel.worksheet,
-      importedAt,
-      metadata: {
-        localId: null,
-        origin: options.worksheetOrigin || 'uploaded_attempt_restore',
-        updatedAt: importedAt,
-      },
-    };
-    importedRecord.metadata.localId = importedRecord.localId;
-    const payload = resolveImportedWorksheetPayload(importedRecord);
-    try { await this.validateViewerPayload(payload); }
-    catch (error) { if (options.isCurrent && !options.isCurrent()) return skippedReadImport(); throw error; }
-    if (options.isCurrent && !options.isCurrent()) return skippedReadImport();
-
-    const restoredLocalAttemptId = createLocalId('attempt');
-    const restoredStartedAt = rawAttempt.createdAt || nowIso();
-    const restoredUpdatedAt = rawAttempt.updatedAt || nowIso();
-    const checkResult = isChecked ? this.mapUploadedAttemptCheckResult(rawAttempt.checking) : null;
-    const restoredSubject = String(options.subject || '').trim();
-    const restoredOwner = String(options.owner || '').trim();
-    const sourceId = getSourceIdentity('imported_worksheet', { sourceImportedWorksheetId: importedRecord.localId });
-    const sourceFingerprint = computeViewerPayloadFingerprint(payload);
-    const restoredAttemptRecord = {
-      localId: restoredLocalAttemptId,
-      localAttemptId: restoredLocalAttemptId,
-      viewerPayload: payload,
-      learnerId: DEFAULT_LEARNER_ID,
-      worksheetId: payload?.worksheetId || null,
-      snapshotId: payload?.snapshotId || null,
-      sourceType: 'imported_worksheet',
-      sourceId,
-      sourceFingerprint,
-      sourceLocalDraftId: null,
-      sourceImportedWorksheetId: importedRecord.localId,
-      lastActiveBlockId: payload?.blocks?.[0]?.blockId || null,
-      lastActiveIndex: 0,
-      studentName: typeof rawAttempt.metadata?.studentName === 'string' ? rawAttempt.metadata.studentName : '',
-      studentNameResolved: rawAttempt.metadata?.studentNameResolved === true,
-      attemptNameMode: options.serverName && options.serverName !== rawAttempt.metadata?.attemptName
-        ? undefined : rawAttempt.metadata?.attemptNameMode,
-      attemptNameDraft: options.serverName || rawAttempt.metadata?.attemptName || '',
-      savedAttemptName: options.serverName || '',
-      savedAttemptSubject: options.serverName ? (options.subject ?? '') : null,
-      savedAttemptAccount: options.serverAccount || null,
-      status: isInProgress ? 'in_progress' : 'completed',
-      startedAt: restoredStartedAt,
-      lastSavedAt: restoredUpdatedAt,
-      completedAt: isInProgress ? null : (rawAttempt.submittedAt || restoredUpdatedAt),
-      submittedAt: isInProgress ? null : (rawAttempt.submittedAt || null),
-      answers: rawAttempt.answers && typeof rawAttempt.answers === 'object' ? rawAttempt.answers : {},
-      feedback: rawAttempt.feedback,
-      subject: restoredSubject,
-      owner: restoredOwner,
-      restoredAttemptCheckResult: checkResult,
-      metadata: {
-        localId: restoredLocalAttemptId,
-        origin: options.attemptOrigin || 'imported_worksheet',
-        sourceImportedWorksheetId: importedRecord.localId,
-        sourceId,
-        sourceFingerprint,
-        subject: restoredSubject,
-        owner: restoredOwner,
-        updatedAt: restoredUpdatedAt,
-      },
-    };
-
-    const worksheetAssetIds = new Set(this.collectAttemptPackageAssetIds(packageModel.worksheet));
-    const answerAssetIds = new Set(payload.blocks.flatMap(block => block.responseConfig?.inputType === 'image_response'
-      ? imageAnswerRefs(rawAttempt.answers?.[block.blockId]?.value || [], block.responseConfig.maxImages).map(ref => ref.assetId) : []));
-    const persistedAssetIds = [];
-    let didPersistImportedWorksheet = false;
-    let didAttemptPersistAttempt = false;
-    try {
-      assertReadImportCurrent(options);
-      didPersistImportedWorksheet = true;
-      await this.storage.importedWorksheets.put(importedRecord);
-      assertReadImportCurrent(options);
-      for (const asset of Array.isArray(packageModel.assets) ? packageModel.assets : []) {
-        if (!asset?.assetId || !(asset.binary instanceof Uint8Array)) continue;
-        assertReadImportCurrent(options);
-        persistedAssetIds.push(asset.assetId);
-        await this.storage.localAssets.put({
-          localId: asset.assetId,
-          binary: asset.binary,
-          metadata: {
-            localId: asset.assetId,
-            ...(answerAssetIds.has(asset.assetId) && !worksheetAssetIds.has(asset.assetId) ? { ownerAttemptId: restoredLocalAttemptId } : {}),
-            origin: options.assetOrigin || 'uploaded_attempt_restore',
-            updatedAt: importedAt,
-            mimeType: asset.mimeType || null,
-            kind: asset.kind || null,
-            usage: asset.usage || null,
-            path: asset.path || null,
-          },
-        });
-        assertReadImportCurrent(options);
-      }
-      assertReadImportCurrent(options);
-      didAttemptPersistAttempt = true;
-      await this.storage.attempts.put(restoredAttemptRecord);
-      assertReadImportCurrent(options);
-    } catch (error) {
-      await Promise.all(persistedAssetIds.map((assetId) => this.storage.localAssets?.remove?.(assetId).catch(() => {})));
-      if (didPersistImportedWorksheet) {
-        await this.storage.importedWorksheets?.remove?.(importedRecord.localId).catch(() => {});
-      }
-      if (didAttemptPersistAttempt) {
-        await this.storage.attempts?.remove?.(restoredLocalAttemptId).catch(() => {});
-      }
-      if (error?.code === 'READ_IMPORT_SUPERSEDED' || (options.isCurrent && !options.isCurrent())) return skippedReadImport();
-      throw error;
-    }
-
-    this.applyAttemptState(restoredAttemptRecord, { markDirty: false });
-    this.state.checkResult = checkResult;
-    this.state.restoredAttemptCheckResult = checkResult;
-    this.state.serverActionMessage = options.serverActionMessage === undefined
-      ? t('viewer.notifications.uploadedAttempt.restoredWithId', { id: restoredLocalAttemptId })
-      : options.serverActionMessage;
-    this.pushNotification({
-      kind: 'success',
-      text: options.successMessage || t('viewer.notifications.uploadedAttempt.restored'),
-      ttlMs: VIEWER_NOTIFICATION_DEFAULT_TTL_MS,
-    });
-    this.persistResumeMetadata();
-    return { ok: true, data: { localAttemptId: restoredLocalAttemptId } };
-  }
 
   async resumeUploadedAttempt(uploadedAttemptRow, { isCurrent = () => true, recoverAuth = true } = {}) {
     const uploadedAttemptId = uploadedAttemptRow?.uploaded_attempt_id || null;
@@ -4516,6 +4214,7 @@ class ViewerAttemptSession {
       }
       return await this.restoreAttemptPackageAsLocalAttempt(packageModel, {
         isCurrent: () => isCurrent() && accountCurrent(),
+        replacementKey: `attempt:${uploadedAttemptId}`,
         serverName: serverRow.title,
         serverAccount: this.state.serverSession?.user?.sub || null,
         subject: serverRow.subject || '',
@@ -4538,6 +4237,7 @@ class ViewerAttemptSession {
       this.notifyStateChange();
       return { ok: false, error: { code: 'UPLOAD_ATTEMPT_RESTORE_FAILED', message: this.state.utilityMessage } };
     } finally {
+      this.lifecycle?.clearConsent(`attempt:${uploadedAttemptId}`);
       const next = { ...this.state.uploadedAttemptActionInFlightById };
       delete next[uploadedAttemptId];
       this.state.uploadedAttemptActionInFlightById = next;
@@ -4782,16 +4482,17 @@ class ViewerAttemptSession {
       prompt: options => {
         // Hand off the initial checking notice to the explicit Login/Cancel UI.
         this._browserEntry?.clearFeedback();
-        return promptForReadSignIn(options);
+        return this.lifecycle ? this.lifecycle.promptLogin(options) : promptForReadSignIn(options);
       },
       redirect: ({ intent, isCurrent, subject }) => redirectReadSignIn({
         app: 'viewer', intent, isCurrent, subject: () => subject,
         save: async () => {
+          this.lifecycle?.reserveForAuth(intent);
           if (this.voice.active || Object.keys(this.state.voiceRecovery || {}).length) throw Object.assign(new Error('Pending local work cannot be safely restored.'), { code: 'AUTH_LOCAL_WORK_PENDING' });
           do { await this.flushLocalStateForAuthRedirect(); }
           while (this.state.localAttemptId && this.state.lastSavedRevision < this.state.attemptRevision);
         },
-        localId: () => this.state.localAttemptId,
+        localId: () => this.state.localAttemptId || this.storage.resumeFlags.get(RESUME_FLAG_KEY)?.localId,
       }),
       invalidate: reason => {
           this.state.uploadedAttempts = [];
@@ -5014,20 +4715,24 @@ class ViewerAttemptSession {
       if (!isCurrent()) return { ok: false, skipped: true };
       const started = await this.startImportedWorksheetFromPackageFile(artifact.data, {
         isCurrent: () => isCurrent() && accountCurrent(),
+        replacementKey: `publication:${normalizedPublishedPackageId}`,
         sourceSubject: options?.sourceSubject || '',
         sourceOwner: options?.sourceOwner || '',
       });
+      if (started?.cancelled) return started;
       if (started?.skipped || !isCurrent()) return skippedReadImport();
       this.state.serverActionMessage = `Imported published package ${normalizedPublishedPackageId} into local viewer runtime.`;
       this.notifyStateChange();
       return { ok: true, data: started };
     } finally {
+      this.lifecycle?.clearConsent(`publication:${normalizedPublishedPackageId}`);
       this._openingPublishedPackageIds.delete(normalizedPublishedPackageId);
       this.packageLoad.finish(progressToken);
     }
   }
 
   persistResumeMetadata() {
+    if (this.lifecycle) return this.lifecycle.updateResume();
     if (!this.state.localAttemptId) {
       return;
     }
@@ -5043,6 +4748,7 @@ class ViewerAttemptSession {
   }
 
   async discardAttempt(localAttemptId) {
+    if (this.lifecycle) return this.lifecycle.discard(localAttemptId);
     if (!localAttemptId) return;
     await this.storage.attempts.remove(localAttemptId);
     const flagged = this.storage.resumeFlags.get(RESUME_FLAG_KEY);
@@ -5051,6 +4757,10 @@ class ViewerAttemptSession {
     }
   }
 }
+
+Object.assign(ViewerAttemptSession.prototype, createAttemptOpeningMethods({
+  mapLegacyJsonToPackageModel, parseWorksheetPackage, isolateReadPackageAssets, nowIso, createLocalId, resolveImportedWorksheetPayload, assertReadImportCurrent, skippedReadImport, normalizeRestoredCheckStatus, getSourceIdentity, computeViewerPayloadFingerprint, DEFAULT_LEARNER_ID, imageAnswerRefs, t, VIEWER_NOTIFICATION_DEFAULT_TTL_MS, parseLocalAttemptPackage, ensureUint8Array
+}));
 
 function showAttemptUploadConflictModal(conflictContext = {}) {
   return new Promise((resolve) => {
@@ -5863,6 +5573,12 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
           result = { ok: false, error: error?.error || error };
         }
         if (result.skipped || closing) return;
+        if (result.cancelled) {
+          updateLoadButtons();
+          loadAnnouncement.textContent = t('attemptLifecycle.cancelled');
+          if (openBtn.isConnected) openBtn.focus({ preventScroll: true });
+          return;
+        }
         if (!result.ok) {
           if (session.state.serverSession?.status === VIEWER_SERVER_SESSION_STATES.LOGGED_OUT) { renderRows(); return; }
           if (!closing && openBtn.isConnected) {
@@ -5878,7 +5594,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
           nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
           nextUrl.searchParams.delete('viewerPayload');
           nextUrl.searchParams.delete('snapshot');
-          window.history.replaceState({}, '', nextUrl);
+          window.history.replaceState({ ...window.history.state }, '', nextUrl);
         }
         closeModal();
         renderViewerShell(session);
@@ -6029,7 +5745,7 @@ async function resumeViewerReadReturn(session) {
         url.searchParams.set('localAttemptId', session.state.localAttemptId);
         url.searchParams.delete('viewerPayload');
         url.searchParams.delete('snapshot');
-        window.history.replaceState({}, '', url);
+        window.history.replaceState({ ...window.history.state }, '', url);
       }
       renderViewerShell(session);
       window.viewerSession = session;
@@ -6209,7 +5925,7 @@ function renderViewerShell(session) {
     { button: manageAttemptsBtn, label: t('viewer.attemptMenu.manage') },
     { button: exportAttemptBtn, label: t('viewer.attemptMenu.export') },
     { button: infoBtn, label: t('viewer.details.openTechnicalDetailsTitle') },
-  ] });
+  ].filter(item => session.state.runtimeMode !== 'preview' || item.button === infoBtn) });
   uploadAttemptBtn.setAttribute('aria-label', t('viewer.attemptMenu.save'));
   manageAttemptsBtn.setAttribute('aria-label', t('viewer.attemptMenu.manage'));
   const printHint = document.createElement('div'); printHint.className = 'viewer-print-hint'; printHint.hidden = true;
@@ -6234,7 +5950,7 @@ function renderViewerShell(session) {
   manageAttemptsBtn.addEventListener('click', async () => {
     await showUploadedAttemptsManagerModal(session, { signal, onResumeSuccess: () => {
       const url = new URL(location.href); url.searchParams.set('localAttemptId', session.state.localAttemptId);
-      url.searchParams.delete('viewerPayload'); url.searchParams.delete('snapshot'); history.replaceState({}, '', url);
+      url.searchParams.delete('viewerPayload'); url.searchParams.delete('snapshot'); history.replaceState({ ...history.state }, '', url);
       renderViewerShell(session);
     } });
   }, { signal });
@@ -7476,6 +7192,7 @@ function renderViewerShell(session) {
   }
   header.append(headerTop, answerSummary, resumeWarning);
   blockSection.append(blockHeading, blockList, feedbackView.root, crossQuestionStatus.root);
+  mountPreviewControls({ session, header, signal, render: () => renderViewerShell(session) });
   shell.append(header, feedbackView.reminder, createViewerAuthFeedback(), blockSection);
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';
@@ -7515,7 +7232,7 @@ function cleanupViewerAuthCallbackUrlParams() {
   nextUrl.searchParams.delete(AUTH_RETURN_PARAM);
   nextUrl.searchParams.delete(VIEWER_AUTH_CALLBACK_PARAM);
   nextUrl.searchParams.delete('intent');
-  window.history.replaceState({}, '', nextUrl.toString());
+  window.history.replaceState({ ...window.history.state }, '', nextUrl.toString());
 }
 
 function renderViewerAuthCallbackPanel(session, options = {}) {
@@ -7837,11 +7554,12 @@ function renderViewerStartPanel(session, options = {}) {
     if (!selected) return;
     try {
       const result = await session.importAttemptPackageFromFile(selected);
+      if (result?.cancelled || result?.skipped) { importAttemptPackageBtn.focus({ preventScroll: true }); return; }
       if (!result?.ok) throw new Error(result?.error?.message || t('viewer.notifications.localAttemptImport.failed'));
       if (session.state.localAttemptId) {
         const nextUrl = new URL(window.location.href);
         nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
-        window.history.replaceState({}, '', nextUrl);
+        window.history.replaceState({ ...window.history.state }, '', nextUrl);
       }
       renderViewerShell(session);
       window.viewerSession = session;
@@ -7863,11 +7581,12 @@ function renderViewerStartPanel(session, options = {}) {
 
     try {
       const bytes = await selected.arrayBuffer();
-      await session.startImportedWorksheetFromPackageFile(bytes);
+      const result = await session.startImportedWorksheetFromPackageFile(bytes);
+      if (result?.cancelled || result?.skipped) return;
       if (session.state.localAttemptId) {
         const nextUrl = new URL(window.location.href);
         nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
-        window.history.replaceState({}, '', nextUrl);
+        window.history.replaceState({ ...window.history.state }, '', nextUrl);
       }
       renderViewerShell(session);
       window.viewerSession = session;
@@ -7886,7 +7605,7 @@ function renderViewerStartPanel(session, options = {}) {
         nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
         nextUrl.searchParams.delete('viewerPayload');
         nextUrl.searchParams.delete('snapshot');
-        window.history.replaceState({}, '', nextUrl);
+        window.history.replaceState({ ...window.history.state }, '', nextUrl);
       }
       renderViewerShell(session);
       window.viewerSession = session;
@@ -7966,6 +7685,7 @@ function renderViewerStartPanel(session, options = {}) {
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';
   app.append(panel);
+  mountLocalCleanup({ session, panel });
   renderServerControls();
   if (typeof session.setOnStateChange === 'function') {
     session.setOnStateChange(() => renderServerControls());
@@ -8001,6 +7721,9 @@ function showPublishedPackageLoading(session) {
 async function bootstrapViewer() {
   const readReturn = takeReadAuthReturn('viewer');
   const session = new ViewerAttemptSession(viewerStorage);
+  session.lifecycle = new AttemptLifecycle(session);
+  session.lifecycle.restoreConsent(readReturn);
+  await session.lifecycle.cleanupRetired().catch(() => {});
   const hasOnlyAllowedKeys = (payload, allowedKeys) => {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
     return Object.keys(payload).every((key) => allowedKeys.has(key));
@@ -8037,7 +7760,7 @@ async function bootstrapViewer() {
   const authGate = new SharedAuthGate({
     appArea: 'viewer',
     resumeFlagKey: RESUME_FLAG_KEY,
-    storage: session.storage,
+    storage: session.lifecycle.authStorage(),
     checkSessionReady: async (_intent, options) => session.ensureServerSessionReady(undefined, options),
     getCurrentLocalId: () => session.state.localAttemptId || null,
     getCurrentUiState: () => session.getUiRestoreState(),
@@ -8073,9 +7796,10 @@ async function bootstrapViewer() {
 
   const renderStartPanelFromResumeFlag = async (warningMessage = session.state.recoveryMessage) => {
     const flaggedAttempt = session.storage.resumeFlags.get(RESUME_FLAG_KEY);
-    const resumeAttempt = flaggedAttempt?.localId
+    let resumeAttempt = flaggedAttempt?.localId
       ? await session.storage.attempts.get(flaggedAttempt.localId)
       : null;
+    if (isPreviewAttempt(resumeAttempt)) resumeAttempt = null;
     const startPanelHandlers = {
       onResumeAttempt: async () => {
         if (!resumeAttempt?.localId) return;
@@ -8110,16 +7834,21 @@ async function bootstrapViewer() {
   const completePublishedPackageOpen = () => {
     if (window?.history?.replaceState && window?.location?.href) {
       const nextUrl = new URL(window.location.href);
+      session.lifecycle?.remember({ localId: session.state.localAttemptId });
       // Keep direct published-package links portable across devices/profiles.
       // If we pin localAttemptId here, copied links may fail where that local attempt does not exist.
       nextUrl.searchParams.delete('localAttemptId');
-      window.history.replaceState({}, '', nextUrl);
+      window.history.replaceState({ ...window.history.state }, '', nextUrl);
     }
     renderViewerShell(session);
     window.viewerSession = session;
   };
 
   const handlePublishedPackageOpenResult = async (result) => {
+    if (result?.cancelled || result?.skipped) {
+      const url = new URL(window.location.href); url.search = ''; window.history.replaceState({}, '', url);
+      await renderStartPanelFromResumeFlag(null); return true;
+    }
     if (result?.ok) {
       completePublishedPackageOpen();
       return true;
@@ -8210,6 +7939,7 @@ async function bootstrapViewer() {
 
   if (!hasLaunchIntent) {
     await renderStartPanelFromResumeFlag(session.state.recoveryMessage);
+    if (readReturn) await resumeViewerReadReturn(session);
     return;
   }
 
@@ -8424,6 +8154,10 @@ async function bootstrapViewer() {
       await session.bootstrap();
     }
   } catch (error) {
+    if (error.code === 'ATTEMPT_OPEN_CANCELLED') {
+      const url = new URL(window.location.href); url.search = ''; window.history.replaceState({}, '', url);
+      await renderStartPanelFromResumeFlag(null); return;
+    }
     if (isPublishedPackageAuthBootError(error)) {
       renderPublishedPackageAuthRecovery(error);
       return;

@@ -61,7 +61,7 @@ try {
       await page.waitForFunction(() => window.viewerSession?.state.viewerPayload);
       const inProgressLabel = await page.evaluate(async () => (await import('/server/app/i18n/index.js')).t('viewer.status.inProgress'));
       assert.ok((await page.locator('.answer-summary:visible').innerText()).includes(inProgressLabel));
-      const results = await page.evaluate(async () => {
+      const importing = page.evaluate(async () => {
         const s = window.viewerSession;
         const { t } = await import('/server/app/i18n/index.js');
         s.setAnswer('q1', 'Preserved 答案');
@@ -72,6 +72,8 @@ try {
         return { subject: s.state.sourceSubject, answer: s.state.answers.q1.value, status: s.state.status,
           detailsLabel: t('viewer.details.openTechnicalDetailsAriaLabel'), idLabel: t('viewer.details.localAttemptId'), completed: t('viewer.status.completed') };
       });
+      await page.locator('.viewer-attempt-dialog button[type=submit]').click();
+      const results = await importing;
       assert.equal(results.subject, 'Science 科學');
       assert.equal(results.answer, 'Preserved 答案');
       assert.equal(results.status, 'completed');

@@ -1,7 +1,7 @@
 import { t } from '../i18n/index.js';
 
 // Presentation adapter only. Each app retains its surrounding feature surface.
-export function promptForReadSignIn({ isCurrent = () => true, blocked = false, canRedirect = false, redirect, intent, confirmation = false, title, description } = {}) {
+export function promptForReadSignIn({ isCurrent = () => true, blocked = false, canRedirect = false, redirect, intent, confirmation = false, title, description, warningText = '' } = {}) {
   if (typeof document === 'undefined' || typeof document.createElement !== 'function' || !isCurrent()) return Promise.resolve(false);
   return new Promise(resolve => {
     const previous = document.activeElement;
@@ -36,7 +36,16 @@ export function promptForReadSignIn({ isCurrent = () => true, blocked = false, c
       };
       actions.append(sameTab);
     }
-    dialog.append(heading, body, actions);
+    dialog.append(heading, body);
+    if (warningText) {
+      const warning = document.createElement('p');
+      warning.className = 'confirm-modal__warning read-auth-context-warning';
+      warning.textContent = warningText;
+      warning.id = `${heading.id}-warning`;
+      dialog.setAttribute('aria-describedby', warning.id);
+      dialog.append(warning);
+    }
+    dialog.append(actions);
     document.body.append(dialog);
     let finished = false;
     const finish = value => {

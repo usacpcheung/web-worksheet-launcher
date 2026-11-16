@@ -229,7 +229,7 @@ try {
           path: `${process.env.VIEWER_SMOKE_SCREENSHOTS}/image-response-${locale}-${width}.png`,
           fullPage: true,
         });
-      const roundtrip = await page.evaluate(async () => {
+      const importing = page.evaluate(async () => {
         const old = viewerSession.state.answers.q.value.map((r) => r.assetId);
         const zip = await viewerSession.buildUploadedAttemptPackage();
         await viewerSession.importAttemptPackageFromFile(zip.bytes);
@@ -247,6 +247,8 @@ try {
           ),
         };
       });
+      await page.locator('.viewer-attempt-dialog button[type=submit]').click();
+      const roundtrip = await importing;
       assert.equal(roundtrip.version, 4);
       assert.equal(roundtrip.next.length, 3);
       assert(roundtrip.next.every((id) => !roundtrip.old.includes(id)));
