@@ -40,7 +40,8 @@ try {
       }, locale);
       const more = page.locator('#toolbar-more-btn');
       const menu = page.locator('#toolbar-more-menu');
-      for (const width of [390, 900, 1600, 390, 1600]) {
+      const widths = [390, 767, 768, 900, 1023, 1024, 1600, 390, 1600];
+      for (const width of widths) {
         await page.setViewportSize({ width, height: 900 });
         await page.waitForFunction(width => {
           const parent = document.getElementById('new-story-btn').parentElement;
@@ -51,7 +52,8 @@ try {
         assert.equal(await page.evaluate(() => Number.parseFloat(document.documentElement.style.getPropertyValue('--roleplayscene-topbar-height')) >= document.querySelector('.topbar').getBoundingClientRect().height), true);
         if (width <= 1023) {
           assert.equal(await page.locator('#server-signin-btn').evaluate(node => node.parentElement.id === 'toolbar-more-server-items'), width < 768);
-          await more.click();
+          await more.focus();
+          await page.keyboard.press('Enter');
           await page.locator('#new-story-btn').click();
           assert.equal(await menu.isVisible(), false);
           await more.click();
@@ -64,7 +66,7 @@ try {
           await page.locator('#new-story-btn').click();
         }
       }
-      assert.equal(await page.evaluate(() => window.newStoryClicks), 5, 'reparenting keeps exactly one action handler');
+      assert.equal(await page.evaluate(() => window.newStoryClicks), widths.length, 'reparenting keeps exactly one action handler');
       await page.evaluate(() => {
         document.querySelector('.toolbar').style.width = '500px';
         document.querySelector('.toolbar').style.flex = '0 0 500px';
@@ -97,6 +99,10 @@ try {
       const nextLocale = locale === 'en' ? 'zh-Hant' : 'en';
       await page.locator('#locale-select').selectOption(nextLocale);
       assert.deepEqual(await page.evaluate(() => window.localeChanges), [nextLocale]);
+      await page.locator('#locale-select').focus();
+      await page.evaluate(() => window.renderToolbar({ serverSession: { status: 'checking' } }));
+      assert.equal(await page.locator('#locale-select').evaluate(node => node === document.activeElement), true, 'status refresh keeps locale focus');
+      assert.equal(await page.locator('#server-status').textContent(), await page.evaluate(() => window.translate('server.statusChecking')));
       // No detached listener remains after disposal; a fresh controller handles one click.
       await page.evaluate(() => window.toolbarController.destroy());
       await more.click();

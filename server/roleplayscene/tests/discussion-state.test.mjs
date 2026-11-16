@@ -219,7 +219,6 @@ test('main source protects discussion before story-changing actions', async () =
 // Print form behavior is exercised by roleplayscene-print-controller-smoke.mjs.
 
 test('cue and discussion overlay leaves toolbar language controls reachable', async () => {
-  const mainSource = await readFile(path.resolve('server/roleplayscene/scripts/main.js'), 'utf8');
   const cssSource = await readFile(path.resolve('server/roleplayscene/styles/app.css'), 'utf8');
 
   assert.equal(cssSource.includes('--roleplayscene-topbar-height: 4rem;'), true);

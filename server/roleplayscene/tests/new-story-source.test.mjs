@@ -40,5 +40,4 @@ assert.ok(
 );
 // Overflow behavior is exercised by roleplayscene-toolbar-controller-smoke.mjs.
 
-
 console.log('new story source tests passed');

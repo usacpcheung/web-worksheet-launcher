@@ -79,9 +79,13 @@ try {
       assert.equal(await inputs.first().inputValue(), 'Custom school');
       await modes.first().click();
       assert.equal(await inputs.first().inputValue(), await page.evaluate(async () => (await import('./scripts/i18n.js')).translate('player.discussion.defaultSchoolName')));
+      const closedValue = await inputs.first().inputValue();
+      await inputs.first().evaluate(node => { window.closedSchoolInput = node; });
       await page.keyboard.press('Escape');
       assert.equal(await overlay.isVisible(), false);
       assert.equal(await page.evaluate(() => window.printDocuments.length), 1);
+      await page.evaluate(async next => (await import('./scripts/i18n.js')).setActiveLocale(next), locale);
+      assert.equal(await page.evaluate(() => window.closedSchoolInput.value), closedValue, 'closing unsubscribes the old form from locale changes');
       await openPrint();
       await modes.nth(1).click();
       await inputs.first().fill('');
