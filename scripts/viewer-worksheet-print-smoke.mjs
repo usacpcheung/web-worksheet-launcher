@@ -25,7 +25,7 @@ try {
         { blockId: 'between', kind: 'content', content: { text: 'Keep this content between questions.\n<script>not executable</script>' } },
         { blockId: 'choices', kind: 'question', prompt: { text: 'Choose activities 選擇活動' }, responseConfig: { inputType: 'multiple_choice', selectionMode: 'multi', shuffleOptions: true,
           options: ['Reading 閱讀', 'Walking 散步', 'Drawing 繪畫', 'Singing 唱歌'].map((label, i) => ({ id: 'o' + i, value: 'v' + i, label })) } },
-        { blockId: 'bool', kind: 'question', prompt: { text: 'True or false 是非題' }, responseConfig: { inputType: 'boolean' } },
+        { blockId: 'bool', kind: 'question', prompt: { text: 'True or false 是非題' }, responseConfig: { inputType: 'boolean', correctAnswer: true } },
         { blockId: 'number', kind: 'question', prompt: { text: 'A number 數字' }, responseConfig: { inputType: 'number' } },
         { blockId: 'blank', kind: 'question', prompt: { text: 'Unanswered question 未作答' }, responseConfig: { inputType: 'text' } },
         { blockId: 'long-reading', kind: 'content', content: { text: '## Extended reading\n' + Array.from({length:80}, (_,i) => `Paragraph ${i+1}: Read and reflect. 閱讀並思考。`).join('\n\n') + '\n\nREADING-END', format: 'limited-markdown-v1' } },
@@ -51,6 +51,7 @@ try {
     const printButton = page.locator('.viewer-header-actions > button[aria-describedby="viewer-print-hint"]');
     await printButton.waitFor();
     await page.evaluate(() => document.fonts.ready);
+    await page.evaluate(() => window.viewerSession.checkAnswers());
     const before = await page.evaluate(() => JSON.stringify({ answers: window.viewerSession.state.answers, blocks: window.viewerSession.state.viewerPayload.blocks }));
     const displayed = await page.locator('[data-block-id="choices"] .choice-button-group__item').evaluateAll(nodes => nodes.map(node => ({
       label: node.querySelector('.choice-button-group__label').textContent,
@@ -90,7 +91,9 @@ try {
       label: node.querySelector('.print-choice-label').textContent,
       selected: node.classList.contains('is-selected'),
     }))), displayed);
-    assert.equal(await printed.locator('[data-block-id="bool"] .print-choice.is-selected .print-choice-label').innerText(), 'False');
+    assert.equal(await printed.locator('[data-block-id="bool"] .print-choice.is-selected .print-choice-label').innerText(), locale === 'en' ? 'False' : '否');
+    assert.deepEqual(await printed.locator('[data-block-id="bool"] .print-choice-label').allTextContents(), locale === 'en' ? ['True', 'False'] : ['是', '否']);
+    assert.match(await printed.locator('[data-block-id="bool"]').innerText(), locale === 'en' ? /Correct answer: True/ : /正確答案：是/);
     assert.match(await printed.locator('[data-block-id="number"] .print-answer-text').innerText(), /[:：] 0$/);
     assert.match(await printed.locator('[data-block-id="text"] .print-answer-text').innerText(), /\*\*Literal answer\*\*/);
     assert.match(await printed.locator('[data-block-id="blank"] .print-answer-text').innerText(), locale === 'en' ? /Not answered/ : /未作答/);

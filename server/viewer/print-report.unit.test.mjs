@@ -519,3 +519,34 @@ test('statically imported report builders follow locale changes without mutating
     setLocale(previousLocale, { persist: false });
   }
 });
+
+test('boolean print choices, learner answers and correct-answer details follow the UI locale', async () => {
+  const previousLocale = getLocale();
+  const viewerPayload = { title: 'Boolean labels', blocks: [
+    { blockId: 'false', kind: 'question', position: 0, prompt: { text: 'Authored False stays literal' }, responseConfig: { inputType: 'boolean', correctAnswer: true } },
+    { blockId: 'true', kind: 'question', position: 1, prompt: { text: 'True answer' }, responseConfig: { inputType: 'boolean', correctAnswer: false } },
+    { blockId: 'empty', kind: 'question', position: 2, prompt: { text: 'Unanswered' }, responseConfig: { inputType: 'boolean', correctAnswer: false } },
+  ] };
+  const answers = { false: { value: false }, true: { value: true } };
+  const checkResult = { correctCount: 0, totalQuestions: 3, statusByBlockId: { false: 'incorrect', true: 'incorrect', empty: 'incorrect' } };
+  const before = JSON.stringify({ viewerPayload, answers, checkResult });
+  try {
+    for (const locale of ['en', 'zh-Hant', 'en']) {
+      setLocale(locale, { persist: false });
+      const labels = locale === 'en' ? ['True', 'False'] : ['是', '否'];
+      const report = await model.buildWorksheetPrintReportModel({ viewerPayload, answers, checkResult });
+      for (const question of report.questions) {
+        assert.deepEqual(question.choices.map(choice => choice.label), labels);
+        assert.deepEqual(question.choices.map(choice => choice.booleanValue), ['true', 'false']);
+      }
+      assert.equal(report.questions[0].answerText, labels[1]);
+      assert.equal(report.questions[1].answerText, labels[0]);
+      assert.equal(report.questions[2].answerText, t('viewer.print.notAnswered'));
+      assert.deepEqual(report.questions[0].choices.map(choice => choice.selected), [false, true]);
+      assert.deepEqual(report.questions[2].choices.map(choice => choice.selected), [false, false]);
+      assert.equal(report.questions[0].result.detail, t('viewer.check.reveal.correctAnswer', { answer: labels[0] }));
+      assert.equal(report.questions[1].result.detail, t('viewer.check.reveal.correctAnswer', { answer: labels[1] }));
+      assert.equal(JSON.stringify({ viewerPayload, answers, checkResult }), before);
+    }
+  } finally { setLocale(previousLocale, { persist: false }); }
+});

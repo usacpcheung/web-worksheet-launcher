@@ -1,3 +1,4 @@
+import { createCheckFeedback, getCheckRevealMessage } from './check-feedback.js';
 import { createReadingBlockPresentation, createQuestionPromptPresentation } from './block-presentation.js';
 import { createViewerAudioControls, resolveViewerAudioSources } from './audio-controls.js';
 import { createAttemptOpeningMethods } from './attempt-opening.js';
@@ -56,7 +57,7 @@ import {
   normalizePublishedPackageFilters,
 } from '../app/api/published-packages-service.js';
 import { getAvailableLocales, getLocale, resolveInitialLocale, setLocale, t } from '../app/i18n/index.js';
-import { firstNonBlankString, normalizePromptMediaRefs, coerceAnswerValueByInputType, deterministicShuffle } from './worksheet-values.js';
+import { firstNonBlankString, normalizePromptMediaRefs, coerceAnswerValueByInputType, getBooleanAnswerLabel, deterministicShuffle } from './worksheet-values.js';
 import { VIEWER_PRINT_DEFAULT_SCHOOL_NAMES, getDefaultViewerPrintSchoolName, normalizeViewerPrintSchoolName, classifyPrintQuestionLayout, buildWorksheetPrintReportModel } from './print-report-model.js';
 import { buildWorksheetPrintReportHtml } from './print-report-html.js';
 
@@ -1191,28 +1192,6 @@ function computeCheckResult(viewerPayload, answers) {
     correctCount,
     totalQuestions,
   };
-}
-
-function getCheckRevealMessage({ status, learnerAnswerText, correctAnswerText }) {
-  const normalizedLearnerAnswer = typeof learnerAnswerText === 'string'
-    ? learnerAnswerText.trim()
-    : '';
-  const learnerClause = normalizedLearnerAnswer.length > 0
-    ? t('viewer.check.reveal.yourAnswer', { answer: normalizedLearnerAnswer })
-    : t('viewer.check.reveal.noAnswer');
-
-  if (status === 'correct') {
-    return t('viewer.check.reveal.correctAnswer', { answer: correctAnswerText });
-  }
-
-  if (status === 'ungraded_missing_or_invalid_key' || status === 'ungraded_missing_key') {
-    return learnerClause;
-  }
-
-  return t('viewer.check.reveal.incorrectWithCorrectAnswer', {
-    learnerClause,
-    answer: correctAnswerText,
-  });
 }
 
 function computeAnswerSummary(viewerPayload, answers) {
@@ -5358,87 +5337,14 @@ function renderViewerShell(session) {
       let checkBanner = null;
       let checkReveal = null;
       if (shouldShowCheckFeedback && inputType !== 'fill_in_blanks') {
-        const checkStatus = currentBlockCheckStatus;
-        const isCorrect = checkStatus === 'correct';
-        const isIncorrect = checkStatus === 'incorrect';
-        const isUngradedMissingOrInvalidKey = checkStatus === 'ungraded_missing_or_invalid_key'
-          || checkStatus === 'ungraded_missing_key';
-        const correctAnswer = block.responseConfig?.correctAnswer;
-        const learnerAnswer = session.state.answers?.[block.blockId]?.value;
-        const formatCorrectAnswer = () => {
-          if (inputType === 'multiple_choice') {
-            if (block.responseConfig?.selectionMode === 'multi') {
-              return Array.isArray(correctAnswer) ? correctAnswer.map((value) => String(value)).join(', ') : '';
-            }
-            return String(correctAnswer ?? '');
-          }
-          if (inputType === 'boolean') {
-            return coerceAnswerValueByInputType('boolean', correctAnswer) === true ? 'True' : 'False';
-          }
-          if (inputType === 'number') {
-            return String(correctAnswer ?? '');
-          }
-          return '';
-        };
-
-        const formatLearnerAnswer = () => {
-          if (inputType === 'multiple_choice') {
-            if (block.responseConfig?.selectionMode === 'multi') {
-              return Array.isArray(learnerAnswer) ? learnerAnswer.map((value) => String(value)).join(', ') : '';
-            }
-            return String(learnerAnswer ?? '');
-          }
-          if (inputType === 'boolean') {
-            const normalized = coerceAnswerValueByInputType('boolean', learnerAnswer);
-            if (normalized === true) return 'True';
-            if (normalized === false) return 'False';
-            return '';
-          }
-          if (inputType === 'number') {
-            return learnerAnswer === '' || learnerAnswer === null || learnerAnswer === undefined
-              ? ''
-              : String(learnerAnswer);
-          }
-          return '';
-        };
-
-        checkBanner = document.createElement('div');
-        checkBanner.className = `viewer-check-banner ${isCorrect ? 'is-correct' : isIncorrect ? 'is-incorrect' : 'is-ungraded'}`;
-        const checkIcon = document.createElement('span');
-        checkIcon.className = 'viewer-check-banner__icon';
-        checkIcon.textContent = isCorrect ? '✓' : isIncorrect ? '✕' : '•';
-        const checkBody = document.createElement('div');
-        checkBody.className = 'viewer-check-banner__body';
-        const checkTitle = document.createElement('p');
-        checkTitle.className = 'viewer-check-banner__title';
-        checkTitle.textContent = isCorrect
-          ? t('viewer.check.correct')
-          : isIncorrect
-            ? t('viewer.check.incorrect')
-            : t('viewer.check.notGraded');
-        const checkDetail = document.createElement('p');
-        checkDetail.className = 'viewer-check-banner__detail';
-        checkDetail.textContent = isCorrect
-          ? t('viewer.check.greatWork')
-          : isIncorrect
-            ? t('viewer.check.notQuite')
-            : t('viewer.check.missingAnswerKey');
-        checkBody.append(checkTitle, checkDetail);
-        checkBanner.append(checkIcon, checkBody);
-
-        checkReveal = document.createElement('p');
-        checkReveal.className = 'viewer-check-reveal muted';
-        checkReveal.textContent = getCheckRevealMessage({
-          status: checkStatus,
-          learnerAnswerText: formatLearnerAnswer(),
-          correctAnswerText: isUngradedMissingOrInvalidKey ? '' : formatCorrectAnswer(),
+        const feedback = createCheckFeedback({
+          responseConfig: block.responseConfig,
+          learnerAnswer: session.state.answers?.[block.blockId]?.value,
+          checkStatus: currentBlockCheckStatus,
+          t,
         });
-
-        if (isCorrect) {
-          card.classList.add('question-card--checked-correct');
-        } else if (isIncorrect) {
-          card.classList.add('question-card--checked-incorrect');
-        }
+        ({ checkBanner, checkReveal } = feedback);
+        if (feedback.cardClassName) card.classList.add(feedback.cardClassName);
       }
 
       const helper = document.createElement('p');
@@ -5538,8 +5444,8 @@ function renderViewerShell(session) {
         control.setAttribute('role', 'group');
         control.setAttribute('aria-labelledby', label.id);
         [
-          { value: true, datasetValue: 'true', label: 'True' },
-          { value: false, datasetValue: 'false', label: 'False' },
+          { value: true, datasetValue: 'true', label: getBooleanAnswerLabel(true, t) },
+          { value: false, datasetValue: 'false', label: getBooleanAnswerLabel(false, t) },
         ].forEach((optionConfig) => {
           const button = document.createElement('button');
           button.type = 'button';

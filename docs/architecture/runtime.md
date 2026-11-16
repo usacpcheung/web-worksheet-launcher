@@ -33,10 +33,27 @@ and share media feedback. Image URLs are released on load/error or card disposal
 late storage results and feedback are ignored after disposal.
 
 `main.js` retains section numbering, card recreation signatures, answer controls
-and updates, submitted/checking presentation, voice/rewrite/Undo and navigation.
+and updates, submitted-input behaviour, voice/rewrite/Undo and navigation.
 `block-view-host.js` still owns card disposal and stable section wrappers. The
 presentation module is statically imported; package formats, persistence and
 offline behaviour are unchanged.
+
+## Worksheet viewer checking-feedback ownership
+
+`server/viewer/check-feedback.js` renders the existing correct, incorrect and
+ungraded banners and answer-reveal messages from a response configuration,
+learner answer and already computed status. It returns the banner/reveal nodes
+and optional card class; it does not access session state or calculate scores.
+The reveal formatter remains re-exported by `main.js` for existing callers.
+
+`main.js` keeps checking eligibility and calculations, when feedback becomes
+visible, card placement/recreation, submission and persistence. Ordinary text
+questions remain ungraded and fill-in-the-blanks keeps its own feedback renderer.
+Boolean display labels use the editor's existing translated vocabulary through
+`getBooleanAnswerLabel` in `worksheet-values.js`: English True/False and
+Traditional Chinese 是/否. Viewer buttons, checking reveals and printed choices
+and answers use the same labels; boolean storage values and grading are unchanged.
+Authored text and option labels are not translated.
 
 ## Worksheet viewer audio-control ownership
 

@@ -6,7 +6,7 @@ import { imageAnswerRefs } from '../app/image-response.js';
 import { optionImageRef, imageDescription } from '../app/option-images.js';
 import { copyWorksheetText } from '../app/worksheet-text.js';
 import { getChoicePrefix } from './choice-button-group.js';
-import { firstNonBlankString, normalizePromptMediaRefs, coerceAnswerValueByInputType, deterministicShuffle } from './worksheet-values.js';
+import { firstNonBlankString, normalizePromptMediaRefs, coerceAnswerValueByInputType, getBooleanAnswerLabel, deterministicShuffle } from './worksheet-values.js';
 
 // Report preparation reads local assets but never saves or changes the attempt.
 // Locale is resolved at call time, just as it is for the live viewer.
@@ -98,8 +98,8 @@ function formatAnswerValueForPrint(block, rawValue) {
 
   if (inputType === 'boolean') {
     const normalized = coerceAnswerValueByInputType('boolean', rawValue);
-    if (normalized === true) return 'True';
-    if (normalized === false) return 'False';
+    if (normalized === true) return getBooleanAnswerLabel(true, t);
+    if (normalized === false) return getBooleanAnswerLabel(false, t);
     return t('viewer.print.notAnswered');
   }
 
@@ -135,8 +135,8 @@ function formatCorrectAnswerForPrint(block) {
 
   if (inputType === 'boolean') {
     const normalized = coerceAnswerValueByInputType('boolean', correctAnswer);
-    if (normalized === true) return 'True';
-    if (normalized === false) return 'False';
+    if (normalized === true) return getBooleanAnswerLabel(true, t);
+    if (normalized === false) return getBooleanAnswerLabel(false, t);
     return '';
   }
 
@@ -355,7 +355,7 @@ export async function buildWorksheetPrintReportModel({
         selected: selectedValues.includes(String(option.value ?? option.label ?? '')),
       })))
       : config.inputType === 'boolean'
-        ? [true, false].map(value => ({ label: value ? 'True' : 'False', booleanValue: String(value),
+        ? [true, false].map(value => ({ label: getBooleanAnswerLabel(value, t), booleanValue: String(value),
           selected: coerceAnswerValueByInputType('boolean', learnerValue) === value }))
         : [];
     const questionImage = await resolvePrintQuestionImage(getQuestionImageRefForPrint(block), storage);
