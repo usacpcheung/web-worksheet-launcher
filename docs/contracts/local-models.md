@@ -98,7 +98,12 @@ changes and newly active work are retained. Recent orphan imports/media receive
 a one-hour staging grace period. Imported worksheets are reclaimed only when no
 retained attempt references them. Media reference checks include all retained
 drafts, imported worksheets and attempts and run in the same transaction as
-removal. Editor removal marks still-referenced media for later collection instead
+removal. Same-turn individual asset removals share one reference-checking
+transaction, including editor reset/media deletion and viewer import rollback.
+Each caller still waits for that transaction and receives any cleanup failure;
+batching does not bypass reference checks or detach required cleanup. The editor
+shows progress beside its worksheet actions while a new worksheet is created.
+Editor removal marks still-referenced media for later collection instead
 of deleting another session's bytes. Exported ZIP files and server records are
 outside this cleanup. IndexedDB upgrades close newer clients on version change;
 a pre-upgrade tab holding an older database connection may need to be closed or

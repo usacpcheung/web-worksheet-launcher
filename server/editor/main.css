@@ -534,6 +534,10 @@ textarea.control {
   display: flex;
 }
 
+.editor-panel.left > [data-editor-load-status] {
+  margin: 0;
+}
+
 .sidebar-worksheet-actions .sidebar-action-btn {
   width: 100%;
 }

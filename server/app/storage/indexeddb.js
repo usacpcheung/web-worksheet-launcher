@@ -1,4 +1,5 @@
 import { createLocalDataCleanup, LIFECYCLE_STORE, recordStamp, assetReferences } from './local-data-cleanup.js';
+import { createAssetRemovalBatch } from './asset-removal-batch.js';
 import { imageQuestions, imageAnswerRefs } from '../image-response.js';
 const DB_NAME = 'worksheetLauncherStorage';
 const DB_VERSION = 3;
@@ -191,6 +192,7 @@ async function recoverRecord(storeName, record, expected, isCurrent) {
 }
 
 const localCleanup = createLocalDataCleanup(openDatabase);
+const removeAsset = createAssetRemovalBatch(options => localCleanup.collect(options));
 async function deleteAttemptsAndOwnedImages(localId) {
   const records = await listRecords(STORE_NAMES.localAttempts);
   const candidates = Object.fromEntries(records.filter(a => localId === undefined || a.localId === localId).map(a => [a.localId, recordStamp(a)]));
@@ -199,7 +201,7 @@ async function deleteAttemptsAndOwnedImages(localId) {
 
 async function deleteRecord(storeName, localId) {
   if (storeName === STORE_NAMES.localAttempts) return deleteAttemptsAndOwnedImages(localId);
-  if (storeName === STORE_NAMES.localAssets) return localCleanup.collect({ assetIds: [localId] });
+  if (storeName === STORE_NAMES.localAssets) return removeAsset(localId);
   await runTransaction(storeName, 'readwrite', (store) => {
     store.delete(localId);
   });

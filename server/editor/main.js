@@ -5283,6 +5283,14 @@ function renderEditorShell(session) {
     importBtn.disabled = Boolean(progress);
     startNewWorksheetBtn.disabled = Boolean(progress);
     openViewerBtn.disabled = Boolean(progress);
+    const creating = progress?.id === 'new';
+    const newLabel = creating ? label : t('editor.actions.startNewWorksheet');
+    if (startNewWorksheetBtn.textContent !== newLabel) {
+      setMediaActionButtonContent(startNewWorksheetBtn, creating ? 'loading' : 'worksheetPlus', newLabel);
+    }
+    startNewWorksheetBtn.setAttribute('aria-busy', creating ? 'true' : 'false');
+    importBtn.textContent = progress?.id === 'local' ? label : t('editor.actions.importPackage');
+    importBtn.setAttribute('aria-busy', progress?.id === 'local' ? 'true' : 'false');
     const spoken = progress ? t(`editor.packageLoad.${progress.stage}`) : '';
     shell.querySelectorAll('[data-editor-load-status]').forEach(status => {
       if (status.textContent !== spoken) status.textContent = spoken;
@@ -9402,6 +9410,7 @@ function renderEditorShell(session) {
     leftHeading,
     metadataSection,
     worksheetActionsRow,
+    loadStatus,
     controlsRow,
     blockList,
     feedbackButton,
@@ -9422,7 +9431,6 @@ function renderEditorShell(session) {
   });
   topBar.append(saveStateEl, validationEl, lastSavedEl, localDraftIdEl, languageSelector);
   shell.append(topBar, layout);
-  shell.appendChild(loadStatus);
   shell.appendChild(browsePublishedModalRoot);
   shell.appendChild(manageUploadedDraftsModalRoot);
   session.unsubscribeEditorPackageLoad?.();
