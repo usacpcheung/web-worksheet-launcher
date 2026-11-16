@@ -4,11 +4,11 @@
 
 This note documents the shared editor/viewer contract for searching and opening published packages.
 
-Both products already use the shared client and published-package page service. Future changes must preserve that shared contract.
+Both products use the shared API client. Viewer additionally uses the published-package page service; editor retains its own list adapter. Preserve their common wire contract without assuming identical controller ownership.
 
 ## Canonical client + call sites
 
-Primary shared API client and editor call paths:
+Shared API client, viewer page helpers and editor call paths:
 
 - `createServerApiClient()` in `server/app/api/server-api-client.js`
 - `listPublishedPackages(query)` in `server/app/api/server-api-client.js`
@@ -108,10 +108,8 @@ If content type is not ZIP, client returns `UNEXPECTED_CONTENT_TYPE` and open fl
 
 - API requests use `fetch(..., { credentials: 'include' })` (cookie-backed session).
 - No bearer token plumbing in editor for these paths.
-- Sign-in required is inferred from:
-  - HTTP `401` or `403`, or
-  - HTML response where JSON/ZIP was expected (common auth redirect symptom).
-- `ensureServerSessionReady()` gates published search/open and raises user-facing sign-in messages before retry.
+- Shared read authentication distinguishes authentication-required outcomes from explicit permission denial and service/network failure. Structured `FORBIDDEN`/`PERMISSION_DENIED` do not trigger login; auth-like successful HTML retains gateway compatibility.
+- The read coordinator verifies readiness and owns bounded authentication recovery. Open/import still checks document, dialog and account ownership. See [server reads](authentication-reads.md).
 
 ## Error + empty-state behavior expected by editor
 
@@ -119,13 +117,13 @@ Published browse/search:
 
 - While loading: "Loading published packages…"
 - Empty successful result (`items.length === 0`): "No published packages found."
-- API/network/auth error: modal error text set from structured `error.message`; notification emitted.
+- API/network/auth error: localized structured error presentation; a failed read is not an empty result set.
 
 Open published package:
 
 - In-flight dedupe by `openingPublishedPackageIds` to prevent duplicate opens.
 - On success: imports ZIP into new local draft and emits success notifications.
-- On failure: uses `serverActionMessage` or API `error.message`; browse modal stays open with error.
+- On real failure: localized feedback with retry available. Cancel/supersession does not show an opening error; closing the browser invalidates late work.
 
 Uploaded draft upload conflict + slot handling:
 
@@ -137,7 +135,7 @@ Viewer uploaded attempt slot handling:
 
 - `ATTEMPT_SLOT_LIMIT_REACHED` must include `error.details.slotLimit`.
 - `GET /attempts` should include `data.attemptSlotLimit` for slot-usage UI.
-- After deleting one uploaded attempt from the focused slot-full recovery prompt, upload is expected to retry in the same flow.
+- After deleting an uploaded attempt from focused slot recovery, the user selects Continue saving to server to retry the retained snapshot in the same flow.
 - The general uploaded-attempt manager is for manual resume/download/delete actions and should not be used as the automatic upload recovery UI.
 
 ## Do-not-break rules for viewer reuse

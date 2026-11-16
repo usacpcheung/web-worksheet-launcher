@@ -1,5 +1,7 @@
 # Version C layout and chooser validation
 
+> Historical implementation/validation record. The described feature is included in the PR1/PR2 baseline. Branch, unmerged/pending status and test results below refer to the original stage, not current instructions or fresh acceptance. See [current viewer guidance](viewer-ui-refactor-plan.md).
+
 Recorded 2026-10-30 (Asia/Hong_Kong). This stage is stacked on PR #333
 (`98cc23ae717cc31ca92827dba2afd75f4428ac6f`) and remains unmerged. It implements
 stage 3 of the [viewer plan](viewer-ui-refactor-plan.md), using the exact

@@ -29,7 +29,7 @@ The helper's in-process UI callback is `onStatusMessage(message, status)`: `mess
 
 Editor/viewer popup completion work is scoped to its originating flow. Concurrent callers now join the active popup promise. If a flow is explicitly replaced, replacement invalidates previous callbacks before cancellation; old cleanup cannot clear the new popup handle. Session probes and post-sign-in list refreshes check ownership before applying results. Viewer asynchronous UI overrides receive an `isCurrent()` guard alongside `finalizeFlow`; they must recheck it after awaits before changing feedback or starting further work. List loading state is released only by the request that owns it (or by the editor's active-request count).
 
-Voice capture and RolePlayScene line generation require a new explicit action after sign-in; they do not start automatically. Existing editor protected-intent recovery is separate and validates the original target before replay. Viewer redirect recovery uses the existing `authReturn`/`authCallback` path described below, not the retired worksheet result protocol.
+Voice capture and RolePlayScene line generation require a new explicit action after sign-in; they do not start automatically. Editor popup audio preparation requires explicit Generate audio confirmation after login. Legacy provider-return intents validate the restored target and offer retry guidance without replaying a provider request. Viewer redirect recovery uses the existing `authReturn`/`authCallback` path described below, not the retired worksheet result protocol.
 
 ## Same-tab server-action recovery
 
@@ -43,10 +43,12 @@ The editor + viewer runtime now uses these canonical `responseConfig` input type
 - `number`
 - `boolean`
 - `multiple_choice`
+- `image_response`
+- `fill_in_blanks`
 
 ### Strict responseConfig inputType acceptance
 
-- Strict schema validation accepts only canonical `inputType` values: `text`, `number`, `boolean`, `multiple_choice`. Editor/viewer normalization defaults missing/null input types to `text` before subsequent validation; that default does not accept explicit legacy aliases.
+- Strict schema validation accepts only canonical `inputType` values: `text`, `number`, `boolean`, `multiple_choice`, `image_response`, `fill_in_blanks`. Editor/viewer normalization defaults missing/null input types to `text` before subsequent validation; that default does not accept explicit legacy aliases.
 - Legacy aliases (`plain_text`, `short_text`, `single_choice`) are not coerced and must fail schema validation.
 - Number-input legacy `step` compatibility normalization is removed; consumers must rely on canonical `numberRules` + `min`/`max` fields only.
 
@@ -158,6 +160,10 @@ Deterministic shuffle seed behavior (viewer):
 - `boolean` → `boolean` (or null/empty when unanswered)
 - `multiple_choice` with `selectionMode: "single"` → `string` matching an existing `options[*].value`
 - `multiple_choice` with `selectionMode: "multi"` → `string[]`
+- `image_response` → ordered `{ assetId }[]`, with packaged JPEG/PNG media
+- `fill_in_blanks` → string map keyed by stable blank ID
+
+See [image-response](worksheet/image-response-investigation.md), [blank configuration](worksheet/fill-in-the-blanks.md), and [text modes](worksheet/long-text-answers.md) for limits and version gates. Feedback is a separate worksheet/attempt field, not another question type.
 
 ### Answer-key shape rules (`responseConfig.correctAnswer`, optional)
 
@@ -185,8 +191,8 @@ Viewer client-side check UI is intentionally gated by answer-key availability in
 
 Contract expectations for viewer/server integration:
 
-- Client-side check requires snapshot-derived viewer payload question blocks to include `responseConfig.correctAnswer`.
-- If `correctAnswer` is omitted for all eligible question blocks, `hasGradeableQuestions()` returns `false` and the viewer check button does not render.
+- Boolean, numeric and multiple-choice checking uses `responseConfig.correctAnswer`. Fill-in-the-blanks derives checking from its per-blank keys; free-response blanks are excluded from the automatic total.
+- If there are no gradeable questions/blanks, `hasGradeableQuestions()` returns `false` and the viewer check button does not render.
 - This is expected behavior (not a launch/runtime error condition).
 - For high-stakes grading, evaluate answers server-side and avoid shipping authoritative answer keys in client payloads.
 
@@ -212,7 +218,7 @@ Published authentication recovery retains the same package intent and retries it
 
 - `authReturn=1`: restore an existing protected intent when possible; if no explicit source and restoration fails, show the start panel with guidance. Explicit sources retain normal validation.
 - `authReturn=1&authCallback=1`: callback-only recovery panel with bounded retry for transient/not-ready session results, keeping the intent until success or explicit cancellation. Retry, Continue sign-in and Cancel remain available.
-- `SharedAuthGate` validates action payload/local identity and preserves local state around redirects. Legacy rewrite replay compatibility does not mean ordinary voice capture replays automatically.
+- `SharedAuthGate` validates action payload/local identity and preserves local state around redirects. Legacy provider-return compatibility restores explicit retry guidance; it does not automatically replay voice capture or provider requests.
 
 ## Related contracts
 

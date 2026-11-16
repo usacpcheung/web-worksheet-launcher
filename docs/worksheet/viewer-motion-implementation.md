@@ -1,5 +1,7 @@
 # Viewer motion implementation — stage 4
 
+> Historical implementation/validation record. The described feature is included in the PR1/PR2 baseline. Branch, unmerged/pending status and test results below refer to the original stage, not current instructions or fresh acceptance. See [current viewer guidance](viewer-ui-refactor-plan.md).
+
 Drafted 2026-10-30 (Asia/Hong_Kong). Stack on PR #334 at
 `bf28fb29a7399e0eb04524bb3d7a58fcae64a91b`. Keep the existing stack open.
 Implementation is in this PR; it remains unmerged and undeployed.

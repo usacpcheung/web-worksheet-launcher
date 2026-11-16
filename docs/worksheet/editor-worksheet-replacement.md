@@ -1,6 +1,6 @@
 # Editor worksheet replacement
 
-> Current behavior reviewed against main `7bb19de` on 2026-10-06. Code evidence: [main.js](../../server/editor/main.js), [package-load-progress.js](../../server/viewer/package-load-progress.js), [editor-load-progress-smoke.mjs](../../scripts/editor-load-progress-smoke.mjs). Test commands below are guidance, not a new test-run report.
+> Aligned to PR #349 (`99ba300`) and PR2 cleanup on 2026-11-16. Code evidence: [main.js](../../server/editor/main.js), [package-load-progress.js](../../server/viewer/package-load-progress.js), [editor-load-progress-smoke.mjs](../../scripts/editor-load-progress-smoke.mjs). Test commands below are guidance, not a new test-run report.
 
 The following editor actions show a replacement confirmation before loading:
 
@@ -22,7 +22,10 @@ Legacy-audio migration confirmation is separate and remains supported.
 New Worksheet retains its existing destructive-action confirmation.
 If deleting the current draft fails, it remains active and autosaving resumes;
 the error is shown without deleting its media or switching worksheets.
-Viewer and RolePlayScene loading behavior is unchanged.
+New Worksheet shows Creating on its action and in the worksheet action status,
+yields for painting, and batches media cleanup into one reference-safe scan.
+Shared media still referenced by attempts, imports or other drafts is retained.
+See [local lifecycle and cleanup](../contracts/local-models.md#normal-attempts-temporary-preview-and-cleanup).
 
 ## Download and opening feedback
 
@@ -38,8 +41,9 @@ New Worksheet takes the same lock during deletion/creation, so a load cannot rac
 an already-started reset. Downloads abort after 60 seconds without new bytes;
 each received chunk resets the inactivity timer. A timeout reports a retryable
 error and releases the load lock without replacing the active worksheet.
-Closing the list does not cancel an accepted load; reopening it restores the
-current progress. Failure releases the lock so the user can retry. Stage changes
+Closing the list invalidates its selected load; late download/import work cannot
+replace the active worksheet. Reopening requires a fresh explicit Open action.
+Cancellation and failure release the controls so the user can retry. Stage changes
 are announced through a live status without announcing every percentage.
 Only the persistent shell status is a live region; duplicate text inside package
 list dialogs is visual-only, preventing duplicate stage announcements.

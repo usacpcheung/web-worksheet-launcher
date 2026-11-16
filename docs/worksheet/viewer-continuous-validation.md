@@ -1,5 +1,7 @@
 # Continuous viewer validation
 
+> Historical implementation/validation record. The described feature is included in the PR1/PR2 baseline. Branch, unmerged/pending status and test results below refer to the original stage, not current instructions or fresh acceptance. See [current viewer guidance](viewer-ui-refactor-plan.md).
+
 Recorded 2026-10-30 (Asia/Hong_Kong). This is local/CI evidence, not VPS acceptance.
 
 ## Scope and review

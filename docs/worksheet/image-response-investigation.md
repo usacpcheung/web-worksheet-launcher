@@ -1,6 +1,6 @@
 # Image-response questions
 
-Implemented on a branch stacked on PR #342 (base `27486889b134551885c6f4cf24036b9ae624173c`). This is not a VPS deployment record.
+Current image-response behavior is included in the PR1/PR2 baseline. The original PR #343 implementation/review notes below are historical evidence, not a fresh VPS acceptance record.
 
 ## Authoring and size budget
 

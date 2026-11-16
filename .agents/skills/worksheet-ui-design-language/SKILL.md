@@ -5,11 +5,9 @@ description: Use when changing the worksheet product UI in this repository, espe
 
 # Worksheet UI Design Language
 
-> Viewer target design, recorded 2026-10-29; not yet implemented.
-> The viewer guidance below describes the selected Version C direction.
-> See the [implementation plan](../../../docs/worksheet/viewer-ui-refactor-plan.md)
-> for current-code evidence, pending decisions and staged acceptance gates.
-> Existing interfaces remain valid until their migration PR is implemented.
+> Current worksheet UI guidance, aligned to the PR1/PR2 baseline on 2026-11-16.
+> Version C is implemented. See [current viewer guidance](../../../docs/worksheet/viewer-ui-refactor-plan.md)
+> and the linked historical records for the original design decisions.
 
 ## Overview
 
@@ -75,20 +73,18 @@ Editor UI should not feel like a landing page or a learner presentation. Keep it
 
 ### Design status and authority
 
-Version C's continuous worksheet and ordered, paginated chooser are the selected
-viewer direction. The latest standalone mockup is a visual and interaction
+Version C's continuous worksheet and ordered, paginated chooser are implemented. The latest standalone mockup is a visual and interaction
 reference; it is not the production implementation or a source of business rules.
 For visual or interaction changes, provide a mockup for review when practical.
 Base it on current production CSS and flows; preserve behavior outside the proposed
 change. Label simplifications explicitly so they cannot become accidental
-implementation requirements. The detailed plan records trial parameters, open decisions and acceptance gates.
+implementation requirements. The current reference records implemented behavior; dated plans are historical.
 Do not describe a planned feature as shipped until the corresponding PR is merged
 and its deployment status is known.
 
-During migration, preserve the existing interface for areas outside each PR's
-scope. The target design supersedes this skill's former mandatory bottom bar,
-mobile stacked bottom zones and horizontal stepper layout. Earlier handoff rules
-for an inline question grid also no longer define the selected chooser.
+Preserve areas outside the scope of each UI change. The continuous viewer,
+side action area, narrow launcher/drawer and paginated chooser supersede the
+former mandatory bottom bar and horizontal stepper.
 
 ### Worksheet and actions
 
@@ -198,10 +194,10 @@ for an inline question grid also no longer define the selected chooser.
 - Preserve the complete voice/rewrite state machine, including session readiness,
   permission requests, recording, processing, cancellation, recovery and Undo.
   Do not reduce this to the mockup's timer simulations.
-- Define operation-status ownership for multiple mounted blocks before implementation.
+- Preserve one operation-status owner across all mounted blocks.
   Stop/Cancel/View must stay reachable without repeating the active operation's
-  controls and live announcements in every text question. Use the plan's pending
-  status-placement decision; do not silently invent a new operation flow.
+  controls and live announcements in every text question. Preserve the shared
+  operation panel and per-question recovery; do not invent a new operation flow.
 - Preserve existing language-switch, page-hidden, page-exit and viewer-replacement
   behavior. These are lifecycle events, not ordinary section navigation. Dispose
   listeners, timers, media and controls correctly when the shell is replaced.

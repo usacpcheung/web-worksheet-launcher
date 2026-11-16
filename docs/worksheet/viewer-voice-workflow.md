@@ -1,12 +1,12 @@
 # Viewer incremental voice answers and rewrite
 
-> Current behavior reviewed against main `7bb19de` on 2026-10-06. Code evidence: [answer-recording.js](../../server/viewer/answer-recording.js), [answer-voice-workflow.js](../../server/viewer/answer-voice-workflow.js), [main.js](../../server/viewer/main.js). Test commands below are guidance, not a new test-run report.
+> Aligned to PR #349 (`99ba300`) and PR2 cleanup on 2026-11-16. Code evidence: [answer-recording.js](../../server/viewer/answer-recording.js), [answer-voice-workflow.js](../../server/viewer/answer-voice-workflow.js), [main.js](../../server/viewer/main.js). Test commands below are guidance, not a new test-run report.
 
 This merged workflow is active on `main`. Historical PR sequencing is no longer an implementation or deployment instruction.
 
 ## Learner behavior
 
-- Editable text questions offer **Add by voice**. The pipeline records, transcribes,
+- Editable standard text questions, typed blanks, and enabled submitted feedback text offer **Add by voice**. Long text and word-bank blanks do not. The pipeline records, transcribes,
   rewrites only the new transcript, and inserts the result without a preview.
 - Additions append by default. A deliberate cursor placement inserts there; a
   selection replaces only the selected text after transcription and rewrite succeed.
@@ -14,11 +14,12 @@ This merged workflow is active on `main`. Historical PR sequencing is no longer 
   on cancellation/failure; Undo restores the entire previous answer.
   Successful insertion/cancellation clears the placement intent.
 - The target answer is read-only throughout checking, capture and processing.
-  Stage messages, elapsed recording time, Stop and Cancel appear inline.
+  Stage messages, elapsed recording time, Stop, Cancel and View use one shared
+  operation panel; question-specific hints and recovery remain beside the answer.
 - One voice or whole-answer rewrite runs per attempt. Next/Back during recording
   stops capture and processes the original question. Navigation during network
   work leaves that work attached to its original question. Another question stays
-  editable, with a compact explanation and View/Cancel controls; its voice/rewrite
+  editable, with View/Cancel in the shared operation panel; its voice/rewrite
   buttons are disabled. Background completion does not move focus from that question.
 - Submit is blocked while an operation is active. Cancel unlocks immediately and
   rejects late results, even if an underlying transport ignores cancellation.
@@ -35,7 +36,8 @@ This merged workflow is active on `main`. Historical PR sequencing is no longer 
 - The recorder stops near one minute (59.5 seconds to allow finalization);
   recordings beyond 60 seconds and uploads over 20 MiB are rejected.
 - Rewrite input is limited to 2,000 Unicode code points. The existing worksheet
-  answer limit remains separate and uses UTF-16 length. Oversized additions are
+  standard/long text answer limit remains separate and uses UTF-16 length; typed
+  blanks use their 50-code-point limit. Oversized additions are
   retained in an editable recovery area, never truncated into the answer.
 - Session readiness is checked before requesting microphone permission. In the
   viewer, an authentication-required result first offers **Sign in / Cancel**
@@ -124,8 +126,9 @@ and mobile Chrome. Live provider calls require explicit authorization.
 - Exercise the one-minute stop, oversized transcript, combined answer overflow,
   editable recovery, local save/reload, discard, submission and exported package.
 - Check Chinese/English messages, keyboard navigation, mobile portrait/landscape,
-  browser backgrounding and fixed-bottom-bar clearance. Confirm no voice controls
-  on number/boolean/choice questions or completed attempts.
+  browser backgrounding and fixed action/operation-panel clearance. Confirm no voice controls
+  on number/boolean/choice questions or completed question answers. Enabled
+  submitted feedback text retains its own assistance tools.
 - Inspect VPS service/proxy logs for request failures without sharing learner
   content or credentials. Confirm existing worksheet, audio and RolePlayScene flows.
 
@@ -151,5 +154,5 @@ Transcription also uses the shared runner; see [transcription integration](../co
 It verifies readiness before upload and rejects stale account/target output.
 Authentication failure retains audio in memory for explicit same-account Retry;
 account changes invalidate it. Raw audio is never saved. Transcript-only retry
-continues to skip transcription. Recording controls stay app-owned; T2A migration
-remains separate work.
+continues to skip transcription. Recording controls stay app-owned. T2A uses its own implemented shared runner
+and deadlines, separate from this learner voice workflow.

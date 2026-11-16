@@ -74,7 +74,15 @@ Paths below are relative to the API base; use the browser base for clients or `/
 | GET | `/roleplayscene/published/:publishedSceneId` | Published scene metadata. |
 | GET / DELETE | `/roleplayscene/published/:publishedSceneId/artifact` / `/roleplayscene/published/:publishedSceneId` | ZIP download / owner delete. |
 
-The viewer handles attempt name conflicts and slot limits as upload outcomes after authentication, including copy/replace selection and deletion followed by an explicit retry. A non-auth upload error must not produce a sign-in warning. Failed session probes report that sign-in status could not be verified; authentication failure during viewer preflight retains the shared sign-in recovery path. Once the upload action has run, a `401/403` returns localized guidance without queuing a login replay or redirecting automatically. After signing in, the user must click Save again. Editor and RolePlayScene also require an explicit retry after upload rejection. A viewer upload queued before any POST may resume once after sign-in; a failed recovery replay clears its intent and cannot redirect again. Voice/rewrite recovery retains its existing behavior.
+The viewer handles name conflicts and full slots as upload outcomes after shared
+mutation authentication. Initial popup login requires explicit Save confirmation;
+same-tab return and older queued upload intents restore guidance without sending
+a POST. Authentication failure after an attempted upload also requires a fresh
+explicit action. A non-auth upload error must not become a sign-in warning.
+Conflict/slot retries retain the prepared snapshot; attempt slot recovery requires
+Continue saving to server after a slot is freed. See [mutation authentication](../contracts/authentication-mutations.md)
+and [upload snapshots](../contracts/upload-snapshots.md).
+
 
 Upload content type is `application/zip`; publish body is JSON, not the revision/content JSON proposed in old specifications. IDs in detail/publish routes are UUID-validated. Successful JSON responses use `{ok: true, data: ...}`; errors use `{ok: false, error: {code, message, details?}}`. Artifacts return ZIP bytes with length information. Unknown nested subroutes return not-found errors; they are not additional API capabilities.
 
@@ -101,12 +109,11 @@ conflict recovery. Authentication metadata is retained separately from the
 presentation category (a timeout can still carry HTTP 401). Existing auth
 handlers remain responsible for sign-in recovery.
 
-The viewer uses a separate protected-action adapter for auth-gate envelopes:
-executed/redirected/blocked results are not raw upload results, while attempted
-upload failures (including authentication rejection) pass through to their existing dialogs. Each application still
-owns messages, dialogs, busy state and user-selected retries. RolePlayScene's
-general server-error formatter also serves non-upload operations and remains
-unchanged. This extraction does not add automatic retries or change wire formats.
+Each application owns messages, dialogs, busy state and user-selected retries.
+`classifyUploadResult` classifies raw upload results; authentication preparation
+and legacy intent handling remain with their flow owners. The unused protected-
+envelope classifier was removed in PR2. This does not change active upload,
+authentication, recovery or transport policy.
 
 
 The shared browser client's ZIP upload deadline is 120 seconds, covering transport and response-body reading for both XMLHttpRequest and fetch fallback. `createServerApiClient({ uploadTimeoutMs })` permits an explicit positive override. Editor/viewer expose Cancel during uploads; RolePlayScene changes its server Save button to Cancel. Cancellation returns `ABORTED`, and deadline expiry returns `UPLOAD_TIMEOUT`, releasing the upload state. The transport deadline starts when the ZIP request starts, after package preparation/preflight. Cancellation during preparation marks the request canceled before it can be sent; it does not interrupt ZIP construction itself.
@@ -168,4 +175,7 @@ Each editor, viewer and RolePlayScene upload reserves an operation until its pre
 
 Editor and viewer upload buttons also reserve the surrounding sign-in preflight and conflict/slot recovery flow. Repeated clicks cannot start another flow while a dialog is pending. Only the owning operation releases its busy state. These guards are in-memory: they do not add durable recovery across reload, change package formats, or automatically resend upload POSTs.
 
-Viewer upload preflight supplies a runtime-only ownership guard to the authentication gate. It checks both attempt ID and generation before replay and before saving a login intent, including after local persistence or a late authentication failure. The guard is not serialized; normal login-return restoration continues to validate the stored intent against the restored record.
+Viewer upload preparation retains runtime attempt-ID/generation and account
+ownership guards. They are rechecked across asynchronous preparation and recovery,
+not serialized into packages or login intents. Login-return compatibility validates
+the restored local context and offers a fresh action rather than replaying upload.

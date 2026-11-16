@@ -1,6 +1,6 @@
 # Authentication for server reads
 
-This is the current implementation reference for the read integration built on main `35c8524` (PR #319). The [workflow contract](authentication-workflows.md) records the complete target; the subsequently implemented mutation and provider integrations are documented in [mutation authentication](authentication-mutations.md) and [bridge workflows](rewrite-bridge-workflows.md).
+This is the current implementation reference for the read integration built on main `35c8524` (PR #319). The [workflow contract](authentication-workflows.md) summarizes current behavior; the subsequently implemented mutation and provider integrations are documented in [mutation authentication](authentication-mutations.md) and [bridge workflows](rewrite-bridge-workflows.md).
 
 ## Covered workflows
 
@@ -40,7 +40,7 @@ The route continues to use the deployment's existing `auth=1` OIDC entry. Real d
 
 ## Deliberate boundaries
 
-Upload, publish and deletion preparation is now documented in [Authentication for server mutations](authentication-mutations.md). Audio/transcription/rewrite now use the implemented [shared bridge lifecycle](rewrite-bridge-workflows.md). Existing conflict/slot recovery, upload receipts, deletion uncertainty and explicit mutation confirmation remain in place; old viewer upload intents now return guidance without replay. The shared probe owner protects those callers from stale probe results. See the [implemented coverage inventory](authentication-workflows.md#implemented-shared-coverage-for-publication-and-listdownload-planning) for current cross-workflow boundaries.
+Upload, publish and deletion preparation is now documented in [Authentication for server mutations](authentication-mutations.md). Audio/transcription/rewrite now use the implemented [shared bridge lifecycle](rewrite-bridge-workflows.md). Existing conflict/slot recovery, upload receipts, deletion uncertainty and explicit mutation confirmation remain in place; old viewer upload intents now return guidance without replay. The shared probe owner protects those callers from stale probe results. See the [implemented coverage inventory](authentication-workflows.md#implemented-shared-coverage) for current cross-workflow boundaries.
 
 Local content conversion remains in existing app code. Existing replacement confirmations and package validation must remain intact. Do not move those operations into the retried read callback.
 

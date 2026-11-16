@@ -34,7 +34,8 @@ For a documentation-only edit, validate scope, relative links, consistency and s
 
 `server/app/api/upload-result.test.mjs` checks resource-specific result
 classification, original-result preservation, malformed inputs, authentication
-metadata on transport failures, and the auth-gate envelope boundary. Editor,
+metadata on transport failures. Auth-gate and mutation preparation behavior is
+covered by their own flow and consumer tests. Editor,
 viewer and RolePlayScene caller tests load the real shared classifier. Keep
 `editor-upload-result-smoke.mjs`, `attempt-upload-recovery-ui-smoke.mjs`,
 `upload-cancellation-ui-smoke.mjs`,
@@ -93,11 +94,11 @@ The ordinary static server defaults to `http://127.0.0.1:8765`. Read each script
 | RolePlayScene identity/title/layout | `roleplayscene-scene-name-smoke.mjs`, `roleplayscene-scene-name-state-smoke.mjs`, `roleplayscene-project-title-smoke.mjs`, `roleplayscene-intro-layout-smoke.mjs` |
 | RolePlayScene ordering/audio/discussion | `roleplayscene-dialogue-order-smoke.mjs`, `roleplayscene-voice-choice-smoke.mjs`, `roleplayscene-voice-smoke.mjs`, `roleplayscene-music-navigation-smoke.mjs` |
 
-The table inventories the 26 retained-product smoke scripts. `review-fixes-smoke.mjs` additionally forces unfinished IndexedDB writes across reload and exercises upload cancellation in all three products, post-upload refresh cancellation in editor/RolePlayScene, both locales and desktop/narrow layouts. It also simulates concurrent IndexedDB saves, deletes and clears between recovery reads and writes, including equal timestamps. `npm test` does not run them. Check shared consumers too: worksheet package/audio helpers serve the viewer/API, and viewer voice processing also serves RolePlayScene discussion.
+The table highlights representative scripts; the runner discovers the full current suite (86 scripts at the PR2 baseline). `review-fixes-smoke.mjs` additionally forces unfinished IndexedDB writes across reload and exercises upload cancellation in all three products, post-upload refresh cancellation in editor/RolePlayScene, both locales and desktop/narrow layouts. It also simulates concurrent IndexedDB saves, deletes and clears between recovery reads and writes, including equal timestamps. `npm test` does not run them. Check shared consumers too: worksheet package/audio helpers serve the viewer/API, and viewer voice processing also serves RolePlayScene discussion.
 
-`upload-operation-smoke.mjs` covers real browser XHR response loss for all three upload APIs, immediate and late-commit status recovery, URL-encoded metadata fingerprints, bounded unknown status without a POST resend, and cancellation during lookup. The runner discovers it automatically alongside the existing 27 scripts.
+`upload-operation-smoke.mjs` covers real browser XHR response loss for all three upload APIs, immediate and late-commit status recovery, URL-encoded metadata fingerprints, bounded unknown status without a POST resend, and cancellation during lookup. The runner discovers it automatically with the other browser scripts.
 
-`upload-http-errors-smoke.mjs` adds a real local HTTP server that flushes response headers before stalling or disconnecting the body. It checks 401/403/409/413/429 rejections, uncertain 200/503 responses and non-JSON replies in Chromium, including the XHR status reset after headers. Together these bring the automatically discovered browser suite to 29 scripts.
+`upload-http-errors-smoke.mjs` adds a real local HTTP server that flushes response headers before stalling or disconnecting the body. It checks 401/403/409/413/429 rejections, uncertain 200/503 responses and non-JSON replies in Chromium, including the XHR status reset after headers. It is included in the automatically discovered suite.
 
 Browser fixtures use isolated storage and synthetic/mocked auth, API and audio where documented by each script. Never point synthetic/destructive fixtures at production learner records. Verify both supported locales, desktop/narrow layouts, keyboard focus and browser errors for affected UI.
 

@@ -62,8 +62,11 @@ The viewer first obtains sign-in consent/readiness using the shared mutation
 flow, then asks for an optional student name (unless already resolved), then
 reviews the server name. A first name defaults to worksheet title plus student
 name and is editable with a limit of 80 Unicode code points after trimming.
-A saved name is displayed read-only; there is no manager rename action. Long
-legacy saved names remain usable for replacement. Generated copy names reserve
+The final name is editable on each server save; there is no manager rename action.
+Automatic names follow student-name corrections or become title-only when the
+student name is intentionally cleared. Custom names remain independent. A changed
+final name uses a new slot; a matching name follows the normal conflict flow.
+Unchanged long legacy saved names remain usable for replacement. Generated copy names reserve
 space for their suffix inside the 80-character limit. The server returns the
 actual saved `title` and `subject` so subsequent saves and authenticated resumes
 keep the correct identity without changing the worksheet title.

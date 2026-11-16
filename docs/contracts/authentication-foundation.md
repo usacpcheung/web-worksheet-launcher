@@ -1,6 +1,10 @@
 # Shared authentication foundation
 
-This reference describes the first runtime extraction after main `980e131`. The subsequent [read integration](authentication-reads.md) implements contextual recovery for browsing/opening/downloading; the [mutation integration](authentication-mutations.md) adds explicit post-login confirmation for upload/publish/delete; provider migrations remain planned. The [workflow mapping and agreed target](authentication-workflows.md) was merged in PR #318. This implementation builds on that documented contract.
+This reference describes the active shared session owner and compatibility
+classifier. All three products use the [read](authentication-reads.md),
+[mutation](authentication-mutations.md) and [bridge](rewrite-bridge-workflows.md)
+integrations. The [workflow reference](authentication-workflows.md) records current
+continuation rules; the original staged mapping is archived.
 
 ## Current integration
 
@@ -9,7 +13,7 @@ This reference describes the first runtime extraction after main `980e131`. The 
 - `server/app/auth/session-outcome.js` provides a pure failure classifier. `session-readiness.js` uses its **legacy compatibility mode**, preserving existing 401/403/code/flag behavior for every existing consumer.
 - Editor/viewer now use the same probe owner through `session-state-adapter.js`, preserving silent probes and their existing enum values. API-client error flags and the popup callback protocol are unchanged.
 
-The permission-aware classifier is used by the read recovery coordinator. Legacy readiness normalization and provider callers retain their compatibility policy; their migration must update classification and consumers together.
+The permission-aware classifier is used by the read recovery coordinator. Legacy readiness normalization retains its compatibility policy. Provider requests use the implemented bridge classification and account guards; any later compatibility-policy change must update its consumers together.
 
 ## State ownership coordinator
 
@@ -43,14 +47,17 @@ All current callers must treat supersession as a quiet exit, not infer a fresh a
 | Bare HTTP 403 without authentication evidence | `permission_denied` |
 | Other failure / timeout / unknown prose | `unavailable` |
 
-For `legacyAuthStatuses:true`, the existing readiness helper's predicate is preserved: auth hint, numeric-coercible 401/403, or `AUTH_REQUIRED` means authentication required; otherwise unavailable. This deliberate temporary mode does not claim to resolve permission classification throughout the apps.
+For `legacyAuthStatuses:true`, the existing readiness helper's predicate is preserved: auth hint, numeric-coercible 401/403, or `AUTH_REQUIRED` means authentication required; otherwise unavailable. This deliberate compatibility mode does not claim to resolve permission classification throughout the apps.
 
 The classifier consumes normalized API/probe evidence, not raw HTML or redirects. Existing API parsing remains responsible for identifying OIDC login responses. Readiness success is handled separately; this function classifies failures only.
 
-## Verification and next integration
+## Verification
 
 Unit tests exercise both completion orders, newer failure/account change, external state replacement, cancellation, rejected probes and isolation between adapters. Compatibility classification is checked against the previous predicate over status/code/flag combinations. Existing RolePlayScene preflight tests execute the real shared implementation through its production adapter.
 
 Run the auth/RolePlayScene tests and full Node suite, plus list-feedback, deletion, popup/sign-in, direct-launch and voice browser coverage appropriate to the changed consumers. Simulated results do not establish live OIDC behavior. A deployment should verify that the new JavaScript modules load correctly and repeat focused session/list acceptance before merging.
 
-The read integration adds contextual sign-in and read continuation. Mutation preparation now shares that coordinator without changing upload/deletion recovery semantics. Next: provider authentication and recovery. Retain the existing [popup contract](../message-contract.md), [upload recovery](upload-recovery.md) and [deletion contract](deletion-lifecycle.md). Reuse the popup helper; do not add a second authentication protocol.
+Read, mutation and provider integrations are active. Retain the existing
+[popup contract](../message-contract.md), [upload recovery](upload-recovery.md)
+and [deletion contract](deletion-lifecycle.md). Reuse the popup helper rather
+than adding a second authentication protocol.

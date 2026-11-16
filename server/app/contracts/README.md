@@ -4,8 +4,8 @@ This folder contains local contract/compatibility utilities used by editor/viewe
 
 Terminology note:
 - The utilities here still use `snapshot`/`worksheetId` naming for compatibility with existing local editor/viewer payload shapes.
-- Current architecture direction is package-centered (`publishedPackageId`) for server-backed published content.
-- Treat this folder as transitional client-side compatibility code, not the source of truth for server API identity fields.
+- Current server architecture is package-centered (`publishedPackageId`) for server-backed published content.
+- These are active client compatibility contracts, also consumed by package/API validation. They do not define server resource identity fields.
 
 ## Modules
 
@@ -24,7 +24,7 @@ Terminology note:
 ## Mapping guardrails
 
 - Draft → snapshot mapping intentionally strips editor-only/transient fields like `clientRevision`, `draftMeta`, `localValidation`, and `uiState`.
-- Snapshot → viewer payload mapping intentionally keeps the payload minimal and read-only (`worksheetId`, `snapshotId`, `snapshotVersion`, `title`, `blocks`).
+- Snapshot → viewer payload mapping intentionally keeps the payload minimal and read-only (identity, title, ordered blocks and supported feedback configuration).
 - Viewer payload + responses → attempt mapping only accepts responses keyed by question block IDs from the viewer payload and excludes non-question block responses.
 
 ## Snapshot provenance guardrail

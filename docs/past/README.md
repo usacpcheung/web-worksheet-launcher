@@ -42,3 +42,11 @@ Use the [current documentation index](../README.md) and [complete review registe
 The original message contract mixed still-active response/auth sections with a retired parent protocol. Its full historical copy stays here while the stable `docs/message-contract.md` path now covers only current contracts. The old ADR’s snapshot utilities still exist in client compatibility modules; the current local-model guide distinguishes that from unimplemented server proposals.
 
 Old branch names, PR stacks, deletion candidates, rollback commits and test counts describe their original baselines. In particular, the responsive proposal is only partly realized and cache-first publication loading is not implemented. Remaining ideas are not silently promoted to required work. Old renderer security-header examples must not be applied wholesale to products that support microphone capture or shared login.
+
+## Archived during PR2 alignment (2026-11-16)
+
+- [Authentication mapping and extraction assessment](audits/authentication-workflows-2026-10.md): superseded by the [current workflow reference](../contracts/authentication-workflows.md).
+- [Viewer staged implementation plan](plans/viewer-ui-refactor-2026-10.md): superseded by [current viewer guidance](../worksheet/viewer-ui-refactor-plan.md).
+
+These preserve original decisions and evidence. Proposed follow-up work is not an
+approved current feature roadmap.
