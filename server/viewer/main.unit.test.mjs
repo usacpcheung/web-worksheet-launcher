@@ -303,7 +303,7 @@ async function loadViewerModule(overrides = {}) {
   globalThis.document = globalThis[bagName].document;
   globalThis.window = globalThis[bagName].window;
 
-  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource.replace(/from '(\.\/(?:answer-(?:voice-workflow|voice-ui)|voice-sign-in|attempt-menu|browser-entry|package-load-progress|block-view-host|block-presentation|check-feedback|section-navigation|worksheet-navigation|entry-motion)\.js)'/g, (_, path) => 'from ' + JSON.stringify(new NodeURL(path, import.meta.url).href)))}`;
+  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource.replace(/from '(\.\/(?:answer-(?:voice-workflow|voice-ui)|voice-sign-in|attempt-menu|browser-entry|package-load-progress|block-view-host|block-presentation|check-feedback|number-answer-control|boolean-answer-control|section-navigation|worksheet-navigation|entry-motion)\.js)'/g, (_, path) => 'from ' + JSON.stringify(new NodeURL(path, import.meta.url).href)))}`;
   return import(dataUrl);
 }
 
@@ -1479,87 +1479,6 @@ test('coerceAnswerValueForQuestion supports multiple_choice single and multi ans
   assert.equal(mod.coerceAnswerValueForQuestion(single, 'a'), 'a');
   assert.equal(mod.coerceAnswerValueForQuestion(single, 'z'), '');
   assert.deepEqual(mod.coerceAnswerValueForQuestion(multi, ['b', 'a', 'b', 'x']), ['b', 'a']);
-});
-
-test('getBooleanSelectionState maps stored values to selected button state', async () => {
-  const mod = await loadViewerModule();
-  assert.deepEqual(mod.getBooleanSelectionState(true), {
-    selectedValue: true,
-    truePressed: true,
-    falsePressed: false,
-  });
-  assert.deepEqual(mod.getBooleanSelectionState(false), {
-    selectedValue: false,
-    truePressed: false,
-    falsePressed: true,
-  });
-  assert.deepEqual(mod.getBooleanSelectionState(null), {
-    selectedValue: null,
-    truePressed: false,
-    falsePressed: false,
-  });
-  assert.deepEqual(mod.getBooleanSelectionState('true'), {
-    selectedValue: true,
-    truePressed: true,
-    falsePressed: false,
-  });
-  assert.deepEqual(mod.getBooleanSelectionState('false'), {
-    selectedValue: false,
-    truePressed: false,
-    falsePressed: true,
-  });
-  assert.deepEqual(mod.getBooleanSelectionState(''), {
-    selectedValue: null,
-    truePressed: false,
-    falsePressed: false,
-  });
-  assert.deepEqual(mod.getBooleanSelectionState(undefined), {
-    selectedValue: null,
-    truePressed: false,
-    falsePressed: false,
-  });
-});
-
-test('applyBooleanGroupState hydrates selected and disabled button state', async () => {
-  const mod = await loadViewerModule();
-  function createButton(booleanValue) {
-    const button = {
-      dataset: { booleanValue },
-      disabled: false,
-      attributes: {},
-      selectedClass: false,
-      setAttribute(name, value) {
-        this.attributes[name] = value;
-      },
-    };
-    button.classList = {
-      toggle: (_className, flag) => {
-        button.selectedClass = Boolean(flag);
-      },
-    };
-    return button;
-  }
-  const trueButton = createButton('true');
-  const falseButton = createButton('false');
-  const group = {
-    querySelectorAll: () => [trueButton, falseButton],
-  };
-
-  mod.applyBooleanGroupState(group, true, true);
-  assert.equal(trueButton.selectedClass, true);
-  assert.equal(falseButton.selectedClass, false);
-  assert.equal(trueButton.attributes['aria-pressed'], 'true');
-  assert.equal(falseButton.attributes['aria-pressed'], 'false');
-  assert.equal(trueButton.disabled, true);
-  assert.equal(falseButton.disabled, true);
-
-  mod.applyBooleanGroupState(group, null, false);
-  assert.equal(trueButton.selectedClass, false);
-  assert.equal(falseButton.selectedClass, false);
-  assert.equal(trueButton.attributes['aria-pressed'], 'false');
-  assert.equal(falseButton.attributes['aria-pressed'], 'false');
-  assert.equal(trueButton.disabled, false);
-  assert.equal(falseButton.disabled, false);
 });
 
 test('deterministicShuffle remains stable per seed', async () => {
@@ -2901,56 +2820,6 @@ test('buildTechnicalDetailsRows omits source ids that do not apply', async () =>
   ]);
 });
 
-test('getNumberInputErrorMessage reports range and rule errors without coercion', async () => {
-  const mod = await loadViewerModule();
-  const responseConfig = {
-    min: 1,
-    max: 5,
-    numberRules: {
-      allowedKinds: ['integer', 'decimal'],
-      allowSigned: false,
-      decimalPlacesAllowed: 1,
-    },
-  };
-
-  assert.deepEqual(mod.getNumberInputErrorMessage('0', responseConfig), {
-    message: 'Value is below minimum (1).',
-    normalizedValue: '',
-  });
-  assert.deepEqual(mod.getNumberInputErrorMessage('6', responseConfig), {
-    message: 'Value is above maximum (5).',
-    normalizedValue: '',
-  });
-  assert.deepEqual(mod.getNumberInputErrorMessage('+2', responseConfig), {
-    message: 'Signed values are not allowed for this question.',
-    normalizedValue: '',
-  });
-  assert.deepEqual(mod.getNumberInputErrorMessage('1.23', responseConfig), {
-    message: 'Too many decimal places for this question.',
-    normalizedValue: '',
-  });
-  assert.deepEqual(mod.getNumberInputErrorMessage('4.5', responseConfig), {
-    message: '',
-    normalizedValue: 4.5,
-  });
-});
-
-test('getNumberInputErrorMessage ignores legacy step config', async () => {
-  const mod = await loadViewerModule();
-  const responseConfig = { min: 0, max: 10, step: 0.5 };
-
-  assert.deepEqual(mod.getNumberInputErrorMessage('1.3', responseConfig), {
-    message: '',
-    normalizedValue: 1.3,
-  });
-  assert.deepEqual(mod.getNumberInputErrorMessage('2.5', responseConfig), {
-    message: '',
-    normalizedValue: 2.5,
-  });
-});
-
-
-
 test('block presentation signature includes grading-derived fields and guarded check feedback rendering', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
 
@@ -2961,23 +2830,6 @@ test('block presentation signature includes grading-derived fields and guarded c
   assert.equal(source.includes('const shouldShowCheckFeedback = hasGlobalCheckResult && currentBlockIsCheckable && hasCurrentBlockCheckStatus;'), true);
   assert.equal(source.includes("if (shouldShowCheckFeedback && inputType !== 'fill_in_blanks') {"), true);
 });
-test('number rendering branch avoids text input min/max attributes and uses pattern hint', async () => {
-  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes("if (Number.isFinite(block.responseConfig?.min)) control.min"), false);
-  assert.equal(source.includes("if (Number.isFinite(block.responseConfig?.max)) control.max"), false);
-  assert.equal(source.includes('control.pattern ='), true);
-  assert.equal(source.includes('control.title ='), true);
-  assert.equal(source.includes("'Enter a valid integer or decimal number for this question.'"), false);
-});
-
-test('boolean rendering branch uses aria-labelledby and only labelable controls receive htmlFor', async () => {
-  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes("control.setAttribute('aria-labelledby', label.id);"), true);
-  assert.equal(source.includes("control.setAttribute('aria-label', 'Choose True or False');"), false);
-  assert.equal(source.includes("if (control.matches('input, select, textarea'))"), true);
-  assert.equal(source.includes("const normalizedCurrentValue = coerceAnswerValueByInputType('boolean', currentValue);"), true);
-});
-
 test('createInputErrorNode applies stable id and live region semantics', async () => {
   const created = [];
   const mod = await loadViewerModule({
@@ -6006,7 +5858,7 @@ test('undo lifecycle wiring exists for post-rewrite visibility, restore, and man
   assert.equal(source.includes("cacheRawControlValue(block.blockId, String(savedUndoAnswer ?? ''));"), true);
   assert.equal(source.includes('session.setAnswer(block.blockId, savedUndoAnswer, { restoreUndo: true });'), true);
   assert.equal(source.includes('delete nextUndoBuffer[block.blockId];'), true);
-  assert.equal(source.includes("control.addEventListener('input', () => {"), true);
+  assert.equal(source.includes("bindTextAnswerInput(control, {"), true);
   assert.equal(source.includes('session.state.undoBuffer = nextUndoBuffer;'), true);
 });
 
