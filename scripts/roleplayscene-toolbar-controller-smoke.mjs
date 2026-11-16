@@ -26,6 +26,8 @@ try {
           isLoadingUploadedDrafts: false, isLoadingPublishedScenes: false,
         };
         window.toolbarController = createToolbarController({ onLocaleChange: value => window.localeChanges.push(value) });
+        // Registered after the controller: observe completion of its native resize handler.
+        window.addEventListener('resize', () => { window.handledToolbarWidth = window.innerWidth; });
         window.renderToolbar = changes => {
           Object.assign(window.toolbarState, changes);
           window.toolbarController.render(window.toolbarState);
@@ -40,9 +42,14 @@ try {
       }, locale);
       const more = page.locator('#toolbar-more-btn');
       const menu = page.locator('#toolbar-more-menu');
+      const resizeToolbar = async width => {
+        await page.evaluate(() => { window.handledToolbarWidth = null; });
+        await page.setViewportSize({ width, height: 900 });
+        await page.waitForFunction(width => window.handledToolbarWidth === width, width);
+      };
       const widths = [390, 767, 768, 900, 1023, 1024, 1600, 390, 1600];
       for (const width of widths) {
-        await page.setViewportSize({ width, height: 900 });
+        await resizeToolbar(width);
         await page.waitForFunction(width => {
           const parent = document.getElementById('new-story-btn').parentElement;
           return width > 1023 ? parent.classList.contains('toolbar__files') : parent.id === 'toolbar-more-project-items';
@@ -94,7 +101,7 @@ try {
       assert.equal(await page.locator('#mode-play').isDisabled(), true);
       assert.equal(await page.locator('#published-exit-btn').evaluate(node => node.hidden), false);
       await page.evaluate(() => window.renderToolbar({ inPublishedPlay: false, isUploadingDraft: false, isLoadingUploadedDrafts: false, isLoadingPublishedScenes: false }));
-      await page.setViewportSize({ width: 390, height: 900 });
+      await resizeToolbar(390);
       await more.click();
       const nextLocale = locale === 'en' ? 'zh-Hant' : 'en';
       await page.locator('#locale-select').selectOption(nextLocale);
