@@ -100,6 +100,20 @@ try {
       await page.locator('#locale-select').selectOption(nextLocale);
       assert.deepEqual(await page.evaluate(() => window.localeChanges), [nextLocale]);
       await page.locator('#locale-select').focus();
+      await page.evaluate(() => window.toolbarController.updateDraftAvailability({
+        isOpeningDraft: true, isLoadingUploadedDrafts: false, isLoadingPublishedScenes: false,
+      }));
+      for (const id of ['new-story-btn', 'import-btn', 'server-save-btn', 'server-manage-btn', 'server-browse-published-btn']) {
+        assert.equal(await page.locator(`#${id}`).isDisabled(), true);
+      }
+      assert.equal(await menu.isVisible(), true, 'draft progress does not close overflow');
+      assert.equal(await page.locator('#locale-select').evaluate(node => node === document.activeElement), true, 'draft progress does not move focus');
+      await page.evaluate(() => window.toolbarController.updateDraftAvailability({
+        isOpeningDraft: false, isLoadingUploadedDrafts: false, isLoadingPublishedScenes: false,
+      }));
+      for (const id of ['new-story-btn', 'import-btn', 'server-save-btn', 'server-manage-btn', 'server-browse-published-btn']) {
+        assert.equal(await page.locator(`#${id}`).isDisabled(), false);
+      }
       await page.evaluate(() => window.renderToolbar({ serverSession: { status: 'checking' } }));
       assert.equal(await page.locator('#locale-select').evaluate(node => node === document.activeElement), true, 'status refresh keeps locale focus');
       assert.equal(await page.locator('#server-status').textContent(), await page.evaluate(() => window.translate('server.statusChecking')));

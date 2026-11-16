@@ -430,6 +430,18 @@ export function createToolbarController({ onLocaleChange }) {
     applyToolbarOverflowLayout();
   }
 
+  // Draft progress updates must not rebuild/rearrange the menu or move focus.
+  function updateDraftAvailability({ isOpeningDraft, isLoadingPublishedScenes, isLoadingUploadedDrafts }) {
+    if (btnImport) btnImport.disabled = isOpeningDraft;
+    if (btnNewStory) btnNewStory.disabled = isOpeningDraft;
+    if (serverBrowsePublishedButton) {
+      serverBrowsePublishedButton.disabled = isOpeningDraft || isLoadingPublishedScenes;
+      serverBrowsePublishedButton.textContent = translate(isLoadingPublishedScenes ? 'published.refreshing' : 'published.browse');
+    }
+    if (serverSaveButton) serverSaveButton.disabled = isOpeningDraft;
+    if (serverManageButton) serverManageButton.disabled = isLoadingUploadedDrafts || isOpeningDraft;
+  }
+
   const cleanups = [];
   function listen(target, type, handler) {
     target?.addEventListener?.(type, handler);
@@ -489,6 +501,7 @@ export function createToolbarController({ onLocaleChange }) {
       btnPlay?.classList.toggle('active', mode === 'play');
     },
     populateLocaleOptions,
+    updateDraftAvailability,
     syncHeight: syncTopbarHeightVariable,
     destroy() {
       cleanups.splice(0).forEach(cleanup => cleanup());

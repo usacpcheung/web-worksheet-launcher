@@ -33,7 +33,9 @@ coordination. Two presentation controllers receive explicit dependencies from it
   measurement. `render(state)` receives presentation values; it does not retain an
   application-state copy or invoke server actions. Existing action buttons and their
   handlers survive reparenting. `main.js` keeps action handlers and the broader
-  locale-change flow. `destroy()` removes controller listeners and its resize
+  locale-change flow. `updateDraftAvailability(state)` changes busy controls
+  without rearranging or closing the menu during draft progress. `destroy()`
+  removes controller listeners and its resize
   observer only on non-cached page exit, preserving browser Back/Forward restoration.
 - `scripts/player/discussion-print-controller.js` owns page-session print details
   and the details-to-print workflow. It receives the active-project getter,

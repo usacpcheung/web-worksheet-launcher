@@ -1488,12 +1488,7 @@ function getUploadedDraftOpenButtonLabel(uploadedDraftId) {
 
 function syncUploadedDraftActionAvailability() {
   const draftOpenInProgress = Boolean(openingUploadedDraft);
-  if (btnImport) btnImport.disabled = draftOpenInProgress;
-  if (btnNewStory) btnNewStory.disabled = draftOpenInProgress;
-  if (serverBrowsePublishedButton) {
-    serverBrowsePublishedButton.disabled = draftOpenInProgress || isLoadingPublishedScenes;
-    serverBrowsePublishedButton.textContent = translate(isLoadingPublishedScenes ? 'published.refreshing' : 'published.browse');
-  }
+  toolbarController.updateDraftAvailability(getToolbarState());
   serverModalBody?.querySelectorAll('.published-browser-filters input, .published-browser-filters button, [data-published-delete]').forEach(control => {
     control.disabled = draftOpenInProgress || isLoadingPublishedScenes;
   });
@@ -1513,8 +1508,6 @@ function syncUploadedDraftActionAvailability() {
       : translate('published.editCopy');
     button.setAttribute('aria-busy', String(Boolean(active)));
   });
-  if (serverSaveButton) serverSaveButton.disabled = draftOpenInProgress;
-  if (serverManageButton) serverManageButton.disabled = isLoadingUploadedDrafts || draftOpenInProgress;
   const refreshButton = serverModalActions?.querySelector('.uploaded-drafts-refresh-action');
   if (refreshButton) {
     refreshButton.disabled = draftOpenInProgress || isLoadingUploadedDrafts;
