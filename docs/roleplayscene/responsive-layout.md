@@ -1,6 +1,6 @@
 # Current RolePlayScene responsive layout
 
-Reviewed against main `7bb19de` on 2026-10-06 from `server/roleplayscene/styles/app.css`, `scripts/player/ui.js`, `scripts/main.js` and the colocated UI skill. This describes source behavior, not newly measured browser acceptance.
+Layout behavior was reviewed against main `7bb19de` on 2026-10-06. The toolbar presentation was subsequently extracted into `scripts/ui/toolbar-controller.js` without a layout change. Current sources are `server/roleplayscene/styles/app.css`, `scripts/player/ui.js`, the toolbar controller and the colocated UI skill. This describes source behavior, not live deployment acceptance.
 
 Authoring uses map/preview plus inspector; narrow layout stacks the panes. Playback uses the stage image, dialogue/speech bubbles, side rails, floating playback toolbar and a Utilities panel. Utilities consolidates music/history and discussion controls where available. Its toggle exposes `aria-expanded`/`aria-controls`; the panel has a labeled dialog and close control.
 

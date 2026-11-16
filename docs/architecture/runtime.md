@@ -24,6 +24,29 @@ See [launch and response contracts](../message-contract.md), [package formats](.
 
 ## RolePlayScene flow
 
+`scripts/main.js` composes the application: it owns editor/player mode, the active
+project, authentication, server operations, dialogs and replacement/recovery
+coordination. Two presentation controllers receive explicit dependencies from it:
+
+- `scripts/ui/toolbar-controller.js` owns toolbar labels, session/busy presentation,
+  mode visibility, responsive overflow, locale-select presentation and header
+  measurement. `render(state)` receives presentation values; it does not retain an
+  application-state copy or invoke server actions. Existing action buttons and their
+  handlers survive reparenting. `main.js` keeps action handlers and the broader
+  locale-change flow. `destroy()` removes controller listeners and its resize
+  observer only on non-cached page exit, preserving browser Back/Forward restoration.
+- `scripts/player/discussion-print-controller.js` owns page-session print details
+  and the details-to-print workflow. It receives the active-project getter,
+  discussion session, existing dialog operations and message callback. Dialog
+  revisions, nested-confirmation focus and cancellation remain in `main.js`.
+  `scripts/player/discussion-print.js` still builds the print model and HTML without
+  needing a dialog. Print preferences keep their existing in-memory lifetime.
+
+Both controllers are statically imported at startup, with no framework, lazy-load
+boundary, storage-key or package-format change. Required local controls remain
+available after a successful page load followed by connection loss. The extraction
+is for maintenance; a smaller entry file is not a loading-speed claim.
+
 `scripts/storage.js` owns a single IndexedDB project snapshot. Its prepared-import/apply stages let the caller validate and confirm replacement before changing the active project. Server Save captures one serialized project for that save flow. Uploaded drafts and publications use separate RolePlayScene API routes and artifact buckets.
 
 Direct `publishedSceneId` launches skip normal local persistence initialization until returning to the editor or accepting an editable copy. Playback keeps exact scene IDs for choices, automatic transitions and discussion associations. Names and story titles are presentation metadata; voice preferences are optional version-1 authoring fields. See the [RolePlayScene references](../README.md#roleplayscene).
