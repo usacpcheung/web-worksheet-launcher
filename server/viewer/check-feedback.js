@@ -1,5 +1,5 @@
 import { t as translate } from '../app/i18n/index.js';
-import { coerceAnswerValueByInputType } from './worksheet-values.js';
+import { coerceAnswerValueByInputType, getBooleanAnswerLabel } from './worksheet-values.js';
 
 export function getCheckRevealMessage({ status, learnerAnswerText, correctAnswerText }, t = translate) {
   const normalizedLearnerAnswer = typeof learnerAnswerText === 'string'
@@ -40,7 +40,7 @@ export function createCheckFeedback({ responseConfig, learnerAnswer, checkStatus
       return String(correctAnswer ?? '');
     }
     if (inputType === 'boolean') {
-      return coerceAnswerValueByInputType('boolean', correctAnswer) === true ? 'True' : 'False';
+      return getBooleanAnswerLabel(coerceAnswerValueByInputType('boolean', correctAnswer) === true, t);
     }
     if (inputType === 'number') {
       return String(correctAnswer ?? '');
@@ -57,8 +57,8 @@ export function createCheckFeedback({ responseConfig, learnerAnswer, checkStatus
     }
     if (inputType === 'boolean') {
       const normalized = coerceAnswerValueByInputType('boolean', learnerAnswer);
-      if (normalized === true) return 'True';
-      if (normalized === false) return 'False';
+      if (normalized === true) return getBooleanAnswerLabel(true, t);
+      if (normalized === false) return getBooleanAnswerLabel(false, t);
       return '';
     }
     if (inputType === 'number') {

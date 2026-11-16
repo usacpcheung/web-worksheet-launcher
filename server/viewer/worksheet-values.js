@@ -39,6 +39,12 @@ export function coerceAnswerValueByInputType(inputType, rawValue) {
   return String(rawValue ?? '');
 }
 
+// Built-in boolean labels share the editor's existing locale vocabulary.
+// Callers pass a normalized boolean; storage and grading keep their raw values.
+export function getBooleanAnswerLabel(value, t) {
+  return t(`editor.question.booleanValues.${value ? 'true' : 'false'}`);
+}
+
 export function deterministicShuffle(items, seedText) {
   const list = [...items];
   const seedSource = String(seedText ?? '');

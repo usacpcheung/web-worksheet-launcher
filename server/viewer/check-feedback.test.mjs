@@ -21,11 +21,11 @@ for (const locale of ['en', 'zh-Hant']) {
       const zh = locale === 'zh-Hant';
       assert.equal(getCheckRevealMessage({ status: 'correct', learnerAnswerText: '', correctAnswerText: '0' }),
         zh ? '正確答案：0' : 'Correct answer: 0');
-      assert.equal(getCheckRevealMessage({ status: 'incorrect', learnerAnswerText: 'True', correctAnswerText: 'False' }),
-        zh ? '不正確。正確答案：False' : 'Incorrect. Correct answer: False');
+      assert.equal(getCheckRevealMessage({ status: 'incorrect', learnerAnswerText: zh ? '是' : 'True', correctAnswerText: zh ? '否' : 'False' }),
+        zh ? '不正確。正確答案：否' : 'Incorrect. Correct answer: False');
       for (const status of ['ungraded_missing_key', 'ungraded_missing_or_invalid_key']) {
-        assert.equal(getCheckRevealMessage({ status, learnerAnswerText: '  False  ', correctAnswerText: 'do not reveal' }),
-          zh ? '你的答案：False' : 'Your answer: False');
+        assert.equal(getCheckRevealMessage({ status, learnerAnswerText: zh ? '  否  ' : '  False  ', correctAnswerText: 'do not reveal' }),
+          zh ? '你的答案：否' : 'Your answer: False');
         assert.equal(getCheckRevealMessage({ status, learnerAnswerText: '  ', correctAnswerText: 'do not reveal' }),
           zh ? '未作答' : 'No answer');
       }

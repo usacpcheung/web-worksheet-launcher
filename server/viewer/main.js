@@ -57,7 +57,7 @@ import {
   normalizePublishedPackageFilters,
 } from '../app/api/published-packages-service.js';
 import { getAvailableLocales, getLocale, resolveInitialLocale, setLocale, t } from '../app/i18n/index.js';
-import { firstNonBlankString, normalizePromptMediaRefs, coerceAnswerValueByInputType, deterministicShuffle } from './worksheet-values.js';
+import { firstNonBlankString, normalizePromptMediaRefs, coerceAnswerValueByInputType, getBooleanAnswerLabel, deterministicShuffle } from './worksheet-values.js';
 import { VIEWER_PRINT_DEFAULT_SCHOOL_NAMES, getDefaultViewerPrintSchoolName, normalizeViewerPrintSchoolName, classifyPrintQuestionLayout, buildWorksheetPrintReportModel } from './print-report-model.js';
 import { buildWorksheetPrintReportHtml } from './print-report-html.js';
 
@@ -5444,8 +5444,8 @@ function renderViewerShell(session) {
         control.setAttribute('role', 'group');
         control.setAttribute('aria-labelledby', label.id);
         [
-          { value: true, datasetValue: 'true', label: 'True' },
-          { value: false, datasetValue: 'false', label: 'False' },
+          { value: true, datasetValue: 'true', label: getBooleanAnswerLabel(true, t) },
+          { value: false, datasetValue: 'false', label: getBooleanAnswerLabel(false, t) },
         ].forEach((optionConfig) => {
           const button = document.createElement('button');
           button.type = 'button';

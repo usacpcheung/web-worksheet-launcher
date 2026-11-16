@@ -8,6 +8,7 @@ const options = ['A', 'B', 'C'].map(value => ({ id: value, value, label: `Label 
 const cases = [
   ['zero', { inputType: 'number', correctAnswer: 0 }, 0, 'correct', '0'],
   ['empty-number', { inputType: 'number', correctAnswer: 0 }, '', 'incorrect', '0'],
+  ['true', { inputType: 'boolean', correctAnswer: true }, true, 'correct', 'True'],
   ['false', { inputType: 'boolean', correctAnswer: false }, false, 'correct', 'False'],
   ['empty-boolean', { inputType: 'boolean', correctAnswer: false }, undefined, 'incorrect', 'False'],
   ['wrong-boolean', { inputType: 'boolean', correctAnswer: false }, true, 'incorrect', 'False'],
@@ -61,7 +62,7 @@ try {
       const { t } = await import('/server/app/i18n/index.js');
       for (const checkStatus of ['ungraded_missing_key', 'ungraded_missing_or_invalid_key']) {
         const result = createCheckFeedback({ responseConfig: { inputType: 'boolean', correctAnswer: 'invalid-key' }, learnerAnswer: false, checkStatus });
-        if (result.checkReveal.textContent !== t('viewer.check.reveal.yourAnswer', { answer: 'False' })
+        if (result.checkReveal.textContent !== t('viewer.check.reveal.yourAnswer', { answer: t('editor.question.booleanValues.false') })
           || !result.checkBanner.classList.contains('is-ungraded') || result.cardClassName !== null) {
           throw new Error('Ungraded defensive rendering must show the learner value without exposing the invalid key');
         }
@@ -78,9 +79,14 @@ try {
     const zh = locale === 'zh-Hant';
     const verify = async () => {
       assert.equal(await page.locator('.viewer-check-banner').count(), cases.length);
-      for (const [id, , , status, answer] of cases) {
+      for (const [id, config, , status, rawAnswer] of cases) {
+        const answer = zh && config.inputType === 'boolean' && rawAnswer
+          ? (rawAnswer === 'True' ? '是' : '否') : rawAnswer;
         const card = page.locator(`[data-block-id="${id}"] .question-card`);
         assert.equal(await card.locator(`.viewer-check-banner.is-${status}`).count(), 1, id);
+        if (config.inputType === 'boolean') {
+          assert.deepEqual(await card.locator('[data-boolean-value]').allTextContents(), zh ? ['是', '否'] : ['True', 'False']);
+        }
         const title = status === 'correct' ? (zh ? '正確' : 'Correct') : status === 'incorrect' ? (zh ? '不正確' : 'Incorrect') : (zh ? '未評分' : 'Not graded');
         const detail = status === 'correct' ? (zh ? '做得好' : 'Great work') : status === 'incorrect' ? (zh ? '未完全正確' : 'Not quite') : (zh ? '缺少答案' : 'Missing answer key');
         const reveal = status === 'correct' ? `${zh ? '正確答案：' : 'Correct answer: '}${answer}`
@@ -103,6 +109,18 @@ try {
     };
     await verify();
     await page.evaluate(() => { window.viewerSession.notifyStateChange(); window.viewerSession.notifyStateChange(); });
+    await verify();
+    // Change language in the live checked worksheet, then return to the original.
+    for (const nextLocale of [zh ? 'en' : 'zh-Hant', locale]) {
+      await page.locator('.language-selector__trigger').click();
+      await page.locator(`.language-selector__option[value="${nextLocale}"]`).click();
+      const labels = nextLocale === 'en' ? ['True', 'False'] : ['是', '否'];
+      const booleanCard = page.locator('[data-block-id="false"]');
+      assert.deepEqual(await booleanCard.locator('[data-boolean-value]').allTextContents(), labels);
+      assert.equal(await booleanCard.locator('.viewer-check-reveal').textContent(),
+        nextLocale === 'en' ? 'Correct answer: False' : '正確答案：否');
+      assert.equal(await page.evaluate(() => window.viewerSession.state.answers.false.value), false);
+    }
     await verify();
     if (shots) await page.screenshot({ path: `${shots}/check-${locale}-${width}.png`, animations: 'disabled' });
     await page.evaluate(() => window.viewerSession.saveNow());

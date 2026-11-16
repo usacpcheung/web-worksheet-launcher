@@ -49,8 +49,11 @@ The reveal formatter remains re-exported by `main.js` for existing callers.
 `main.js` keeps checking eligibility and calculations, when feedback becomes
 visible, card placement/recreation, submission and persistence. Ordinary text
 questions remain ungraded and fill-in-the-blanks keeps its own feedback renderer.
-Existing translations, value formatting, CSS and saved-content formats are
-unchanged.
+Boolean display labels use the editor's existing translated vocabulary through
+`getBooleanAnswerLabel` in `worksheet-values.js`: English True/False and
+Traditional Chinese 是/否. Viewer buttons, checking reveals and printed choices
+and answers use the same labels; boolean storage values and grading are unchanged.
+Authored text and option labels are not translated.
 
 ## Worksheet viewer audio-control ownership
 
