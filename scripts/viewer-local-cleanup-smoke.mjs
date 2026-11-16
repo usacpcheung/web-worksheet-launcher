@@ -71,7 +71,7 @@ try {
   await c.waitForFunction(() => window.stagedReplacement);
   await c.locator('.viewer-attempt-dialog button[type=button]').click();
   await c.locator('.viewer-resume-card').waitFor();
-  assert.equal(await c.evaluate(async () => !!await (await import('/server/viewer/storage/index.js')).viewerStorage.attempts.get(window.stagedReplacement)), false);
+  await c.waitForFunction(async () => !await (await import('/server/viewer/storage/index.js')).viewerStorage.attempts.get(window.stagedReplacement));
   assert.equal(await b.evaluate(() => JSON.parse(localStorage.getItem('worksheetLauncher:resumeFlags'))['viewer:lastSession'].localId), bId);
   console.log('PASS active-tab protection, background autosave ownership, recovery tombstone, failed save and cancelled staged replacement');
   await b.evaluate(async () => {

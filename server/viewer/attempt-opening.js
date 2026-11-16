@@ -1,3 +1,11 @@
+// Cancellation is a settled user choice. Retire this operation's unique staging
+// records without keeping its UI busy; cleanup never writes session/UI state.
+async function cleanupFailedOpening(error, cleanup) {
+  const pending = cleanup();
+  if (error?.code === 'ATTEMPT_OPEN_CANCELLED') { void pending.catch(() => {}); return; }
+  await pending;
+}
+
 // Package staging and attempt restoration share one lifecycle commit boundary.
 export function createAttemptOpeningMethods({
   mapLegacyJsonToPackageModel, parseWorksheetPackage, isolateReadPackageAssets, nowIso, createLocalId, resolveImportedWorksheetPayload, assertReadImportCurrent, skippedReadImport, normalizeRestoredCheckStatus, getSourceIdentity, computeViewerPayloadFingerprint, DEFAULT_LEARNER_ID, imageAnswerRefs, t, VIEWER_NOTIFICATION_DEFAULT_TTL_MS, parseLocalAttemptPackage, ensureUint8Array
@@ -123,10 +131,12 @@ export function createAttemptOpeningMethods({
       return this.state;
     } catch (error) {
       if (committed) throw error; // Keep the saved snapshot recoverable after a rendering failure.
-      await this.storage.importedWorksheets?.remove?.(importedRecord.localId).catch(() => {});
-      await Promise.all(
-        persistedAssetIds.map((assetId) => this.storage.localAssets?.remove?.(assetId).catch(() => {}))
-      );
+      await cleanupFailedOpening(error, async () => {
+        await this.storage.importedWorksheets?.remove?.(importedRecord.localId).catch(() => {});
+        await Promise.all(
+          persistedAssetIds.map((assetId) => this.storage.localAssets?.remove?.(assetId).catch(() => {}))
+        );
+      });
       if (error?.code === 'ATTEMPT_OPEN_CANCELLED') return { ok: false, cancelled: true };
       if (error?.code === 'READ_IMPORT_SUPERSEDED' || (options.isCurrent && !options.isCurrent())) return skippedReadImport();
       throw new Error(`Imported worksheet is invalid. ${error?.message || String(error)}`);
@@ -274,13 +284,15 @@ export function createAttemptOpeningMethods({
       else await this.storage.attempts.put(restoredAttemptRecord);
       if (!this.lifecycle) assertReadImportCurrent(options);
     } catch (error) {
-      if (didAttemptPersistAttempt) {
-        await this.storage.attempts?.remove?.(restoredLocalAttemptId).catch(() => {});
-      }
-      if (didPersistImportedWorksheet) {
-        await this.storage.importedWorksheets?.remove?.(importedRecord.localId).catch(() => {});
-      }
-      await Promise.all(persistedAssetIds.map((assetId) => this.storage.localAssets?.remove?.(assetId).catch(() => {})));
+      await cleanupFailedOpening(error, async () => {
+        if (didAttemptPersistAttempt) {
+          await this.storage.attempts?.remove?.(restoredLocalAttemptId).catch(() => {});
+        }
+        if (didPersistImportedWorksheet) {
+          await this.storage.importedWorksheets?.remove?.(importedRecord.localId).catch(() => {});
+        }
+        await Promise.all(persistedAssetIds.map((assetId) => this.storage.localAssets?.remove?.(assetId).catch(() => {})));
+      });
       if (error?.code === 'ATTEMPT_OPEN_CANCELLED') return { ok: false, cancelled: true };
       if (error?.code === 'READ_IMPORT_SUPERSEDED' || (options.isCurrent && !options.isCurrent())) return skippedReadImport();
       throw error;

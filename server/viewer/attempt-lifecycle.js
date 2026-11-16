@@ -76,7 +76,10 @@ export class AttemptLifecycle {
       catch (error) {
         // A previous save may have lost the consent recheck. If the user now
         // cancels, retire that staging record instead of leaving an orphan.
-        if (staged) await this.storage.attempts.remove(record.localId).catch(() => {});
+        if (staged) {
+          const cleanup = this.storage.attempts.remove(record.localId).catch(() => {});
+          if (error.code !== 'ATTEMPT_OPEN_CANCELLED') await cleanup;
+        }
         throw error;
       }
       try {

@@ -47,6 +47,13 @@ Uploaded/local attempt ZIP restore uses its embedded worksheet and creates new i
 
 ## Normal attempts, temporary preview, and cleanup
 
+Cancelling replacement promptly restores the originating browser/import controls
+without showing an opening error. The published browser retains filters, scroll
+and focus on the selected Open button. Its live status announces cancellation.
+Cleanup of the cancelled operation's uniquely identified staging records may
+finish in the background; it cannot change the active attempt or a later opening.
+
+
 Explicit worksheet opening always starts fresh, even for an identical published
 worksheet or imported worksheet ZIP. Resume is an explicit start-screen action.
 Attempt ZIP imports instead restore their embedded answers and submission status.

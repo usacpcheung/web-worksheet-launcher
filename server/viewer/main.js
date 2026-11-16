@@ -5573,6 +5573,12 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
           result = { ok: false, error: error?.error || error };
         }
         if (result.skipped || closing) return;
+        if (result.cancelled) {
+          updateLoadButtons();
+          loadAnnouncement.textContent = t('attemptLifecycle.cancelled');
+          if (openBtn.isConnected) openBtn.focus({ preventScroll: true });
+          return;
+        }
         if (!result.ok) {
           if (session.state.serverSession?.status === VIEWER_SERVER_SESSION_STATES.LOGGED_OUT) { renderRows(); return; }
           if (!closing && openBtn.isConnected) {
@@ -7548,6 +7554,7 @@ function renderViewerStartPanel(session, options = {}) {
     if (!selected) return;
     try {
       const result = await session.importAttemptPackageFromFile(selected);
+      if (result?.cancelled || result?.skipped) { importAttemptPackageBtn.focus({ preventScroll: true }); return; }
       if (!result?.ok) throw new Error(result?.error?.message || t('viewer.notifications.localAttemptImport.failed'));
       if (session.state.localAttemptId) {
         const nextUrl = new URL(window.location.href);
