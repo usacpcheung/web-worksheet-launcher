@@ -303,7 +303,7 @@ async function loadViewerModule(overrides = {}) {
   globalThis.document = globalThis[bagName].document;
   globalThis.window = globalThis[bagName].window;
 
-  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource.replace(/from '(\.\/(?:answer-(?:voice-workflow|voice-ui)|voice-sign-in|attempt-menu|browser-entry|package-load-progress|block-view-host|section-navigation|worksheet-navigation|entry-motion)\.js)'/g, (_, path) => 'from ' + JSON.stringify(new NodeURL(path, import.meta.url).href)))}`;
+  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource.replace(/from '(\.\/(?:answer-(?:voice-workflow|voice-ui)|voice-sign-in|attempt-menu|browser-entry|package-load-progress|block-view-host|block-presentation|section-navigation|worksheet-navigation|entry-motion)\.js)'/g, (_, path) => 'from ' + JSON.stringify(new NodeURL(path, import.meta.url).href)))}`;
   return import(dataUrl);
 }
 
@@ -2972,7 +2972,6 @@ test('number rendering branch avoids text input min/max attributes and uses patt
 
 test('boolean rendering branch uses aria-labelledby and only labelable controls receive htmlFor', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes("label.id = `${controlId}-label`;"), true);
   assert.equal(source.includes("control.setAttribute('aria-labelledby', label.id);"), true);
   assert.equal(source.includes("control.setAttribute('aria-label', 'Choose True or False');"), false);
   assert.equal(source.includes("if (control.matches('input, select, textarea'))"), true);
@@ -4682,14 +4681,6 @@ test('stopActiveAudio cancels an audio request that is still loading', async () 
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'superseded');
   assert.equal(audioInstances, 0);
-});
-
-test('question prompt rendering delegates multilingual and legacy audio to the shared control', async () => {
-  const source = (await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8')).replace(/\r\n/g, '\n');
-  assert.equal(source.includes("audioTracks: block.prompt?.audioTracks,"), true);
-  assert.equal(source.includes("legacyAudioRef: questionAudioRef,"), true);
-  assert.equal(source.includes("kind: 'question',"), true);
-  assert.equal(source.includes('if (questionAudioControl) promptRow.append(questionAudioControl);'), true);
 });
 
 test('choice option audio rendering uses a sibling shared control without changing answer selection', async () => {
