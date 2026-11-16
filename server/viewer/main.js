@@ -1,10 +1,10 @@
 import { createAttemptOpeningMethods } from './attempt-opening.js';
 import { AttemptLifecycle, isPreviewAttempt, openingCancelled } from './attempt-lifecycle.js';
 import { mountPreviewControls, mountLocalCleanup } from './attempt-lifecycle-ui.js';
-import { createFeedbackView, feedbackPrintHtml } from './feedback-ui.js';
+import { createFeedbackView } from './feedback-ui.js';
 import { assertFeedbackConfig, assertFeedbackResponses, feedbackEnabled, cloneFeedback, emptyFeedbackResponses, feedbackVoiceTargets, resolveFeedbackTarget, FEEDBACK_SECTION_ID } from '../app/worksheet-feedback.js';
 import { createFillInBlanksControls } from './fill-in-blanks-ui.js';
-import { hasFillInBlanks, isFillInBlanks, assertBlankConfig, assertBlankQuestions, normalizeBlankAnswer, blankDefinitions, blankAnswered, checkBlanks, renderBlankPassage, resolveBlankVoiceTarget, withBlankVoiceTargets, blankLength } from '../app/fill-in-blanks.js';
+import { hasFillInBlanks, isFillInBlanks, assertBlankConfig, assertBlankQuestions, normalizeBlankAnswer, blankAnswered, checkBlanks, resolveBlankVoiceTarget, withBlankVoiceTargets, blankLength } from '../app/fill-in-blanks.js';
 import { isLongText, hasLongText, acceptsTextEdit, LONG_TEXT_LIMIT } from '../app/text-answer.js';
 import { bindTextAnswerInput } from './text-answer-input.js';
 import { createImageResponseControls } from './image-response-ui.js';
@@ -27,7 +27,7 @@ import { classifyUploadResult } from '../app/api/upload-result.js';
 import { assertAttemptPackage } from '../app/contracts/attempt-package-validator.js';
 import { installPageRecovery } from '../app/storage/recovery-journal.js';
 import { PackageLoadProgress, packageLoadLabel } from './package-load-progress.js';
-import { setWorksheetText, renderWorksheetText, WORKSHEET_TEXT_CSS, installWorksheetTextStyles, assertWorksheetTextFormats, hasMarkdown, hasRichText, copyWorksheetText } from '../app/worksheet-text.js';
+import { setWorksheetText, installWorksheetTextStyles, assertWorksheetTextFormats, hasMarkdown, hasRichText, copyWorksheetText } from '../app/worksheet-text.js';
 import { createVoiceWorkflow, normalizeVoiceRecovery, REWRITE_INPUT_LIMIT, unicodeLength, hasPendingRecovery, getVoiceRecovery } from './answer-voice-workflow.js';
 import { createVoiceControls, createVoiceStatus } from './answer-voice-ui.js';
 import { requestVoiceSignIn } from './voice-sign-in.js';
@@ -54,7 +54,9 @@ import {
   normalizePublishedPackageFilters,
 } from '../app/api/published-packages-service.js';
 import { getAvailableLocales, getLocale, resolveInitialLocale, setLocale, t } from '../app/i18n/index.js';
-import { PRINT_REPORT_CSS } from './print-report-styles.js';
+import { firstNonBlankString, normalizePromptMediaRefs, coerceAnswerValueByInputType, deterministicShuffle } from './worksheet-values.js';
+import { VIEWER_PRINT_DEFAULT_SCHOOL_NAMES, getDefaultViewerPrintSchoolName, normalizeViewerPrintSchoolName, classifyPrintQuestionLayout, buildWorksheetPrintReportModel } from './print-report-model.js';
+import { buildWorksheetPrintReportHtml } from './print-report-html.js';
 
 const app = document.getElementById('app');
 installWorksheetTextStyles(document);
@@ -80,10 +82,6 @@ const VIEWER_NOTIFICATION_ERROR_TTL_MS = 8000;
 const VIEWER_NOTIFICATION_UPLOAD_SOURCE = 'attempt.upload';
 const VIEWER_PRINT_SCHOOL_NAME_STORAGE_KEY = 'worksheetLauncher.viewer.printSchoolName';
 const VIEWER_PRINT_SCHOOL_NAME_CUSTOM_STORAGE_KEY = 'worksheetLauncher.viewer.printSchoolName.custom';
-const VIEWER_PRINT_DEFAULT_SCHOOL_NAMES = Object.freeze({
-  en: 'Hong Kong Red Cross Hospital Schools',
-  'zh-Hant': '香港紅十字會醫院學校',
-});
 let activeViewerShellAbortController = null;
 
 
@@ -172,14 +170,6 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function firstNonBlankString(...values) {
-  for (const value of values) {
-    const text = String(value ?? '').trim();
-    if (text) return text;
-  }
-  return '';
-}
-
 function formatTimestampForDisplay(timestamp) {
   if (typeof timestamp !== 'string' || !timestamp.trim()) {
     return t('common.values.unknownTime');
@@ -199,37 +189,9 @@ function formatTimestampForDisplay(timestamp) {
   });
 }
 
-function formatTimestampForReportHeader(timestamp) {
-  if (typeof timestamp !== 'string' || !timestamp.trim()) {
-    return t('common.values.notRecorded');
-  }
-  const parsed = new Date(timestamp);
-  if (Number.isNaN(parsed.getTime())) {
-    return timestamp;
-  }
-  return parsed.toLocaleString(undefined, {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-}
-
-function getDefaultViewerPrintSchoolName(locale = getLocale()) {
-  const fallback = VIEWER_PRINT_DEFAULT_SCHOOL_NAMES[locale] || VIEWER_PRINT_DEFAULT_SCHOOL_NAMES.en;
-  const translated = t('viewer.print.defaultSchoolName');
-  return translated === 'viewer.print.defaultSchoolName' ? fallback : translated;
-}
-
 function isViewerDefaultPrintSchoolName(value) {
   const normalized = String(value || '').trim();
   return Object.values(VIEWER_PRINT_DEFAULT_SCHOOL_NAMES).includes(normalized);
-}
-
-function normalizeViewerPrintSchoolName(value) {
-  return firstNonBlankString(value, getDefaultViewerPrintSchoolName());
 }
 
 function readViewerPrintSchoolNamePreferenceState(storage = globalThis.localStorage) {
@@ -972,18 +934,6 @@ function normalizeOptionMediaRefs(mediaRefs) {
     .filter(Boolean);
 }
 
-function normalizePromptMediaRefs(mediaRefs) {
-  if (!Array.isArray(mediaRefs)) return [];
-  return mediaRefs
-    .map((ref) => {
-      if (!isRecord(ref)) return null;
-      if (ref.usage !== 'question_image' && ref.usage !== 'question_audio') return null;
-      if (typeof ref.assetId !== 'string' || !ref.assetId.trim()) return null;
-      return { usage: ref.usage, assetId: String(ref.assetId) };
-    })
-    .filter(Boolean);
-}
-
 function normalizeAudioTrackList(audioTracks) {
   return normalizeAudioTracks(audioTracks);
 }
@@ -1245,20 +1195,6 @@ function normalizeViewerPayload(payload, fallbackLabel = 'Local worksheet') {
     blocks,
     ...(payload.feedback !== undefined ? { feedback: cloneFeedback(payload.feedback) } : {}),
   };
-}
-
-function coerceAnswerValueByInputType(inputType, rawValue) {
-  if (inputType === 'number') {
-    if (rawValue === '' || rawValue === null || rawValue === undefined) return '';
-    const numeric = Number(rawValue);
-    return Number.isFinite(numeric) ? numeric : '';
-  }
-  if (inputType === 'boolean') {
-    if (rawValue === true || rawValue === 'true') return true;
-    if (rawValue === false || rawValue === 'false') return false;
-    return null;
-  }
-  return String(rawValue ?? '');
 }
 
 function normalizeTextForRewriteSnapshotCompare(questionBlock, rawValue) {
@@ -1582,582 +1518,6 @@ function computeAnswerSummary(viewerPayload, answers) {
   return { answered, total: questions.length };
 }
 
-function getQuestionBlocksInOrder(viewerPayload) {
-  return Array.isArray(viewerPayload?.blocks)
-    ? viewerPayload.blocks
-      .filter((block) => block?.kind === 'question')
-      .sort((a, b) => a.position - b.position)
-    : [];
-}
-
-function getQuestionImageRefForPrint(block) {
-  const promptMediaRefs = normalizePromptMediaRefs(block?.prompt?.mediaRefs);
-  return promptMediaRefs.find((ref) => ref.usage === 'question_image') || null;
-}
-
-function getOptionDisplayTextByValue(block, rawValue) {
-  const options = Array.isArray(block?.responseConfig?.options)
-    ? block.responseConfig.options
-    : [];
-  const normalizedValue = String(rawValue ?? '');
-  const matchedIndex = options.findIndex((option) => String(option?.value ?? option?.label ?? '') === normalizedValue);
-  if (matchedIndex < 0) {
-    return normalizedValue;
-  }
-  const label = String(options[matchedIndex]?.label ?? options[matchedIndex]?.value ?? normalizedValue) || t('optionImages.imageAlt', { option: getChoicePrefix(matchedIndex) });
-  return `${getChoicePrefix(matchedIndex)} ${label}`;
-}
-
-function formatAnswerValueForPrint(block, rawValue) {
-  const inputType = block?.responseConfig?.inputType || 'text';
-  if (inputType === 'multiple_choice') {
-    const selectionMode = block?.responseConfig?.selectionMode === 'multi' ? 'multi' : 'single';
-    if (selectionMode === 'multi') {
-      const normalizedValues = Array.isArray(rawValue)
-        ? rawValue.map((value) => String(value))
-        : [];
-      if (normalizedValues.length === 0) {
-        return t('viewer.print.notAnswered');
-      }
-      const options = Array.isArray(block?.responseConfig?.options)
-        ? block.responseConfig.options
-        : [];
-      const optionOrder = options.map((option) => String(option?.value ?? option?.label ?? ''));
-      const orderedValues = optionOrder.filter((value) => normalizedValues.includes(value));
-      const remainingValues = normalizedValues.filter((value) => !orderedValues.includes(value));
-      return [...orderedValues, ...remainingValues]
-        .map((value) => getOptionDisplayTextByValue(block, value))
-        .join('\n');
-    }
-
-    if (rawValue === null || rawValue === undefined || String(rawValue).trim() === '') {
-      return t('viewer.print.notAnswered');
-    }
-    return getOptionDisplayTextByValue(block, rawValue);
-  }
-
-  if (inputType === 'boolean') {
-    const normalized = coerceAnswerValueByInputType('boolean', rawValue);
-    if (normalized === true) return 'True';
-    if (normalized === false) return 'False';
-    return t('viewer.print.notAnswered');
-  }
-
-  if (inputType === 'number') {
-    if (rawValue === '' || rawValue === null || rawValue === undefined) {
-      return t('viewer.print.notAnswered');
-    }
-    return String(rawValue);
-  }
-
-  const textValue = String(rawValue ?? '');
-  return textValue.trim() ? textValue : t('viewer.print.notAnswered');
-}
-
-function formatCorrectAnswerForPrint(block) {
-  const inputType = block?.responseConfig?.inputType || 'text';
-  const correctAnswer = block?.responseConfig?.correctAnswer;
-
-  if (inputType === 'multiple_choice') {
-    const selectionMode = block?.responseConfig?.selectionMode === 'multi' ? 'multi' : 'single';
-    if (selectionMode === 'multi') {
-      const normalizedValues = Array.isArray(correctAnswer)
-        ? correctAnswer.map((value) => String(value))
-        : [];
-      return normalizedValues.length > 0
-        ? normalizedValues.map((value) => getOptionDisplayTextByValue(block, value)).join('\n')
-        : '';
-    }
-    return typeof correctAnswer === 'string' && correctAnswer.trim()
-      ? getOptionDisplayTextByValue(block, correctAnswer)
-      : '';
-  }
-
-  if (inputType === 'boolean') {
-    const normalized = coerceAnswerValueByInputType('boolean', correctAnswer);
-    if (normalized === true) return 'True';
-    if (normalized === false) return 'False';
-    return '';
-  }
-
-  if (inputType === 'number') {
-    return correctAnswer === '' || correctAnswer === null || correctAnswer === undefined
-      ? ''
-      : String(correctAnswer);
-  }
-
-  return '';
-}
-
-function buildPrintQuestionResult(block, checkResult) {
-  if (!checkResult) {
-    return null;
-  }
-
-  const status = checkResult?.statusByBlockId?.[block?.blockId] || null;
-  if (!status) {
-    return null;
-  }
-
-  if (status === 'correct') {
-    return {
-      status,
-      label: t('viewer.check.correct'),
-      detail: '',
-    };
-  }
-
-  if (status === 'incorrect') {
-    const correctAnswerText = formatCorrectAnswerForPrint(block);
-    return {
-      status,
-      label: t('viewer.check.incorrect'),
-      detail: correctAnswerText ? t('viewer.check.reveal.correctAnswer', { answer: correctAnswerText }) : '',
-    };
-  }
-
-  return {
-    status,
-    label: t('viewer.check.notGraded'),
-    detail: '',
-  };
-}
-
-function classifyPrintQuestionLayout(question) {
-  const promptText = String(question?.promptText || '');
-  const answerText = String(question?.answerText || '');
-  const resultDetail = String(question?.result?.detail || '');
-  const hasImage = question?.image?.status === 'ready';
-  const combinedText = [promptText, answerText, resultDetail].join('\n');
-  const lineCount = combinedText.split(/\r?\n/).length;
-  const answerLineBreaks = (answerText.match(/\n/g) || []).length;
-  const estimatedBlockChars = promptText.length + answerText.length + resultDetail.length;
-  const hasVisibleResultDetail = resultDetail.trim().length > 0;
-
-  if (
-    estimatedBlockChars > 900
-    || lineCount > 18
-    || answerText.length > 450
-    || answerLineBreaks >= 3
-  ) {
-    return 'flow';
-  }
-
-  if (
-    promptText.length > 240
-    || answerText.length > 260
-    || lineCount > 10
-    || (hasImage && estimatedBlockChars > 260)
-    || (hasVisibleResultDetail && estimatedBlockChars > 320)
-  ) {
-    return 'keep-head';
-  }
-
-  return 'keep-all';
-}
-
-function classifyPrintSectionBreakMode({
-  text = '',
-  hasImage = false,
-  lineThreshold = 28,
-  charThreshold = 1200,
-} = {}) {
-  const normalizedText = String(text || '');
-  const lineCount = normalizedText.split(/\r?\n/).length;
-  const effectiveCharThreshold = hasImage ? Math.max(700, charThreshold - 220) : charThreshold;
-  if (normalizedText.length > effectiveCharThreshold || lineCount > lineThreshold) {
-    return 'flow';
-  }
-  return 'keep';
-}
-
-
-function escapeHtml(value) {
-  return String(value ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
-
-function formatMultilineTextForHtml(value) {
-  return escapeHtml(value).replace(/\r?\n/g, '<br>');
-}
-
-function encodeBytesToBase64(bytes) {
-  if (typeof Buffer !== 'undefined') {
-    return Buffer.from(bytes).toString('base64');
-  }
-
-  let binary = '';
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, i + chunkSize);
-    binary += String.fromCharCode(...chunk);
-  }
-  return btoa(binary);
-}
-
-const PRINT_IMAGE_MIME_TYPE_ALLOWLIST = new Set([
-  'image/png',
-  'image/jpeg',
-  'image/jpg',
-  'image/gif',
-  'image/webp',
-  'image/bmp',
-]);
-
-function normalizePrintImageMimeType(mimeType, fallback = 'image/png') {
-  if (typeof mimeType !== 'string') {
-    return fallback;
-  }
-  const normalized = mimeType.trim().toLowerCase().split(';')[0];
-  if (normalized === 'image/jpg') {
-    return 'image/jpeg';
-  }
-  if (!PRINT_IMAGE_MIME_TYPE_ALLOWLIST.has(normalized)) {
-    return fallback;
-  }
-  return normalized;
-}
-
-function binaryToDataUrl(binary, mimeType = 'image/png') {
-  if (!(binary instanceof Uint8Array) || binary.byteLength === 0) {
-    return null;
-  }
-  const safeMimeType = normalizePrintImageMimeType(mimeType, 'image/png');
-  const encoded = encodeBytesToBase64(binary);
-  return `data:${safeMimeType};base64,${encoded}`;
-}
-
-async function resolvePrintQuestionImage(questionImageRef, storage) {
-  if (!questionImageRef?.assetId || !storage?.localAssets?.get) {
-    return null;
-  }
-
-  try {
-    const asset = await storage.localAssets.get(questionImageRef.assetId);
-    if (!(asset?.binary instanceof Uint8Array) || asset.binary.byteLength === 0) {
-      return {
-        status: 'missing',
-        message: t('viewer.print.questionImageUnavailable'),
-      };
-    }
-    const mimeType = normalizePrintImageMimeType(asset?.metadata?.mimeType, 'image/png');
-    const src = binaryToDataUrl(asset.binary, mimeType);
-    if (!src) {
-      return {
-        status: 'missing',
-        message: t('viewer.print.questionImageUnavailable'),
-      };
-    }
-    return {
-      status: 'ready',
-      src,
-      alt: t('viewer.print.questionImageAlt'),
-    };
-  } catch {
-    return {
-      status: 'missing',
-      message: t('viewer.print.questionImageUnavailable'),
-    };
-  }
-}
-
-async function buildWorksheetPrintReportModel({
-  viewerPayload,
-  answers = {},
-  feedback = {},
-  studentName = '',
-  submittedAt = '',
-  schoolName = getDefaultViewerPrintSchoolName(),
-  subject = '',
-  checkResult = null,
-  storage = null,
-  localAttemptId = 'attempt',
-} = {}) {
-  const feedbackHtml = feedbackPrintHtml(cloneFeedback(viewerPayload?.feedback), structuredClone(feedback), t);
-  const orderedQuestions = getQuestionBlocksInOrder(viewerPayload);
-  const checkedSummary = checkResult
-    ? t('viewer.print.checkedSummary', {
-      correct: checkResult.correctCount,
-      total: checkResult.totalQuestions,
-    })
-    : '';
-
-  const questions = await Promise.all(orderedQuestions.map(async (block, index) => {
-    const learnerValue = answers?.[block.blockId]?.value;
-    const config = block.responseConfig || {};
-    const options = Array.isArray(config.options) ? config.options : [];
-    const displayedOptions = config.shuffleOptions
-      ? deterministicShuffle(options, `${localAttemptId || 'attempt'}:${block.blockId}`)
-      : options;
-    // Resolve printed letters, selected choices and marking details in the same
-    // order the learner saw, without changing the stored payload or answers.
-    const displayBlock = { ...block, responseConfig: { ...config, options: displayedOptions } };
-    const selectedValues = config.selectionMode === 'multi'
-      ? (Array.isArray(learnerValue) ? learnerValue.map(String) : [])
-      : learnerValue == null ? [] : [String(learnerValue)];
-    const choices = config.inputType === 'multiple_choice'
-      ? await Promise.all(displayedOptions.map(async (option, optionIndex) => ({
-        label: String(option.label ?? option.value ?? ''),
-        prefix: getChoicePrefix(optionIndex),
-        image: optionImageRef(option) ? await resolvePrintQuestionImage(optionImageRef(option), storage) : null,
-        imageAlt: imageDescription(option.imageDescription) || t('optionImages.imageAlt', { option: getChoicePrefix(optionIndex) }),
-        selected: selectedValues.includes(String(option.value ?? option.label ?? '')),
-      })))
-      : config.inputType === 'boolean'
-        ? [true, false].map(value => ({ label: value ? 'True' : 'False', booleanValue: String(value),
-          selected: coerceAnswerValueByInputType('boolean', learnerValue) === value }))
-        : [];
-    const questionImage = await resolvePrintQuestionImage(getQuestionImageRefForPrint(block), storage);
-    const flowChoices = choices.some(choice => choice.image) || choices.length > 8 || choices.some(choice => choice.label.length > 500)
-      || choices.reduce((length, choice) => length + choice.label.length, 0) > 850;
-    const answerImages = config.inputType === 'image_response' ? await Promise.all(imageAnswerRefs(learnerValue || [], config.maxImages).map(ref=>resolvePrintQuestionImage(ref,storage))) : [];
-    const question = {
-      answerImages,
-      kind: 'question',
-      blockId: block.blockId,
-      questionNumber: index + 1,
-      inputType: config.inputType || 'text',
-      choices,
-      blankConfig: isFillInBlanks(config) ? config : null,
-      blankAnswers: isFillInBlanks(config) ? learnerValue : null,
-      blanksChecked: Boolean(checkResult),
-      promptText: String(block?.prompt?.text || ''),
-      promptFormat: block?.prompt?.format || 'plain_text',
-      promptField: copyWorksheetText(block.prompt),
-      answerText: config.inputType === 'image_response' ? (answerImages.length ? '' : t('viewer.print.notAnswered')) : formatAnswerValueForPrint(displayBlock, learnerValue),
-      result: buildPrintQuestionResult(displayBlock, checkResult),
-      image: questionImage,
-    };
-    const promptSectionMode = classifyPrintSectionBreakMode({
-      text: question.promptText,
-      hasImage: question.image?.status === 'ready',
-      lineThreshold: 20,
-      charThreshold: 850,
-    });
-    const answerSectionMode = classifyPrintSectionBreakMode({
-      text: question.answerText,
-      lineThreshold: 30,
-      charThreshold: 1400,
-    });
-    const checkedAnswerSectionMode = question.result
-      ? classifyPrintSectionBreakMode({
-        text: [question.result.label, question.result.detail || ''].join('\n'),
-        lineThreshold: 22,
-        charThreshold: 1000,
-      })
-      : null;
-    return {
-      ...question,
-      layoutMode: (isFillInBlanks(config) || flowChoices || answerImages.length) ? 'flow' : classifyPrintQuestionLayout(question),
-      sectionBreakModes: {
-        prompt: promptSectionMode,
-        answer: (isFillInBlanks(config) || flowChoices || answerImages.length) ? 'flow' : answerSectionMode,
-        checkedAnswer: checkedAnswerSectionMode,
-      },
-    };
-  }));
-
-  const questionById = new Map(questions.map(question => [question.blockId, question]));
-  let readingNumber = 0;
-  const sections = [...(viewerPayload?.blocks || [])]
-    .sort((a, b) => a.position - b.position)
-    .flatMap(block => block.kind === 'content' ? [{
-      kind: 'content', blockId: block.blockId,
-      label: t('viewer.navigation.reading', { number: ++readingNumber }),
-      content: block.content || { text: '' },
-    }] : questionById.has(block.blockId) ? [questionById.get(block.blockId)] : []);
-
-  return {
-    schoolName: normalizeViewerPrintSchoolName(schoolName),
-    title: String(viewerPayload?.title || t('viewer.print.worksheetFallbackTitle')),
-    subject: firstNonBlankString(subject, viewerPayload?.subject, viewerPayload?.metadata?.subject),
-    studentName: String(studentName || '').trim(),
-    submittedAtLabel: formatTimestampForReportHeader(submittedAt),
-    checkedSummary,
-    feedbackHtml,
-    questions,
-    sections,
-    locale: getLocale(),
-  };
-}
-
-function buildWorksheetPrintReportHtml(reportModel) {
-  const studentMeta = reportModel.studentName
-    ? `
-      <div class="print-meta-item">
-        <dt>${escapeHtml(t('viewer.print.meta.student'))}</dt>
-        <dd>${escapeHtml(reportModel.studentName)}</dd>
-      </div>
-    `
-    : '';
-  const submittedMeta = reportModel.submittedAtLabel
-    ? `
-      <div class="print-meta-item">
-        <dt>${escapeHtml(t('viewer.print.meta.submittedAt'))}</dt>
-        <dd>${escapeHtml(reportModel.submittedAtLabel)}</dd>
-      </div>
-    `
-    : '';
-  const checkedRow = reportModel.checkedSummary
-    ? `
-      <div class="print-meta-item">
-        <dt>${escapeHtml(t('viewer.print.meta.checkResult'))}</dt>
-        <dd>${escapeHtml(reportModel.checkedSummary)}</dd>
-      </div>
-    `
-    : '';
-
-  const sectionsHtml = (reportModel.sections || reportModel.questions || []).map((question) => {
-    if (question.kind === 'content') return `
-      <article class="print-content" data-block-id="${escapeHtml(question.blockId)}" aria-label="${escapeHtml(question.label)}">
-        <span class="print-content-icon" aria-hidden="true">${bookIcon}</span>
-        <div class="print-content-text worksheet-text">${renderWorksheetText(question.content)}</div>
-      </article>`;
-    const imageHtml = question.image?.status === 'ready' && question.image?.src
-      ? `
-        <div class="print-question-image-wrap">
-          <img class="print-question-image" src="${escapeHtml(question.image.src)}" alt="${escapeHtml(question.image.alt || t('viewer.print.questionImageAlt'))}">
-        </div>
-      `
-      : question.image?.status === 'missing'
-        ? `<p class="print-question-media-note">${escapeHtml(question.image.message || t('viewer.print.questionImageUnavailable'))}</p>`
-        : '';
-
-    const checkedAnswerSectionClass = `print-question-section--${escapeHtml(question.sectionBreakModes?.checkedAnswer || 'keep')}`;
-    const imageSectionHtml = imageHtml
-      ? `
-        <section class="print-question-section print-question-section--image print-question-section--flow">
-          ${imageHtml}
-        </section>
-      `
-      : '';
-    const resultHtml = !question.blankConfig && question.result
-      ? `
-        <section class="print-question-section print-question-section--result ${checkedAnswerSectionClass} print-result-${escapeHtml(question.result.status || 'neutral')}">
-          <h3>${escapeHtml(t('viewer.print.checkedResultHeading'))}</h3>
-          <p class="print-result-label">${escapeHtml(question.result.label)}</p>
-          ${question.result.detail ? `<p class="print-result-detail">${formatMultilineTextForHtml(question.result.detail)}</p>` : ''}
-        </section>
-      `
-      : '';
-
-    const blankHtml = question.blankConfig ? renderBlankPassage(question.blankConfig, blank => {
-      const answer = question.blankAnswers?.[blank.id] || '';
-      const result = checkBlanks(question.blankConfig, question.blankAnswers);
-      const number = blankDefinitions(question.blankConfig).findIndex(b=>b.id===blank.id)+1;
-      const status = result.statuses[blank.id];
-      const note = question.blanksChecked || status === 'teacher_review' ? t('fillBlanks.'+status) : '';
-      return `<span class="print-blank"><sup>${number}</sup> ${escapeHtml(answer || '________')} ${note ? `<small>(${escapeHtml(note)})</small>` : ''}</span>`;
-    }) : '';
-    const choicesHtml = question.choices?.length ? `
-      <div class="print-choices${question.inputType === 'boolean' ? ' print-choices--boolean' : ''}">
-        ${question.choices.map(choice => `
-          <div class="print-choice${choice.image ? ' print-choice--image' : ''}${choice.selected ? ' is-selected' : ''}"${choice.booleanValue ? ` data-boolean-value="${escapeHtml(choice.booleanValue)}"` : ''}>
-            ${choice.prefix ? `<span class="print-choice-prefix">${escapeHtml(choice.prefix)}</span>` : ''}
-            <span class="print-choice-label">${escapeHtml(choice.label)}</span>
-            ${choice.image?.status === 'ready' ? `<img class="print-option-image" src="${escapeHtml(choice.image.src)}" alt="${escapeHtml(choice.imageAlt)}">` : choice.image ? `<span class="print-option-image-unavailable">${escapeHtml(t('optionImages.unavailable'))}</span>` : ''}
-            <span class="print-choice-mark" aria-hidden="true">${choice.selected ? '✓' : ''}</span>
-          </div>`).join('')}
-      </div>` : '';
-
-    return `
-      <article class="print-question print-question--${escapeHtml(question.layoutMode || 'keep-all')}" data-block-id="${escapeHtml(question.blockId)}">
-        <header class="print-question-header">
-          <h2 class="print-question-number" aria-label="${escapeHtml(t('viewer.print.questionNumber', { number: question.questionNumber }))}">
-            <span class="print-question-ordinal" aria-hidden="true">${escapeHtml(String(question.questionNumber).padStart(2, '0'))}</span>
-          </h2>
-        </header>
-        <div class="print-question-layout">
-        <div class="print-prompt-area">
-        <section class="print-question-section print-question-section--prompt print-question-section--${escapeHtml(question.sectionBreakModes?.prompt || 'keep')}">
-          <h3>${escapeHtml(t('viewer.print.questionHeading'))}</h3>
-          <div class="print-question-text worksheet-text">${renderWorksheetText(question.promptText?.trim() ? (question.promptField || { text: question.promptText, format: question.promptFormat }) : { text: t(question.blankConfig ? 'fillBlanks.type' : 'viewer.print.noPromptProvided') })}</div>
-        </section>
-        ${imageSectionHtml}
-        </div>
-        <div class="print-answer-area">
-        <section class="print-question-section print-question-section--answer print-question-section--${escapeHtml(question.sectionBreakModes?.answer || 'keep')}">
-          <h3>${escapeHtml(t('viewer.print.answerHeading'))}</h3>
-          ${choicesHtml}
-          ${blankHtml ? `<div class="print-blank-passage worksheet-text">${blankHtml}</div>` : ''}
-          ${(question.answerImages || []).map((img,i)=>`<figure class="print-answer-image"><img data-answer-image src="${escapeHtml(img.src || '')}" alt="${escapeHtml(t('imageResponse.image',{number:i+1}))}"><figcaption>${i+1} / ${question.answerImages.length}</figcaption></figure>`).join('')}
-          ${question.answerImages?.length || question.blankConfig ? '' : `<p class="print-answer-text">${escapeHtml(t('viewer.print.answerPrefix'))} ${formatMultilineTextForHtml(question.answerText)}</p>`}
-        </section>
-        ${resultHtml}
-        </div>
-        </div>
-      </article>
-    `;
-  }).join('');
-
-  return `<!doctype html>
-<html lang="${escapeHtml(reportModel.locale || 'en')}">
-<head>
-  <meta charset="utf-8">
-  <title>${escapeHtml(reportModel.title)}</title>
-  <style>${PRINT_REPORT_CSS}\n${WORKSHEET_TEXT_CSS}</style>
-
-</head>
-<body>
-  <main class="print-report">
-    <header class="print-header">
-      <p class="print-school">${escapeHtml(reportModel.schoolName || getDefaultViewerPrintSchoolName())}</p>
-      <h1 class="print-title">${escapeHtml(reportModel.title)}</h1>
-      <dl class="print-meta">
-        ${studentMeta}
-        ${submittedMeta}
-        ${checkedRow}
-      </dl>
-    </header>
-    ${sectionsHtml}
-    ${reportModel.feedbackHtml || ''}
-  </main>
-  <script>
-    (function () {
-      const images = Array.from(document.images || []);
-      const waitForImages = images.length === 0
-        ? Promise.resolve()
-        : Promise.all(images.map((img) => (
-          img.complete
-            ? Promise.resolve()
-            : new Promise((resolve) => {
-              img.addEventListener('load', resolve, { once: true });
-              img.addEventListener('error', resolve, { once: true });
-            })
-        )));
-
-      const waitForFonts = new Promise(resolve => {
-        const ready = () => resolve(document.fonts ? document.fonts.ready : undefined);
-        if (document.readyState === 'complete') ready();
-        else window.addEventListener('load', ready, { once: true });
-      });
-      Promise.all([waitForImages, Promise.race([
-        waitForFonts, new Promise(resolve => setTimeout(resolve, 5000))
-      ])]).then(() => {
-        if (typeof window.focus === 'function') {
-          window.focus();
-        }
-        if ([...document.querySelectorAll('[data-answer-image]')].some(img => !img.naturalWidth)) { const error=document.createElement('p');error.textContent=${JSON.stringify(t('imageResponse.unavailable'))};error.setAttribute('role','alert');document.body.prepend(error);return; }
-        if (typeof window.print === 'function') {
-          window.print();
-        }
-      });
-
-      window.addEventListener('afterprint', () => {
-        if (typeof window.close === 'function') {
-          window.close();
-        }
-      });
-    }());
-  </script>
-</body>
-</html>`;
-}
-
 async function startWorksheetPrintFlow({
   session,
   openWindow = (...args) => window.open(...args),
@@ -2373,21 +1733,6 @@ function createInputErrorNode(errorId) {
   node.setAttribute('aria-live', 'polite');
   node.setAttribute('role', 'status');
   return node;
-}
-
-function deterministicShuffle(items, seedText) {
-  const list = [...items];
-  const seedSource = String(seedText ?? '');
-  let seed = 0;
-  for (let i = 0; i < seedSource.length; i += 1) {
-    seed = (seed * 31 + seedSource.charCodeAt(i)) >>> 0;
-  }
-  for (let i = list.length - 1; i > 0; i -= 1) {
-    seed = (seed * 1664525 + 1013904223) >>> 0;
-    const j = seed % (i + 1);
-    [list[i], list[j]] = [list[j], list[i]];
-  }
-  return list;
 }
 
 function resolveImportedWorksheetPayload(importedRecord) {
