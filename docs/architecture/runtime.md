@@ -22,6 +22,28 @@ Aligned to PR #349 (`99ba300`) and PR2 cleanup on 2026-11-16; see the [documenta
 
 See [launch and response contracts](../message-contract.md), [package formats](../contracts/package-formats.md), [local models](../contracts/local-models.md) and [API routes](../operations/server-runtime.md).
 
+## Worksheet viewer print ownership
+
+`server/viewer/main.js` keeps print-button availability, the student-name prompt,
+school preference storage, popup creation and error/notification handling. It
+statically imports the report builders; clicking Print does not lazy-load code.
+
+- `print-report-model.js` prepares the ordered reading/question sections, answer
+  and grading presentation, feedback and local image data URLs. It reads the
+  supplied asset storage but does not save or modify the attempt. School-name
+  defaults are shared with the existing settings UI; locale is read at call time.
+- `print-report-html.js` renders that model with the existing text renderer and
+  `print-report-styles.js`. It owns document markup and the existing embedded
+  image/font readiness and print/afterprint script, but never opens the window.
+- `worksheet-values.js` holds the existing value normalization and deterministic
+  option shuffle used by both the live viewer and report. Neither renderer owns
+  a separate copy of these rules. These modules do not import `main.js`.
+
+Report tests import the builders directly. Viewer integration tests retain
+coverage of popup timing, settings, package round trips and the actual print
+entry points. This separation changes no package format, storage key, layout,
+authentication or attempt lifecycle.
+
 ## RolePlayScene flow
 
 `scripts/main.js` composes the application: it owns editor/player mode, the active
