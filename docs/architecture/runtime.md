@@ -22,6 +22,24 @@ Aligned to PR #349 (`99ba300`) and PR2 cleanup on 2026-11-16; see the [documenta
 
 See [launch and response contracts](../message-contract.md), [package formats](../contracts/package-formats.md), [local models](../contracts/local-models.md) and [API routes](../operations/server-runtime.md).
 
+## Worksheet viewer audio-control ownership
+
+`server/viewer/audio-controls.js` owns the existing question/option audio buttons,
+language menus, labels, focus, viewport positioning and UI state callbacks.
+`main.js` creates one coordinator per viewer page with the existing icon helper
+and translator. That coordinator survives shell renders, so all controls share
+one open-menu owner and one lazily attached document dismissal listener. Each
+control's existing abort signal owns its DOM listeners and positioning resources;
+closing or disposing a menu cancels its frame and disconnects its observer.
+
+`ViewerAttemptSession` still owns asset reads, audio players, object URLs,
+single-playback enforcement and pending-request cancellation. Navigation and
+block replacement still decide when to close menus and interrupt playback.
+Option audio remains a sibling of the answer button and never selects an answer.
+Source resolution uses the existing canonical track normalizer and legacy
+attachment fallback. The module loads statically; no login, voice/rewrite,
+generation, package, storage, CSS or playback-policy changes are introduced.
+
 ## Worksheet viewer print ownership
 
 `server/viewer/main.js` keeps print-button availability, the student-name prompt,
