@@ -213,6 +213,7 @@ export function createViewerAudioControls({ createIcon, t }) {
       if (typeof reportMediaFeedback === 'function') reportMediaFeedback('');
       const result = await session.playAssetAudio(source.assetId, {
         onStart: () => {
+          if (signal?.aborted) return;
           setPlaying(source);
           if (typeof reportMediaFeedback === 'function') reportMediaFeedback('');
         },
