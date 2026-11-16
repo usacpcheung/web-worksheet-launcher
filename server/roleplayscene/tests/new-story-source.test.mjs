@@ -38,9 +38,6 @@ assert.ok(
   mainSource.includes("NEW_STORY: 'new-story'"),
   'New Story should use the shared confirmation dialog with a dedicated kind',
 );
-assert.ok(
-  mainSource.includes("moveToolbarNode(btnNewStory, toolbarMoreProjectItems)"),
-  'New Story should move into the Project overflow group on narrower layouts',
-);
+// Overflow behavior is exercised by roleplayscene-toolbar-controller-smoke.mjs.
 
 console.log('new story source tests passed');

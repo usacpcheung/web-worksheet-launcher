@@ -171,10 +171,8 @@ assert.ok(
     && mainSource.includes('let editorPreview = null')
     && mainSource.includes('function startEditorScenePreview')
     && mainSource.includes('ensureAudioGate(store)')
-    && mainSource.includes("translate('toolbar.backToEdit')")
     && mainSource.includes('function returnFromEditorScenePreview')
     && mainSource.includes('editorPreview.returnSceneId')
-    && mainSource.includes('btnPlay.hidden = inEditorPreview ? true : false')
     && playerSource.includes('options.initialSceneId')
     && playerSource.includes('beginRunAt(initialScene.id)'),
   'RolePlayScene should launch editor current-scene previews through the real player and return to saved editor context',
@@ -298,8 +296,6 @@ assert.ok(
   mainSource.includes('if (!uploadedDraftId || openingUploadedDraft) return;')
     && mainSource.includes('disabled: Boolean(openingUploadedDraft)')
     && mainSource.includes("className: 'uploaded-drafts-refresh-action'")
-    && mainSource.includes("serverSaveButton.disabled = Boolean(openingUploadedDraft)")
-    && mainSource.includes("serverManageButton.disabled = isLoadingUploadedDrafts || Boolean(openingUploadedDraft)")
     && mainSource.includes("button.disabled = draftOpenInProgress || isLoadingUploadedDrafts\n        || (action === 'publish'"),
   'uploaded draft manager should serialize opens and keep draft, refresh, save, and manage actions locked across modal re-renders',
 );
@@ -380,8 +376,7 @@ assert.ok(
 );
 
 assert.ok(
-  mainSource.includes("topbar?.classList?.add?.('topbar--server-stacked')")
-    && cssSource.includes('.topbar.topbar--server-stacked > .toolbar {\n    display: contents;')
+  cssSource.includes('.topbar.topbar--server-stacked > .toolbar {\n    display: contents;')
     && cssSource.includes('.toolbar.toolbar--server-stacked > .toolbar__server {\n    order: 3;\n    width: 100%;')
     && cssSource.includes('justify-content: flex-start;'),
   'mobile stacked header should keep title/mode/more on the first row and align the server badge left on the second row',

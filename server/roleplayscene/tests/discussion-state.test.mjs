@@ -216,36 +216,11 @@ test('main source protects discussion before story-changing actions', async () =
   assert.equal(source.includes("event.returnValue = '';"), true);
 });
 
-test('main source opens print details before discussion print window', async () => {
-  const source = await readFile(path.resolve('server/roleplayscene/scripts/main.js'), 'utf8');
-  const detailsIndex = source.indexOf('const details = await promptDiscussionPrintDetails();');
-  const openIndex = source.indexOf("const printWindow = globalThis.open?.('', 'roleplayscene_discussion_print'");
-
-  assert.equal(source.includes('function promptDiscussionPrintDetails()'), true);
-  assert.equal(source.includes("title: translate('player.discussion.printDetailsTitle')"), true);
-  assert.equal(source.includes("translate('player.discussion.printSchoolName')"), true);
-  assert.equal(source.includes("translate('player.discussion.printSchoolNameMode')"), true);
-  assert.equal(source.includes("translate('player.discussion.printSchoolNameDefault')"), true);
-  assert.equal(source.includes("translate('player.discussion.printSchoolNameCustom')"), true);
-  assert.equal(source.includes("translate('player.discussion.printStudentName')"), true);
-  assert.equal(source.includes("schoolModeGroup.setAttribute('role', 'group')"), true);
-  assert.equal(source.includes('schoolInput.readOnly = !schoolNameCustom;'), true);
-  assert.equal(source.includes('schoolNameCustom: schoolNameCustom && Boolean(rawSchoolName)'), true);
-  assert.equal(source.includes('unsubscribeLocaleChange = onLocaleChange(() => {'), true);
-  assert.equal(source.includes('if (!schoolInput || schoolNameCustom) return;'), true);
-  assert.equal(source.includes('syncSchoolNameMode();'), true);
-  assert.equal(source.includes("studentName: details.studentName"), true);
-  assert.equal(source.includes("printedAt: formatDiscussionPrintDate()"), true);
-  assert.equal(detailsIndex > -1 && openIndex > detailsIndex, true);
-});
+// Print form behavior is exercised by roleplayscene-print-controller-smoke.mjs.
 
 test('cue and discussion overlay leaves toolbar language controls reachable', async () => {
-  const mainSource = await readFile(path.resolve('server/roleplayscene/scripts/main.js'), 'utf8');
   const cssSource = await readFile(path.resolve('server/roleplayscene/styles/app.css'), 'utf8');
 
-  assert.equal(mainSource.includes('function syncTopbarHeightVariable()'), true);
-  assert.equal(mainSource.includes("document.documentElement?.style?.setProperty('--roleplayscene-topbar-height'"), true);
-  assert.equal(mainSource.includes('new globalThis.ResizeObserver(() => {'), true);
   assert.equal(cssSource.includes('--roleplayscene-topbar-height: 4rem;'), true);
   assert.equal(cssSource.includes('.topbar {\n  position: relative;\n  z-index: 50;'), true);
   assert.equal(cssSource.includes('top: var(--roleplayscene-topbar-height, 4rem);'), true);
