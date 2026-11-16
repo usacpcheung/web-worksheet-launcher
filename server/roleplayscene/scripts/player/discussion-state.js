@@ -95,7 +95,6 @@ export class RolePlaySceneDiscussionSession {
     this.appliedSequence = 0;
     this.discussionBySceneId = {};
     this.undoBySceneId = {};
-    this.messageBySceneId = {};
     this.isRewriting = false;
     this.rewritingSceneId = null;
   }
@@ -119,7 +118,6 @@ export class RolePlaySceneDiscussionSession {
     this.state.viewerPayload.blocks = (project.scenes || []).map(scene => ({ blockId: scene.id, kind: 'question', responseConfig: { inputType: 'text', maxLength: Number.MAX_SAFE_INTEGER } }));
     this.discussionBySceneId = {};
     this.undoBySceneId = {};
-    this.messageBySceneId = {};
     this.isRewriting = false;
     this.rewritingSceneId = null;
     this.restore();
@@ -174,7 +172,6 @@ export class RolePlaySceneDiscussionSession {
     this.state.voiceRecovery = this.recovery;
     this.discussionBySceneId = {};
     this.undoBySceneId = {};
-    this.messageBySceneId = {};
     this.isRewriting = false;
     this.rewritingSceneId = null;
     this.persist();
@@ -187,10 +184,6 @@ export class RolePlaySceneDiscussionSession {
 
   getText(sceneId) {
     return normalizeText(this.discussionBySceneId?.[sceneId]?.text);
-  }
-
-  getMessage(sceneId) {
-    return Object.hasOwn(this.messageBySceneId, sceneId) ? normalizeText(this.messageBySceneId[sceneId]) : '';
   }
 
   hasUndo(sceneId) {
@@ -211,10 +204,6 @@ export class RolePlaySceneDiscussionSession {
       delete nextUndo[sceneId];
       this.undoBySceneId = nextUndo;
     }
-    this.messageBySceneId = {
-      ...this.messageBySceneId,
-      [sceneId]: '',
-    };
     this.persist();
     this.syncAnswers();
   }
@@ -238,7 +227,6 @@ export class RolePlaySceneDiscussionSession {
       fingerprint: this.projectFingerprint,
       discussionBySceneId: { ...this.discussionBySceneId },
       undoBySceneId: { ...this.undoBySceneId },
-      messageBySceneId: { ...this.messageBySceneId },
       isRewriting: this.isRewriting,
       rewritingSceneId: this.rewritingSceneId,
     };

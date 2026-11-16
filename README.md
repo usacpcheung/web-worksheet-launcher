@@ -2,7 +2,7 @@
 
 Worksheet editor, learner viewer, and RolePlayScene authoring/playback with shared authentication, publishing, voice and AI services.
 
-Base new branches and pull requests on `main`. The previous `main-v1` name in archived documents is historical.
+Base independent branches and pull requests on `main`. For an explicitly agreed stack, branch from the preceding PR head and target that PR branch until it merges. The previous `main-v1` name in archived documents is historical.
 
 ## Documentation
 

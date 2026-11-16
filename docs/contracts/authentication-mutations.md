@@ -1,6 +1,6 @@
 # Authentication for server mutations
 
-This stage follows the read integration merged in #320. It implements stage 4 of the [authentication workflow contract](authentication-workflows.md), using the same session/login coordinator as [server reads](authentication-reads.md). It does not change backend authorization, OIDC, storage quotas or package formats.
+This stage follows the read integration merged in #320. It follows the [current authentication workflow contract](authentication-workflows.md), using the same session/login coordinator as [server reads](authentication-reads.md). It does not change backend authorization, OIDC, storage quotas or package formats.
 
 ## Covered actions
 

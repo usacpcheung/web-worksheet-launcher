@@ -1,6 +1,6 @@
 # Worksheet editor audio voice choices
 
-> Current behavior reviewed against main `7bb19de` on 2026-10-06. Code evidence: [t2a-language-presets.js](../../server/editor/t2a-language-presets.js), [audio-tracks.js](../../server/editor/audio-tracks.js), [main.js](../../server/editor/main.js), [server-api-client.js](../../server/app/api/server-api-client.js). Test commands below are guidance, not a new test-run report.
+> Aligned to PR #349 (`99ba300`) and PR2 cleanup on 2026-11-16. Code evidence: [t2a-language-presets.js](../../server/editor/t2a-language-presets.js), [audio-tracks.js](../../server/editor/audio-tracks.js), [main.js](../../server/editor/main.js), [server-api-client.js](../../server/app/api/server-api-client.js). Test commands below are guidance, not a new test-run report.
 
 Worksheet prompt and multiple-choice-option audio generation use the bridge's
 provider-independent `voice_choice` field. The editor retains its existing three
@@ -39,7 +39,7 @@ The bridge catalogue and provider mappings are defined by
 The narrator choices correspond to the editor's previous voices under standard
 tuning. Named choices fix speed/volume/pitch at `1/1/0` for Cantonese and Putonghua
 and `0.85/1/0` for English. They do not inherit customized generic voice environment
-defaults. Output settings, text budgets and timeouts remain configured by the bridge.
+defaults. The bridge retains its own output settings, budgets and timeouts. The client also enforces prompt/option eligibility and the separate preparation/provider deadlines below.
 
 ## Compatibility and scope
 
@@ -53,11 +53,11 @@ worksheets invalidates pending results. After local asset storage finishes, the
 editor rechecks the worksheet, target, source text and existing track before
 attaching audio. Obsolete generated assets are removed without replacing old tracks.
 
-Authentication failures received after a successful session probe retain their
-structured error and enter the shared sign-in recovery flow. Recovery persists
-the intent only while its original record remains active. The existing restore
-flow validates the target before replay; a failed recovery replay clears the
-pending intent and does not automatically redirect a second time.
+Initial authentication uses the shared Sign in / Cancel flow and explicit
+Generate audio confirmation after popup login. Authentication failures after
+preflight retain structured errors without automatically opening login or
+resending generation. Legacy same-tab intent return restores work and guidance
+for an explicit retry; it does not replay the provider request.
 
 Saved `audioTracks[].voicePresetId` remains the track's language ID (or null for
 manually attached audio). The API choice ID is not stored in that field: existing

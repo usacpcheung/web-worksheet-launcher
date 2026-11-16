@@ -87,8 +87,11 @@ output; automated tests do not establish provider availability or voice quality.
 
 ## Review hardening
 
-Session probes have a 15-second deadline and generation waits have a two-minute deadline. Timeout aborts
-the active request, releases the line lock and asks for manual retry.
+Individual session probes have a 15-second deadline. The shared generation
+runner separately bounds its whole preparation phase at 120 seconds and starts a
+fresh 120-second provider deadline. These nested limits are not one total
+workflow deadline. Timeout aborts the active wait, releases the line lock and
+asks for manual retry.
 Changing the target or closing the editor cancels the obsolete request and ignores
 its late result or error. Cancellation does not guarantee the remote provider has
 not processed a request, so there are no automatic retries.

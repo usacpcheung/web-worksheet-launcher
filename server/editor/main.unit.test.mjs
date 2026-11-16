@@ -1840,28 +1840,25 @@ test('multiple-choice option audio controls gate placeholder options with helper
   assert.equal(source.includes("editorNotification('media.optionTextRequired')"), true);
 });
 
-test('question audio row adds contextual generate/regenerate control with prompt eligibility checks', async () => {
+test('mounted prompt tracks retain eligibility hints and per-target locks', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.equal(source.includes("const promptTextState = getT2ATextEligibility(worksheetTextToPlain(selectedBlock?.prompt), PROMPT_TEXT_LIMIT);"), true);
-  assert.equal(source.includes("setMediaActionButtonContent("), true);
-  assert.equal(source.includes("generateQuestionAudioBtn,"), true);
-  assert.equal(source.includes("isPromptT2AInFlight ? 'loading' : currentQuestionAudioRef ? 'refresh' : 'generate'"), true);
-  assert.equal(source.includes('getEditorAudioGenerationLabel({ isGenerating: isPromptT2AInFlight'), true);
-  assert.equal(source.includes("generateQuestionAudioBtn.disabled = !promptT2AEligible || isPromptT2AInFlight;"), true);
-  assert.equal(source.includes('getEditorTextTooLongForAudioLabel(T2A_TEXT_MAX_LENGTH)'), true);
-  assert.equal(source.includes("attachQuestionAudioBtn.disabled = true;"), true);
-  assert.equal(source.includes("playQuestionAudioBtn.disabled = true;"), true);
-  assert.equal(source.includes("removeQuestionAudioBtn.disabled = true;"), true);
-  assert.equal(source.includes("questionAudioActions.append(attachQuestionAudioBtn, generateQuestionAudioBtn, playQuestionAudioBtn, removeQuestionAudioBtn);"), true);
+  assert.equal(source.includes('generateBtn.disabled = !promptT2AEligible || isPromptT2AInFlight;'), true);
+  assert.equal(source.includes('promptAudioHintRef.hint.hidden = !promptTextState.exceedsLimit;'), true);
+  assert.equal(source.includes('attachBtn.disabled = isPromptT2AInFlight;'), true);
+  assert.equal(source.includes('playBtn.disabled = !track || isPromptT2AInFlight;'), true);
+  assert.equal(source.includes('removeBtn.disabled = !track || isPromptT2AInFlight;'), true);
+  assert.equal(source.includes('mediaSection.append(mediaRows, questionAudioHint, mediaFeedback);'), true);
 });
 
-test('stage3: prompt row triggers replace confirmation before prompt bridge generation when audio exists', async () => {
+test('mounted prompt generation confirms replacement before the provider action', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  const hasAudioConfirmIdx = source.indexOf("title: t('editor.media.confirm.regenerateQuestionAudioTitle')");
-  const promptBridgeCallIdx = source.indexOf("await session.triggerProtectedAction('editorPromptT2A', {");
-  assert.equal(hasAudioConfirmIdx >= 0, true);
-  assert.equal(promptBridgeCallIdx >= 0, true);
-  assert.equal(hasAudioConfirmIdx < promptBridgeCallIdx, true);
+  const start = source.indexOf("const generatePromptTrack = async () => {");
+  const end = source.indexOf("const playBtn = document.createElement('button');", start);
+  const handler = source.slice(start, end);
+  const confirm = handler.indexOf("bodyText: t('editor.media.audioTracks.confirm.regeneratePromptBody'");
+  const request = handler.indexOf("await session.triggerProtectedAction('editorPromptT2A', {");
+  assert.ok(start >= 0 && end > start && confirm >= 0 && request > confirm);
+  assert.ok(handler.includes('if (!confirmed) return;'));
 });
 
 test('multiple-choice option row renders audio status menu without raw attached asset id text', async () => {
@@ -1886,13 +1883,13 @@ test('multiple-choice option actions include contextual generate/regenerate audi
     source,
     /const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey\s*\|\|\s*optionT2AInFlightKeys\.has\(optionT2AKey\);/
   );
-  assert.equal(source.includes('getEditorAudioGenerationLabel({'), true);
+  assert.equal(source.includes("track ? t('editor.media.actions.regenerate') : t('editor.media.actions.generate')"), true);
   assert.equal(source.includes("setMediaActionButtonContent("), true);
   assert.equal(source.includes("generateTrackBtn.disabled = !isPersistedOption || !optionTextEligibleForT2A || isOptionT2AInFlight;"), true);
   assert.equal(source.includes("optionT2AInFlightKey = null;"), true);
   assert.equal(source.includes("actionId: 'editorOptionT2A'"), false);
   assert.equal(source.includes("await session.triggerProtectedAction('editorOptionT2A', {"), true);
-  assert.equal(source.includes("text: getProtectedActionErrorMessage(result, editorNotification('audioGeneration.startFailed')),"), true);
+  assert.equal(source.includes("session.setMediaFeedback(result?.reason === 'generation-failed'"), true);
   assert.equal(source.includes('getEditorTextTooLongForAudioLabel(T2A_TEXT_MAX_LENGTH)'), true);
   assert.equal(source.includes("optionActionsRow.appendChild(optionTrackList);"), true);
   assert.equal(source.includes("AUDIO_TRACK_LANGUAGE_IDS.forEach((language) =>"), true);
@@ -1927,7 +1924,7 @@ test('stage3: in-flight lock is row-scoped by block/option key and leaves unrela
   assert.equal(source.includes("removeTrackBtn.disabled = !track || isOptionT2AInFlight;"), true);
   assert.equal(source.includes("await runMediaAction(async () => {\n            if (optionAudioRef)"), false);
   assert.equal(source.includes("await runMediaAction(async () => {\n        if (currentQuestionAudioRef)"), false);
-  assert.equal(source.includes("status !== 'executed' && status !== 'redirected'"), true);
+  assert.equal(source.includes("result?.status !== 'executed' && result?.status !== 'redirected'"), true);
 });
 
 test('multiple-choice option action state rerenders while typing when option ids/media refs change and restores caret', async () => {

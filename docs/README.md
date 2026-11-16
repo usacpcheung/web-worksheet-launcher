@@ -1,6 +1,6 @@
 # Documentation index
 
-Current references were reviewed against `main` commit `7bb19de276a6553ea4266e6158dae48f25a4cc6b` on 2026-10-06. They describe checked-in implementation, not proof of a live VPS deployment or a new product roadmap. The authentication callback contract and contributor rules were subsequently reconciled with [PR #303](https://github.com/usacpcheung/web-worksheet-launcher/pull/303), merged at `dac9f687` on 2026-10-13. Transaction/network recovery, reload journals and attempt validation are documented in the linked runtime, local-model and package references alongside their implementation changes. Start new development from the latest `main` and recheck affected code when behavior changes.
+Current references are aligned to PR #349 (`99ba300`) and the behavior-preserving PR2 cleanup on 2026-11-16. This describes checked-in code, not a claim that the open stack is merged, deployed or accepted on the VPS. The baseline includes editor/viewer/RolePlayScene and their shared services. Historical evidence retains its original dates and revisions. No new feature roadmap is established; a later `main.js` refactor is separate work.
 
 ## Where to find the authoritative reference
 
@@ -18,7 +18,7 @@ Contributor instructions, discoverable UI skills, colocated module/font notes an
 - [Authentication for upload, publish and delete](contracts/authentication-mutations.md)
 - [Authentication for server reads](contracts/authentication-reads.md)
 - [Shared authentication foundation and compatibility boundary](contracts/authentication-foundation.md)
-- [Authentication workflow map and staged target](contracts/authentication-workflows.md)
+- [Current authentication workflows and shared ownership](contracts/authentication-workflows.md)
 - [Rewrite-bridge workflow map and implemented shared lifecycle](contracts/rewrite-bridge-workflows.md)
 - [Worksheet published browsing and slot handling](contracts/editor-viewer-backend-contract.md)
 - [Package snapshots within an upload flow](contracts/upload-snapshots.md)
@@ -38,8 +38,9 @@ Contributor instructions, discoverable UI skills, colocated module/font notes an
 - [Worksheet assessment and feedback](worksheet/worksheet-feedback.md)
 - [Learner voice, rewrite, recovery and Undo](worksheet/viewer-voice-workflow.md)
 - [Published loading feedback](worksheet/viewer-package-load-progress.md)
-- [Viewer UI target design and staged implementation plan](worksheet/viewer-ui-refactor-plan.md)
-- [Version C layout and chooser validation (unmerged stack)](worksheet/viewer-version-c-validation.md)
+- [Current viewer layout and interaction guidance](worksheet/viewer-ui-refactor-plan.md)
+- [Long text answers](worksheet/long-text-answers.md)
+- [Shared worksheet text editor and rich document contract](worksheet/shared-rich-text-editor.md)
 
 ## RolePlayScene
 
@@ -73,4 +74,11 @@ Contributor instructions, discoverable UI skills, colocated module/font notes an
 
 The [review register](reviews/documentation-review-2026-10-06.md) covers all 45 original Markdown files and both license texts. Keep current behavior in the folders above. Put completed or superseded planning records in `past/`, with a reason and a link to their replacement. Update current contracts alongside behavior changes, including shared consumers. Do not turn an unimplemented archived proposal into an active requirement without a new decision.
 
-- [Shared worksheet text editor and rich document contract](worksheet/shared-rich-text-editor.md)
+
+Dated viewer implementation evidence (historical, not current acceptance):
+[continuous navigation](worksheet/viewer-continuous-validation.md),
+[Version C layout](worksheet/viewer-version-c-validation.md),
+[motion](worksheet/viewer-motion-implementation.md), and
+[visual refinement](worksheet/viewer-visual-refinement.md).
+The [2026-11-16 review](reviews/documentation-review-2026-11-16.md) records this
+cleanup baseline, compatibility boundaries and documentation disposition.

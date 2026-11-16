@@ -60,8 +60,8 @@ Transcription also uses the shared runner; see [transcription integration](../co
 It verifies readiness before upload and rejects stale account/target output.
 Authentication failure retains audio in memory for explicit same-account Retry;
 account changes invalidate it. Raw audio is never saved. Transcript-only retry
-continues to skip transcription. Recording controls stay app-owned; T2A migration
-remains separate work.
+continues to skip transcription. Recording controls stay app-owned; authoring T2A uses its own implemented
+shared runner and deadline policy.
 
 Authentication-only failures before voice capture or an untouched whole-discussion
 rewrite do not show a recovery panel. Cancelling consent restores the original

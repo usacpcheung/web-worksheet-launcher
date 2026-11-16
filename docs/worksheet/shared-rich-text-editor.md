@@ -2,9 +2,9 @@
 
 The authoring editor uses a compact Tiptap toolbar for every content block and
 question prompt. It replaces the field-level Edit/Preview controls. Whole-worksheet
-Open in Viewer and Back to editor remain unchanged. Student answers, metadata,
+Open in Viewer and Back to editor use the current isolated preview lifecycle. Student answers, metadata,
 MC option labels, media controls, audio generation, voice/rewrite and authentication
-keep their existing behavior. Fill-in-the-blank questions are a later PR.
+keep their existing behavior. Fill-in-the-blanks uses the same engine with its application-owned blank tools; see [blank authoring](fill-in-the-blanks.md).
 
 ## Editing behavior
 

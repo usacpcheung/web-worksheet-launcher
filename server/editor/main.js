@@ -7,7 +7,7 @@ import { isFillInBlanks, emptyBlankConfig } from '../app/fill-in-blanks.js';
 import { isLongText, textLimitCeiling, textConfigError, STANDARD_TEXT_LIMIT, LONG_TEXT_LIMIT } from '../app/text-answer.js';
 import { imageQuestions, imageBudget } from '../app/image-response.js';
 import { mountOptionImageEditor } from './option-image-editor.js';
-import { optionImageRef, optionHasContent, imageDescription } from '../app/option-images.js';
+import { optionImageRef, imageDescription } from '../app/option-images.js';
 import { runPublicationFlow, runPublicationAttempt } from '../app/api/publication-flow.js';
 import { runAudioGeneration, waitForAudioAttachment, AUDIO_GENERATION_PHASE_TIMEOUT_MS } from '../app/bridge/audio-generation.js';
 import { prepareMutation } from '../app/auth/mutation-auth.js';
@@ -157,21 +157,6 @@ function isNonEmptyString(value) {
 
 function editorNotification(key, params = {}) {
   return t(`editor.notifications.${key}`, params);
-}
-
-function getProtectedActionErrorMessage(result, fallbackText = editorNotification('audioGeneration.startFailed')) {
-  const status = String(result?.status || '').trim();
-  if (status === 'blocked_no_local_id') {
-    return editorNotification('recovery.noActiveDraft');
-  }
-  if (status === 'blocked_session_probe') {
-    return editorNotification('auth.unableToVerifySignIn');
-  }
-  if (status === 'invalid_context' || status === 'invalid_intent' || status === 'intent_invalid') {
-    return editorNotification('recovery.contextChanged');
-  }
-  if (result?.error || result?.result?.error) return getApiErrorMessage(result, 'audio', 'bridge');
-  return fallbackText;
 }
 
 function normalizeMediaUsage(usage) {
@@ -818,17 +803,6 @@ function getEditorIssueCountLabel(count) {
   );
 }
 
-function getEditorAudioGenerationLabel({ isGenerating = false, hasAudio = false, includeAudio = false } = {}) {
-  if (isGenerating) return t('editor.media.actions.generating');
-  if (hasAudio) return includeAudio ? t('editor.media.actions.regenerateAudio') : t('editor.media.actions.regenerate');
-  return includeAudio ? t('editor.media.actions.generateAudio') : t('editor.media.actions.generate');
-}
-
-function getEditorAudioAttachLabel(hasAudio, { includeAudio = false } = {}) {
-  if (hasAudio) return includeAudio ? t('editor.media.actions.replaceAudio') : t('editor.media.actions.replace');
-  return includeAudio ? t('editor.media.actions.attachAudio') : t('editor.media.actions.attach');
-}
-
 function getEditorTextTooLongForAudioLabel(max) {
   return t('editor.media.textTooLongForAudio', { max });
 }
@@ -1367,17 +1341,6 @@ class EditorDraftSession {
       this.syncDeprecatedMessageFieldsFromNotifications();
     }
     return removedCount;
-  }
-
-  consumeNotification() {
-    if (!Array.isArray(this.state.notifications) || this.state.notifications.length === 0) {
-      this.syncDeprecatedMessageFieldsFromNotifications();
-      return null;
-    }
-    const [nextNotification, ...remaining] = this.state.notifications;
-    this.state.notifications = remaining;
-    this.syncDeprecatedMessageFieldsFromNotifications();
-    return nextNotification;
   }
 
   clearNotificationsBySource(source) {
@@ -5254,7 +5217,7 @@ function renderEditorShell(session) {
   const promptTrackGenerationLanguageByBlockId = new Map();
   const optionTrackGenerationLanguageByKey = new Map();
   let openOptionAudioMenuKey = null;
-  let promptT2AUiRefs = null;
+  let promptAudioHintRef = null;
   let activeConfirmDialog = null;
   let mediaActionInFlight = false;
   const loadStatus = document.createElement('p');
@@ -7056,31 +7019,18 @@ function renderEditorShell(session) {
   };
 
   const refreshPromptT2AControlsForSelectedBlock = () => {
-    if (!promptT2AUiRefs) return;
+    if (!promptAudioHintRef) return;
     const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
-    if (!selectedBlock || selectedBlock.kind !== 'question' || selectedBlock.blockId !== promptT2AUiRefs.blockId) {
+    if (!selectedBlock || selectedBlock.kind !== 'question' || selectedBlock.blockId !== promptAudioHintRef.blockId) {
       return;
     }
     const promptTextState = getT2ATextEligibility(worksheetTextToPlain(selectedBlock?.prompt), PROMPT_TEXT_LIMIT);
-    const promptMediaRefs = normalizeMediaRefs(selectedBlock?.prompt?.mediaRefs);
-    const currentQuestionAudioRef = getSingleMediaRef(promptMediaRefs, 'question_audio');
     const isPromptT2AInFlight = promptT2AInFlightBlockIds.has(selectedBlock.blockId)
       || promptT2AInFlightBlockId === selectedBlock.blockId;
-    const promptT2ALabel = getEditorAudioGenerationLabel({
-      isGenerating: isPromptT2AInFlight,
-      hasAudio: Boolean(currentQuestionAudioRef),
-      includeAudio: true,
-    });
-    const promptT2AIcon = isPromptT2AInFlight ? 'loading' : currentQuestionAudioRef ? 'refresh' : 'generate';
-    setMediaActionButtonContent(promptT2AUiRefs.generateBtn, promptT2AIcon, promptT2ALabel);
-    promptT2AUiRefs.generateBtn.disabled = !promptTextState.eligible || isPromptT2AInFlight;
-    promptT2AUiRefs.hint.textContent = promptTextState.exceedsLimit
+    promptAudioHintRef.hint.textContent = promptTextState.exceedsLimit
       ? getEditorTextTooLongForAudioLabel(PROMPT_TEXT_LIMIT)
       : '';
-    promptT2AUiRefs.hint.hidden = !promptTextState.exceedsLimit;
-    promptT2AUiRefs.attachBtn.disabled = isPromptT2AInFlight;
-    promptT2AUiRefs.playBtn.disabled = !currentQuestionAudioRef || isPromptT2AInFlight;
-    promptT2AUiRefs.removeBtn.disabled = !currentQuestionAudioRef || isPromptT2AInFlight;
+    promptAudioHintRef.hint.hidden = !promptTextState.exceedsLimit;
     const viewState = detailViewState(selectedBlock);
     rightPanel.querySelectorAll('[data-prompt-audio-language]').forEach(button => {
       const language = button.dataset.promptAudioLanguage;
@@ -7298,7 +7248,7 @@ function renderEditorShell(session) {
     const detailActions = document.createElement('div');
     detailActions.className = 'block-detail-header__actions';
     if (!selectedBlock) {
-      promptT2AUiRefs = null;
+      promptAudioHintRef = null;
       const empty = document.createElement('p');
       empty.textContent = t('editor.block.emptyState');
       detailHeader.append(detailTitleGroup);
@@ -7322,7 +7272,7 @@ function renderEditorShell(session) {
     rightPanel.append(statusRow);
 
     if (selectedBlock.kind === 'content') {
-      promptT2AUiRefs = null;
+      promptAudioHintRef = null;
       rightPanel.appendChild(createEditorSectionHeader({ icon: 'pencil', title: t('editor.block.contentSectionTitle') }));
       const contentLabel = document.createElement('label');
       contentLabel.textContent = t('editor.block.contentTextLabel');
@@ -7364,7 +7314,6 @@ function renderEditorShell(session) {
 
     const promptMediaRefs = normalizeMediaRefs(selectedBlock?.prompt?.mediaRefs);
     const currentQuestionImageRef = getSingleMediaRef(promptMediaRefs, 'question_image');
-    const currentQuestionAudioRef = getSingleMediaRef(promptMediaRefs, 'question_audio');
 
     const mediaSection = document.createElement('details');
     mediaSection.className = 'editor-disclosure editor-prompt-media media-section';
@@ -7444,175 +7393,17 @@ function renderEditorShell(session) {
     questionImageActions.append(attachImageBtn, viewImageBtn, removeImageBtn);
     questionImageRow.append(questionImageMeta, questionImageActions);
 
-    const questionAudioRow = document.createElement('div');
-    questionAudioRow.className = 'media-row';
-    const questionAudioMeta = document.createElement('div');
-    questionAudioMeta.className = 'media-row__meta';
-    const questionAudioLabel = document.createElement('span');
-    questionAudioLabel.className = 'media-row__title';
-    questionAudioLabel.textContent = t('editor.block.promptAudioLabel');
-    questionAudioMeta.appendChild(questionAudioLabel);
-    if (currentQuestionAudioRef) {
-      questionAudioMeta.appendChild(createCopyIdMenu({
-        triggerKind: 'badge',
-        triggerText: t('editor.block.attachedBadge'),
-        title: t('editor.block.promptAudioAssetId'),
-        idValue: currentQuestionAudioRef.assetId,
-        copyLabel: t('editor.block.copyAssetId'),
-        source: 'clipboard.audioAssetId',
-      }));
-    } else {
-      const emptyAudioBadge = document.createElement('span');
-      emptyAudioBadge.className = 'asset-status-badge asset-status-badge--empty';
-      emptyAudioBadge.textContent = t('common.values.none');
-      questionAudioMeta.appendChild(emptyAudioBadge);
-    }
-    const questionAudioActions = document.createElement('div');
-    questionAudioActions.className = 'media-row__actions';
     const promptTextState = getT2ATextEligibility(worksheetTextToPlain(selectedBlock?.prompt), PROMPT_TEXT_LIMIT);
-    const promptExceedsT2ALimit = promptTextState.exceedsLimit;
     const promptT2AEligible = promptTextState.eligible;
     const isPromptT2AInFlight = promptT2AInFlightBlockIds.has(selectedBlock.blockId)
       || promptT2AInFlightBlockId === selectedBlock.blockId;
-    const attachQuestionAudioBtn = document.createElement('button');
-    attachQuestionAudioBtn.type = 'button';
-    attachQuestionAudioBtn.className = 'media-action-btn';
-    setMediaActionButtonContent(attachQuestionAudioBtn, 'upload', getEditorAudioAttachLabel(Boolean(currentQuestionAudioRef)));
-    const removeQuestionAudioBtn = document.createElement('button');
-    removeQuestionAudioBtn.type = 'button';
-    removeQuestionAudioBtn.className = 'media-action-btn media-action-btn--remove';
-    setMediaActionButtonContent(removeQuestionAudioBtn, 'trash', t('editor.media.actions.remove'));
-    removeQuestionAudioBtn.disabled = !currentQuestionAudioRef;
-    const playQuestionAudioBtn = document.createElement('button');
-    playQuestionAudioBtn.type = 'button';
-    playQuestionAudioBtn.className = 'media-action-btn';
-    setMediaActionButtonContent(playQuestionAudioBtn, 'play', t('editor.media.actions.play'));
-    playQuestionAudioBtn.disabled = !currentQuestionAudioRef;
-    const generateQuestionAudioBtn = document.createElement('button');
-    generateQuestionAudioBtn.type = 'button';
-    generateQuestionAudioBtn.className = 'media-action-btn';
-    setMediaActionButtonContent(
-      generateQuestionAudioBtn,
-      isPromptT2AInFlight ? 'loading' : currentQuestionAudioRef ? 'refresh' : 'generate',
-      getEditorAudioGenerationLabel({ isGenerating: isPromptT2AInFlight, hasAudio: Boolean(currentQuestionAudioRef) })
-    );
-    generateQuestionAudioBtn.disabled = !promptT2AEligible || isPromptT2AInFlight;
     const questionAudioHint = document.createElement('p');
     questionAudioHint.className = 'muted';
-    questionAudioHint.textContent = promptExceedsT2ALimit
+    questionAudioHint.textContent = promptTextState.exceedsLimit
       ? getEditorTextTooLongForAudioLabel(PROMPT_TEXT_LIMIT)
       : '';
-    if (!promptExceedsT2ALimit) {
-      questionAudioHint.hidden = true;
-    }
-    if (isPromptT2AInFlight) {
-      attachQuestionAudioBtn.disabled = true;
-      playQuestionAudioBtn.disabled = true;
-      removeQuestionAudioBtn.disabled = true;
-    }
-    promptT2AUiRefs = {
-      blockId: selectedBlock.blockId,
-      attachBtn: attachQuestionAudioBtn,
-      generateBtn: generateQuestionAudioBtn,
-      playBtn: playQuestionAudioBtn,
-      removeBtn: removeQuestionAudioBtn,
-      hint: questionAudioHint,
-    };
-    attachQuestionAudioBtn.addEventListener('click', () => {
-      questionAudioInput.dataset.blockId = selectedBlock.blockId;
-      questionAudioInput.value = '';
-      questionAudioInput.click();
-    });
-    removeQuestionAudioBtn.addEventListener('click', async () => {
-      await runMediaAction(async () => {
-        const confirmed = await confirmDangerAction({
-          title: t('editor.media.confirm.removeQuestionAudioTitle'),
-          bodyText: t('editor.media.confirm.removeQuestionAudioBody'),
-          confirmLabel: t('editor.media.actions.removeAudio'),
-          removalItems: [t('editor.media.confirm.currentQuestionAudioAttachment')],
-        });
-        if (!confirmed) return;
-        const result = await session.removeQuestionMedia(selectedBlock.blockId, 'question_audio', { confirmRemove: true });
-        if (result.ok || result.reason !== 'confirm-remove-required') {
-          updateSummary();
-        }
-      });
-    });
-    playQuestionAudioBtn.addEventListener('click', async () => {
-      if (!currentQuestionAudioRef?.assetId || playQuestionAudioBtn.disabled) return;
-      playQuestionAudioBtn.disabled = true;
-      const result = await session.playAssetAudio(currentQuestionAudioRef.assetId, {
-        onEnded: () => {
-          playQuestionAudioBtn.disabled = false;
-        },
-        onError: () => {
-          playQuestionAudioBtn.disabled = false;
-        },
-        onInterrupted: () => {
-          playQuestionAudioBtn.disabled = false;
-        },
-      });
-      if (!result.ok) {
-        playQuestionAudioBtn.disabled = false;
-      }
-      updateSummary();
-    });
-    generateQuestionAudioBtn.addEventListener('click', async () => {
-      const latestBlock = session.state.draft?.blocks?.find((block) => block.blockId === selectedBlock.blockId);
-      const latestPromptState = getT2ATextEligibility(worksheetTextToPlain(latestBlock?.prompt), PROMPT_TEXT_LIMIT);
-      if (!latestPromptState.eligible || promptT2AInFlightBlockIds.has(selectedBlock.blockId)) return;
-      promptT2AInFlightBlockIds.add(selectedBlock.blockId);
-      promptT2AInFlightBlockId = selectedBlock.blockId;
-      updateSummary();
-      if (currentQuestionAudioRef) {
-        const confirmed = await confirmDangerAction({
-          title: t('editor.media.confirm.regenerateQuestionAudioTitle'),
-          bodyText: t('editor.media.confirm.regenerateQuestionAudioBody'),
-          confirmLabel: t('editor.media.actions.regenerateAudio'),
-          removalItems: [t('editor.media.confirm.currentQuestionAudioAttachment')],
-        });
-        if (!confirmed) {
-          promptT2AInFlightBlockIds.delete(selectedBlock.blockId);
-          restoreLegacyPromptInFlightMarker();
-          session.setMediaFeedback(t('editor.media.feedback.audioRegenerationCanceled'));
-          updateSummary();
-          return;
-        }
-      }
-
-      try {
-        const result = await session.triggerProtectedAction('editorPromptT2A', {
-          blockId: selectedBlock.blockId,
-          target: 'question_prompt',
-          localDraftId: session.state.draft?.localId || null,
-        });
-        const status = String(result?.status || '').trim();
-        if (status !== 'executed' && status !== 'redirected' && result?.ok !== true && !result?.cancelled) {
-          session.pushNotification({
-            kind: 'error',
-            category: 'editor',
-            source: 'prompt.t2a',
-            text: getProtectedActionErrorMessage(result, editorNotification('audioGeneration.startFailed')),
-          });
-          session.notifyStateChange();
-        }
-      } catch (error) {
-        const text = getApiErrorMessage(error, 'audio', 'bridge');
-        session.pushNotification({
-          kind: 'error',
-          category: 'editor',
-          source: 'prompt.t2a',
-          text,
-        });
-        session.notifyStateChange();
-      } finally {
-        promptT2AInFlightBlockIds.delete(selectedBlock.blockId);
-        restoreLegacyPromptInFlightMarker();
-        updateSummary();
-      }
-    });
-    questionAudioActions.append(attachQuestionAudioBtn, generateQuestionAudioBtn, playQuestionAudioBtn, removeQuestionAudioBtn);
-    questionAudioRow.append(questionAudioMeta, questionAudioActions);
+    questionAudioHint.hidden = !promptTextState.exceedsLimit;
+    promptAudioHintRef = { blockId: selectedBlock.blockId, hint: questionAudioHint };
     const audioHeading = document.createElement('div');
     audioHeading.className = 'editor-prompt-audio-heading';
     const audioTitle = document.createElement('strong');

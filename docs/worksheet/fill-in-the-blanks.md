@@ -20,13 +20,13 @@ switching away, review the combined instructions and restored passage before
 removing blank settings. Current marked words become visible text; unchanged
 words retain their original formatting. Images and audio stay attached. Text
 is never truncated: a resulting prompt over 500 characters must be shortened
-before exporting/publishing. Confirmations cannot apply after the question or
+before publishing. Confirmations cannot apply after the question or
 worksheet changes. Converting a blank question to a reading block also previews
 and preserves its text, with an explicit warning that blank settings and
 question media associations are removed.
 
 **Media and audio** is expanded by default and can be collapsed. Its compact
-language selectors **粵 / 普 / EN** show attachment state (blue/check versus
+language selectors **粵 / 普 / EN** show attachment state (green/check versus
 grey/dash) separately from selection (outline). Empty languages remain
 selectable. Switching language does not play or generate audio. Attach/Replace,
 Generate/Regenerate and Play operate on the selected language; Remove is in its

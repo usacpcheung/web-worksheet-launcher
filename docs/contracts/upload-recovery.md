@@ -55,7 +55,7 @@ Uncertain-upload receipt lookup remains inside the API client; it never causes
 this coordinator to automatically resend a ZIP. Existing viewer no-auth-replay
 rules remain unchanged. Browser UI and resource-specific policies remain with
 the apps. Deletion now uses the [shared deletion lifecycle](deletion-lifecycle.md).
-Publication creation remains separate work.
+Publication creation uses its own [shared lifecycle](publication-lifecycle.md), separate from upload recovery.
 
 [Upload snapshot rules](upload-snapshots.md) apply throughout recovery. Local
 changes are not silently included in subsequent attempts within the same flow.

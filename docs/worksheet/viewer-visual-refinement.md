@@ -1,5 +1,7 @@
 # Version C visual refinement
 
+> Historical implementation/validation record. The described feature is included in the PR1/PR2 baseline. Branch, unmerged/pending status and test results below refer to the original stage, not current instructions or fresh acceptance. See [current viewer guidance](viewer-ui-refactor-plan.md).
+
 This change is stacked on PR #335 (`afe9575c13b8f032e1ab1238d8d097d364da9caa`).
 It implements the visual adjustments approved on 2026-10-30, with the explicit
 exception that **prompt playback remains a small icon-only control**, matching

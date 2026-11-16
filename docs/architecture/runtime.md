@@ -1,6 +1,6 @@
 # Current runtime architecture
 
-Reviewed against main `7bb19de` on 2026-10-06.
+Aligned to PR #349 (`99ba300`) and PR2 cleanup on 2026-11-16; see the [documentation index](../README.md) for release-status boundaries.
 
 ## Entry points and ownership
 
@@ -15,9 +15,9 @@ Reviewed against main `7bb19de` on 2026-10-06.
 
 ## Worksheet flow
 
-1. Editor persists an editable local draft and media in IndexedDB. Viewer preview uses the sibling viewer URL with `localDraftId`, `preview=1` and a freshness marker.
+1. Editor persists an editable local draft and media in IndexedDB. Viewer preview uses the sibling viewer URL with `localDraftId`, `preview=1` and a freshness marker. It owns a temporary attempt and never replaces the normal Resume target. Preview supports answering, submission, feedback and print; attempt export/server save are unavailable.
 2. ZIP export serializes `manifest.json`, `content/worksheet.json` and `media/`. Upload sends those ZIP bytes; publishing validates and copies an uploaded artifact into a new published artifact. Listing metadata can differ from embedded content metadata.
-3. Viewer source loading derives its read-only payload and creates a local attempt. Answers, progress and voice recovery autosave locally; submission/checking does not continuously synchronize them to the server.
+3. Explicit normal worksheet opening derives its read-only payload and creates a fresh local attempt, even for the same worksheet. Replacement consent and successful persistence precede changing the single Resume target. Cancel/login alone never replace existing work. Answers, progress and voice recovery autosave locally; submission/checking does not continuously synchronize them to the server.
 4. Explicit attempt export/upload includes a worksheet snapshot, answers/check state and media. Uploaded attempt resume imports the embedded worksheet and creates a new local attempt; it does not fetch a newer publication.
 
 See [launch and response contracts](../message-contract.md), [package formats](../contracts/package-formats.md), [local models](../contracts/local-models.md) and [API routes](../operations/server-runtime.md).

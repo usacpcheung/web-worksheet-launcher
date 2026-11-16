@@ -89,7 +89,6 @@ test('imported property-name IDs support rewrite, undo, recovery reload and retr
     const unusual = { meta: { title: 'Imported' }, scenes: [{ id }] };
     const session = new RolePlaySceneDiscussionSession({ getProviderAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }), storage, apiClient });
     session.bindProject(unusual);
-    assert.equal(session.getMessage(id), '');
     session.setText(id, 'Original');
     assert.equal((await session.rewrite(id)).ok, true);
     assert.equal(session.getText(id), 'Rewritten');

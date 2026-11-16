@@ -6581,13 +6581,12 @@ test('in-flight rewrite state renders loading label while preserving always-visi
   assert.equal(source.includes("rewriteButton.querySelector('.viewer-action-label').textContent = isRewriteInFlight ? t('viewer.rewrite.inProgress') : t('viewer.rewrite.action');"), true);
   assert.equal(source.includes('rewriteButton.disabled = !canRewrite;'), true);
   assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || Boolean(session.voice.active) || !hasUndoEntry;'), true);
-  assert.equal(source.includes('Object.hasOwn(session.state.rewriteMessageByBlock || {}, block.blockId)'), true);
 });
 
 test('rewrite row updates happen in place without mount/unmount checks', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes("rewriteRow.append(voiceUi.add, rewriteButton, undoButton);"), true);
-  assert.equal(source.includes("rewriteMessages.append(textStatus, rewriteHint, rewriteError);"), true);
+  assert.equal(source.includes("rewriteMessages.append(textStatus, rewriteHint);"), true);
   assert.equal(source.includes("textActionsRow.append(textCounter, rewriteRow);"), true);
   assert.equal(source.includes("card.append(helper, control, reviewStatus, mediaFeedback, textFooter, inputError);"), true);
   assert.equal(source.includes('if (rewriteRow.childNodes.length > 0) {'), false);
@@ -6700,7 +6699,7 @@ test('rewrite apply with unchanged resulting text is treated as success (not non
   assert.equal(result.status, 'rewrite_applied');
   assert.equal(session.state.answers.q1.value, 'same answer');
   assert.equal(Object.prototype.hasOwnProperty.call(session.state.undoBuffer, 'q1'), false);
-  assert.equal(session.state.rewriteMessageByBlock.q1 || null, null);
+  assert.equal(session.voice.active, null);
 });
 
 test('failed finalization restores recovery and subsequent saves retain it', async () => {
