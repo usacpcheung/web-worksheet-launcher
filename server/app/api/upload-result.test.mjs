@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyUploadResult, classifyProtectedUploadResult } from './upload-result.js';
+import { classifyUploadResult } from './upload-result.js';
 
 const resources = [
   ['worksheet-draft', 'DRAFT_NAME_CONFLICT', 'DRAFT_SLOT_LIMIT_REACHED'],
@@ -46,21 +46,4 @@ test('auth metadata survives transport classification without losing uncertain/c
   }
   assert.equal(classifyUploadResult({ ok: false, error: { status: 401 } }, 'worksheet-attempt').kind, 'auth_required');
   assert.equal(classifyUploadResult({ ok: false, error: { status: 503 } }, 'worksheet-attempt').requiresSignIn, false);
-});
-
-test('gate envelopes remain separate from executed upload failures', () => {
-  for (const status of ['executed', 'redirected']) assert.equal(classifyProtectedUploadResult({ status }, 'worksheet-attempt').kind, status);
-  for (const status of ['blocked_session_probe', 'blocked_no_local_id', 'invalid_intent', 'intent_invalid']) {
-    const result = { status, result: { ok: false, error: { code: 'NETWORK_ERROR' } } };
-    const outcome = classifyProtectedUploadResult(result, 'worksheet-attempt');
-    assert.equal(outcome.kind, 'blocked');
-    assert.equal(outcome.reason, status);
-    assert.equal(outcome.result, result);
-  }
-  for (const result of [null, undefined, {}, { ok: true }]) assert.equal(classifyProtectedUploadResult(result, 'worksheet-attempt').kind, 'blocked');
-  const result = { ok: false, error: { code: 'ATTEMPT_NAME_CONFLICT' } };
-  const outcome = classifyProtectedUploadResult(result, 'worksheet-attempt');
-  assert.equal(outcome.kind, 'upload');
-  assert.equal(outcome.outcome.kind, 'conflict');
-  assert.equal(outcome.result, result);
 });

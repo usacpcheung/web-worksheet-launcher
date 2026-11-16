@@ -619,7 +619,7 @@ export function renderPlayerUI({
         : translate('player.discussion.rewrite');
       rewriteButton.disabled = Boolean(discussionSession?.voice?.active) || hasPendingRecovery(discussionSession?.recovery?.[scene.id]) || isRewriting || trimmedLength === 0 || trimmedLength > DISCUSSION_REWRITE_MAX_CHARS;
       undoButton.disabled = Boolean(discussionSession?.voice?.active) || isRewriting || !discussionSession?.hasUndo?.(scene.id);
-      const message = discussionSession?.saveFailed ? translate('player.discussion.saveFailed') : discussionSession?.getMessage?.(scene.id) || '';
+      const message = discussionSession?.saveFailed ? translate('player.discussion.saveFailed') : '';
       voiceControls?.update();
       if (message) {
         hint.textContent = message;

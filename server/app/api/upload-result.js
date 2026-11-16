@@ -27,12 +27,3 @@ export function classifyUploadResult(result, resource) {
   // timeout may retain HTTP 401; the existing auth gate must still handle it.
   return { kind, code, requiresSignIn, result };
 }
-
-// SharedAuthGate returns envelopes for execution/blocks and raw non-auth
-// failures for executed actions. Do not mistake the latter for a sign-in block.
-export function classifyProtectedUploadResult(result, resource) {
-  if (result?.status === 'redirected') return { kind: 'redirected', result };
-  if (result?.status === 'executed') return { kind: 'executed', result };
-  if (result?.ok === false) return { kind: 'upload', outcome: classifyUploadResult(result, resource), result };
-  return { kind: 'blocked', reason: result?.status, result };
-}

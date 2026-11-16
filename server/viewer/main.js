@@ -2498,7 +2498,6 @@ class ViewerAttemptSession {
       undoBuffer: {},
       isRewriting: false,
       rewritingBlockId: null,
-      rewriteMessageByBlock: {},
       voiceRecovery: {},
       voiceApplied: null,
       lastProtectedAction: null,
@@ -3188,7 +3187,6 @@ class ViewerAttemptSession {
     this.state.undoBuffer = {};
     this.state.isRewriting = false;
     this.state.rewritingBlockId = null;
-    this.state.rewriteMessageByBlock = {};
 
     if (options.markDirty) {
       this.state.attemptRevision += 1;
@@ -3578,19 +3576,6 @@ class ViewerAttemptSession {
 
   setRecoveryMessage(message) {
     this.state.recoveryMessage = message || null;
-  }
-
-  setRewriteMessage(blockId, message) {
-    if (typeof blockId !== 'string' || !blockId) {
-      return;
-    }
-    const nextMessages = { ...(this.state.rewriteMessageByBlock || {}) };
-    if (message) {
-      Object.defineProperty(nextMessages, blockId, { value: String(message), enumerable: true, configurable: true, writable: true });
-    } else {
-      delete nextMessages[blockId];
-    }
-    this.state.rewriteMessageByBlock = nextMessages;
   }
 
   async replayProtectedAction(intent) {
@@ -6726,8 +6711,6 @@ function renderViewerShell(session) {
 
           const rewriteHint = document.createElement('p');
           rewriteHint.className = 'question-card__rewrite-hint';
-          const rewriteError = document.createElement('p');
-          rewriteError.className = 'question-card__rewrite-error';
           for (const [button, icon] of [[voiceUi.add, 'voice'], [rewriteButton, 'rewrite'], [undoButton, 'undo']]) {
             const caption = document.createElement('span');
             caption.className = 'viewer-action-label';
@@ -6736,7 +6719,7 @@ function renderViewerShell(session) {
             button.insertAdjacentHTML('afterbegin', createViewerIcon(icon));
           }
           rewriteRow.append(voiceUi.add, rewriteButton, undoButton);
-          rewriteMessages.append(textStatus, rewriteHint, rewriteError);
+          rewriteMessages.append(textStatus, rewriteHint);
           textActionsRow.append(textCounter, rewriteRow);
           textFooter.append(textActionsRow, rewriteMessages, voiceUi.root);
         } else {
@@ -6791,7 +6774,6 @@ function renderViewerShell(session) {
         Boolean(session.imagePending || session.imageExportPending), Boolean(session.voice.active), session.voice.active?.blockId === block.blockId,
         session.state.isRewriting && session.state.rewritingBlockId === block.blockId,
         Object.hasOwn(session.state.undoBuffer || {}, block.blockId),
-        Object.hasOwn(session.state.rewriteMessageByBlock || {}, block.blockId) ? session.state.rewriteMessageByBlock[block.blockId] : null,
         getVoiceRecovery(session.state.voiceRecovery, block.blockId),
         session.state.voiceApplied?.blockId === block.blockId ? session.state.voiceApplied.id : null,
         card.contains(activeElement),
@@ -6835,7 +6817,6 @@ function renderViewerShell(session) {
         const rewriteButton = card?.querySelector('.question-card__rewrite-btn');
         const undoButton = card?.querySelector('.question-card__undo-btn');
         const rewriteHint = card?.querySelector('.question-card__rewrite-hint');
-        const rewriteError = card?.querySelector('.question-card__rewrite-error');
         const trimmedAnswerLength = unicodeLength(getTrimmedAnswerTextForBlock(block.blockId));
         const isAttemptCompleted = session.state.status === 'completed';
         const hasUndoEntry = Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId);
@@ -6859,10 +6840,6 @@ function renderViewerShell(session) {
           } else {
             rewriteHint.textContent = '';
           }
-        }
-        if (rewriteError) {
-          const rewriteInlineMessage = String(Object.hasOwn(session.state.rewriteMessageByBlock || {}, block.blockId) ? session.state.rewriteMessageByBlock[block.blockId] : '');
-          rewriteError.textContent = rewriteInlineMessage ? `⚠️ ${rewriteInlineMessage}` : '';
         }
       }
       voiceControl?.update();

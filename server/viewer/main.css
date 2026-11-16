@@ -1946,19 +1946,13 @@ input[type='text']::placeholder {
 }
 
 .question-card__rewrite-messages .text-counter-status,
-.question-card__rewrite-messages .question-card__rewrite-hint,
-.question-card__rewrite-messages .question-card__rewrite-error {
+.question-card__rewrite-messages .question-card__rewrite-hint {
   text-align: left;
   margin: 0;
 }
 
 .question-card__rewrite-hint {
   color: #8a4b14;
-  font-size: 0.86rem;
-}
-
-.question-card__rewrite-error {
-  color: #9f1239;
   font-size: 0.86rem;
 }
 
@@ -2575,7 +2569,7 @@ body:has(.viewer-shell--continuous) #app {
   gap:12px;
 }
 
-.viewer-shell--continuous .question-card__text-footer :is(.text-counter, .question-card__rewrite-hint, .question-card__rewrite-error) {
+.viewer-shell--continuous .question-card__text-footer :is(.text-counter, .question-card__rewrite-hint) {
   font-size:.8125rem;
   line-height:1.65;
 }
