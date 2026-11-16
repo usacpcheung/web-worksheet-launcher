@@ -1,3 +1,4 @@
+import { createReadingBlockPresentation, createQuestionPromptPresentation } from './block-presentation.js';
 import { createViewerAudioControls, resolveViewerAudioSources } from './audio-controls.js';
 import { createAttemptOpeningMethods } from './attempt-opening.js';
 import { AttemptLifecycle, isPreviewAttempt, openingCancelled } from './attempt-lifecycle.js';
@@ -28,14 +29,14 @@ import { classifyUploadResult } from '../app/api/upload-result.js';
 import { assertAttemptPackage } from '../app/contracts/attempt-package-validator.js';
 import { installPageRecovery } from '../app/storage/recovery-journal.js';
 import { PackageLoadProgress, packageLoadLabel } from './package-load-progress.js';
-import { setWorksheetText, installWorksheetTextStyles, assertWorksheetTextFormats, hasMarkdown, hasRichText, copyWorksheetText } from '../app/worksheet-text.js';
+import { installWorksheetTextStyles, assertWorksheetTextFormats, hasMarkdown, hasRichText, copyWorksheetText } from '../app/worksheet-text.js';
 import { createVoiceWorkflow, normalizeVoiceRecovery, REWRITE_INPUT_LIMIT, unicodeLength, hasPendingRecovery, getVoiceRecovery } from './answer-voice-workflow.js';
 import { createVoiceControls, createVoiceStatus } from './answer-voice-ui.js';
 import { requestVoiceSignIn } from './voice-sign-in.js';
 import { createWorksheetViewHost, createBlockViewScope } from './block-view-host.js';
 import { createEntryMotion } from './entry-motion.js';
 import { createSectionNavigation } from './section-navigation.js';
-import { bookIcon, createWorksheetNavigation, describeSections, isAnsweredValue } from './worksheet-navigation.js';
+import { createWorksheetNavigation, describeSections, isAnsweredValue } from './worksheet-navigation.js';
 import { viewerStorage } from './storage/index.js';
 import { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';
 import { validateViewerPayloadSchema } from '../app/contracts/validators.js';
@@ -5342,101 +5343,17 @@ function renderViewerShell(session) {
     let voiceControl = null;
     let textFeedback = null;
     if (currentBlock.kind === 'content') {
-      const card = document.createElement('article');
-      card.className = 'content-card viewer-card-transition';
-      const heading = document.createElement('h3');
-      heading.className = 'viewer-section-label viewer-sr-only';
-      heading.textContent = sectionLabels.get(block.blockId);
-      const body = document.createElement('div');
-      setWorksheetText(body, currentBlock.content);
-      const marker = document.createElement('div');
-      marker.className = 'viewer-content-heading';
-      marker.setAttribute('aria-hidden', 'true');
-      marker.innerHTML = bookIcon;
-      card.append(heading, marker, body);
+      const card = createReadingBlockPresentation({ block, sectionLabelText: sectionLabels.get(block.blockId) });
       return { element: card, update() {}, dispose: scope.dispose };
     }
 
-    const card = document.createElement('article');
-    card.className = 'question-card viewer-card-transition';
-    const sectionLabel = document.createElement('h3');
-    sectionLabel.className = 'viewer-section-label viewer-sr-only';
-    sectionLabel.textContent = sectionLabels.get(block.blockId);
-    card.append(sectionLabel);
-    const questionHeading = document.createElement('div');
-    questionHeading.className = 'viewer-question-heading';
-    const questionNumber = document.createElement('span');
-    questionNumber.className = 'viewer-question-number';
-    questionNumber.setAttribute('aria-hidden', 'true');
-    questionNumber.textContent = String(sectionNumbers.get(block.blockId)).padStart(2, '0');
-    questionHeading.append(questionNumber);
-    card.append(questionHeading);
-    const label = document.createElement('div');
-    label.className = 'question-card__prompt-label';
     const inputType = block.responseConfig?.inputType || 'text';
-    const controlId = `answer-${block.blockId}`;
-    label.id = `${controlId}-label`;
-    label.addEventListener('click', () => document.getElementById(label.htmlFor || controlId)?.focus(), { signal: scope.signal });
-    setWorksheetText(label, isFillInBlanks(block.responseConfig) && !String(block.prompt?.text || '').trim()
-      ? { text: t('fillBlanks.type') }
-      : { ...block.prompt, text: block.prompt?.text || t('viewer.stepper.question') });
-    const mediaFeedback = document.createElement('p');
-    mediaFeedback.className = 'viewer-media-feedback';
-    mediaFeedback.setAttribute('role', 'status');
-    mediaFeedback.setAttribute('aria-live', 'polite');
-    const setMediaFeedback = (message) => {
-      if (!scope.signal.aborted) mediaFeedback.textContent = message || '';
-    };
-
-    const promptMediaRefs = normalizePromptMediaRefs(block.prompt?.mediaRefs);
-    const questionImageRef = promptMediaRefs.find((ref) => ref.usage === 'question_image') || null;
-    const questionAudioRef = promptMediaRefs.find((ref) => ref.usage === 'question_audio') || null;
-
-    const promptRow = document.createElement('div');
-    promptRow.className = 'question-card__prompt-row';
-    const promptTextWrap = document.createElement('div');
-    promptTextWrap.className = 'question-card__prompt-text';
-    promptTextWrap.append(label);
-    promptRow.append(promptTextWrap);
-    card.append(promptRow);
-
-    const questionAudioControl = createViewerAudioControl({
-      audioTracks: block.prompt?.audioTracks,
-      legacyAudioRef: questionAudioRef,
-      kind: 'question',
-      session,
-      reportMediaFeedback: setMediaFeedback,
-      signal: scope.signal,
-    });
-    if (questionAudioControl) promptRow.append(questionAudioControl);
-
-    if (questionImageRef?.assetId) {
-      const imageWrap = document.createElement('div');
-      imageWrap.className = 'viewer-question-image-wrap';
-      const imageEl = document.createElement('img');
-      imageEl.className = 'viewer-question-image';
-      imageEl.alt = t('viewer.print.questionImageAlt');
-      imageWrap.appendChild(imageEl);
-      card.append(imageWrap);
-      session.storage.localAssets?.get?.(questionImageRef.assetId).then((asset) => {
-        if (scope.signal.aborted) return;
-        if (!asset?.binary) {
-          setMediaFeedback(t('viewer.image.missingWithId', { id: questionImageRef.assetId }));
-          return;
-        }
-        const mimeType = asset?.metadata?.mimeType || 'image/png';
-        const objectUrl = scope.createObjectURL(new Blob([asset.binary], { type: mimeType }));
-        imageEl.onload = () => scope.releaseObjectURL(objectUrl);
-        imageEl.onerror = () => {
-          scope.releaseObjectURL(objectUrl);
-          setMediaFeedback(t('viewer.image.couldNotRender'));
-          imageWrap.remove();
-        };
-        imageEl.src = objectUrl;
-      }).catch(() => {
-        setMediaFeedback(t('viewer.image.couldNotLoad'));
+    const { card, sectionLabel, questionHeading, promptRow, label, controlId, mediaFeedback, setMediaFeedback } =
+      createQuestionPromptPresentation({
+        block, sectionLabelText: sectionLabels.get(block.blockId), questionNumber: sectionNumbers.get(block.blockId),
+        scope, localAssets: session.storage.localAssets, t,
+        createAudioControl: options => createViewerAudioControl({ ...options, session }),
       });
-    }
 
       let checkBanner = null;
       let checkReveal = null;

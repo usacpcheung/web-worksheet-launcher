@@ -22,6 +22,22 @@ Aligned to PR #349 (`99ba300`) and PR2 cleanup on 2026-11-16; see the [documenta
 
 See [launch and response contracts](../message-contract.md), [package formats](../contracts/package-formats.md), [local models](../contracts/local-models.md) and [API routes](../operations/server-runtime.md).
 
+## Worksheet viewer block-presentation ownership
+
+`server/viewer/block-presentation.js` renders reading cards and the question
+number, formatted prompt, image and audio-control placement. It uses the shared
+worksheet text renderer and receives the local asset store, translator, existing
+card resource scope and a session-bound audio-control callback. It returns the
+original DOM nodes so answer controls can retain their label/focus association
+and share media feedback. Image URLs are released on load/error or card disposal;
+late storage results and feedback are ignored after disposal.
+
+`main.js` retains section numbering, card recreation signatures, answer controls
+and updates, submitted/checking presentation, voice/rewrite/Undo and navigation.
+`block-view-host.js` still owns card disposal and stable section wrappers. The
+presentation module is statically imported; package formats, persistence and
+offline behaviour are unchanged.
+
 ## Worksheet viewer audio-control ownership
 
 `server/viewer/audio-controls.js` owns the existing question/option audio buttons,
