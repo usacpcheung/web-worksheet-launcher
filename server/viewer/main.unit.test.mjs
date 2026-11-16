@@ -303,7 +303,7 @@ async function loadViewerModule(overrides = {}) {
   globalThis.document = globalThis[bagName].document;
   globalThis.window = globalThis[bagName].window;
 
-  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource.replace(/from '(\.\/(?:answer-(?:voice-workflow|voice-ui)|voice-sign-in|attempt-menu|browser-entry|package-load-progress|block-view-host|block-presentation|section-navigation|worksheet-navigation|entry-motion)\.js)'/g, (_, path) => 'from ' + JSON.stringify(new NodeURL(path, import.meta.url).href)))}`;
+  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource.replace(/from '(\.\/(?:answer-(?:voice-workflow|voice-ui)|voice-sign-in|attempt-menu|browser-entry|package-load-progress|block-view-host|block-presentation|check-feedback|section-navigation|worksheet-navigation|entry-motion)\.js)'/g, (_, path) => 'from ' + JSON.stringify(new NodeURL(path, import.meta.url).href)))}`;
   return import(dataUrl);
 }
 
@@ -4312,36 +4312,6 @@ test('computeCheckResult does not treat unanswered number input as 0 when correc
   assert.equal(resultZero.correctCount, 1);
 });
 
-test('getCheckRevealMessage uses explicit fallback when learner answer is empty', async () => {
-  const mod = await loadViewerModule();
-
-  const incorrectEmpty = mod.getCheckRevealMessage({
-    status: 'incorrect',
-    learnerAnswerText: '',
-    correctAnswerText: 'A, B',
-  });
-  const incorrectWhitespace = mod.getCheckRevealMessage({
-    status: 'incorrect',
-    learnerAnswerText: '   ',
-    correctAnswerText: 'True',
-  });
-  const correct = mod.getCheckRevealMessage({
-    status: 'correct',
-    learnerAnswerText: '',
-    correctAnswerText: '4',
-  });
-  const ungradedMissingKey = mod.getCheckRevealMessage({
-    status: 'ungraded_missing_or_invalid_key',
-    learnerAnswerText: '',
-    correctAnswerText: '',
-  });
-
-  assert.equal(incorrectEmpty, 'viewer.check.reveal.incorrectWithCorrectAnswer');
-  assert.equal(incorrectWhitespace, 'viewer.check.reveal.incorrectWithCorrectAnswer');
-  assert.equal(correct, 'viewer.check.reveal.correctAnswer');
-  assert.equal(ungradedMissingKey, 'viewer.check.reveal.noAnswer');
-});
-
 test('computeCheckResult marks gradeable missing key questions as ungraded without changing summary fields', async () => {
   const mod = await loadViewerModule();
 
@@ -4371,17 +4341,6 @@ test('computeCheckResult marks gradeable missing key questions as ungraded witho
   assert.deepEqual(Object.keys(result).sort(), ['byBlockId', 'correctCount', 'statusByBlockId', 'totalQuestions']);
   assert.equal(result.correctCount, 0);
   assert.equal(result.totalQuestions, 1);
-});
-
-test('render check feedback includes neutral ungraded banner copy and learner answer fallback', async () => {
-  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-
-  assert.equal(source.includes("? t('viewer.check.correct')"), true);
-  assert.equal(source.includes(": t('viewer.check.notGraded');"), true);
-  assert.equal(source.includes("t('viewer.check.missingAnswerKey')"), true);
-  assert.equal(source.includes("status: checkStatus,"), true);
-  assert.equal(source.includes("correctAnswerText: isUngradedMissingOrInvalidKey ? '' : formatCorrectAnswer(),"), true);
-  assert.equal(source.includes("t('viewer.check.reveal.noAnswer')"), true);
 });
 
 test('viewer stylesheet defines neutral ungraded check banner styles', async () => {
