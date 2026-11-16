@@ -114,7 +114,7 @@ test('active voice operation blocks submission, releases on cancel, and cannot m
 
 async function loadViewerModule(overrides = {}) {
   const filePath = path.resolve('server/viewer/main.js');
-  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'./worksheet-values.js'", JSON.stringify(new NodeURL('./worksheet-values.js', import.meta.url).href)).replaceAll("'./print-report-model.js'", JSON.stringify(new NodeURL('./print-report-model.js', import.meta.url).href)).replaceAll("'./print-report-html.js'", JSON.stringify(new NodeURL('./print-report-html.js', import.meta.url).href)).replaceAll("'./attempt-opening.js'", JSON.stringify(new NodeURL('./attempt-opening.js', import.meta.url).href)).replaceAll("'./attempt-lifecycle.js'", JSON.stringify(new NodeURL('./attempt-lifecycle.js', import.meta.url).href)).replaceAll("'./attempt-lifecycle-ui.js'", JSON.stringify(new NodeURL('./attempt-lifecycle-ui.js', import.meta.url).href)).replaceAll("'./feedback-ui.js'", JSON.stringify(new NodeURL('./feedback-ui.js', import.meta.url).href)).replaceAll("'../app/worksheet-feedback.js'", JSON.stringify(new NodeURL('../app/worksheet-feedback.js', import.meta.url).href)).replaceAll("'../app/fill-in-blanks.js'", JSON.stringify(new NodeURL('../app/fill-in-blanks.js', import.meta.url).href)).replaceAll("'./fill-in-blanks-ui.js'", JSON.stringify(new NodeURL('./fill-in-blanks-ui.js', import.meta.url).href)).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'./text-answer-input.js'", JSON.stringify(new NodeURL('./text-answer-input.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'./image-response-ui.js'", JSON.stringify(new NodeURL('./image-response-ui.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'../app/contracts/attempt-package-validator.js'", JSON.stringify(new NodeURL('../app/contracts/attempt-package-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
+  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'./audio-controls.js'", JSON.stringify(new NodeURL('./audio-controls.js', import.meta.url).href)).replaceAll("'./worksheet-values.js'", JSON.stringify(new NodeURL('./worksheet-values.js', import.meta.url).href)).replaceAll("'./print-report-model.js'", JSON.stringify(new NodeURL('./print-report-model.js', import.meta.url).href)).replaceAll("'./print-report-html.js'", JSON.stringify(new NodeURL('./print-report-html.js', import.meta.url).href)).replaceAll("'./attempt-opening.js'", JSON.stringify(new NodeURL('./attempt-opening.js', import.meta.url).href)).replaceAll("'./attempt-lifecycle.js'", JSON.stringify(new NodeURL('./attempt-lifecycle.js', import.meta.url).href)).replaceAll("'./attempt-lifecycle-ui.js'", JSON.stringify(new NodeURL('./attempt-lifecycle-ui.js', import.meta.url).href)).replaceAll("'./feedback-ui.js'", JSON.stringify(new NodeURL('./feedback-ui.js', import.meta.url).href)).replaceAll("'../app/worksheet-feedback.js'", JSON.stringify(new NodeURL('../app/worksheet-feedback.js', import.meta.url).href)).replaceAll("'../app/fill-in-blanks.js'", JSON.stringify(new NodeURL('../app/fill-in-blanks.js', import.meta.url).href)).replaceAll("'./fill-in-blanks-ui.js'", JSON.stringify(new NodeURL('./fill-in-blanks-ui.js', import.meta.url).href)).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'./text-answer-input.js'", JSON.stringify(new NodeURL('./text-answer-input.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'./image-response-ui.js'", JSON.stringify(new NodeURL('./image-response-ui.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'../app/contracts/attempt-package-validator.js'", JSON.stringify(new NodeURL('../app/contracts/attempt-package-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
   const bagName = `__viewerTestBag_${Math.random().toString(16).slice(2)}`;
 
   globalThis[bagName] = {
@@ -1127,23 +1127,6 @@ test('createChoiceButtonGroup renders option-audio play buttons only when option
   assert.equal(String(firstAudioButton?.className || '').includes('question-card__prompt-audio-btn'), true);
   assert.equal(String(firstAudioButton?.className || '').includes('choice-audio-btn'), true);
   assert.equal(secondAudioControl, undefined);
-});
-
-test('resolveViewerAudioSources prefers canonical multilingual tracks and falls back to legacy audio', async () => {
-  const mod = await loadViewerModule();
-  const legacy = { usage: 'question_audio', assetId: 'legacy_audio' };
-
-  assert.deepEqual(mod.resolveViewerAudioSources([], null), []);
-  assert.deepEqual(mod.resolveViewerAudioSources([], legacy), [
-    { assetId: 'legacy_audio', language: null, legacy: true },
-  ]);
-  assert.deepEqual(mod.resolveViewerAudioSources([
-    { language: 'english', assetId: 'audio_en', voicePresetId: 'english', sourceTextHash: 'h_en' },
-    { language: 'cantonese', assetId: 'audio_yue', voicePresetId: null, sourceTextHash: 'h_yue' },
-  ], legacy), [
-    { assetId: 'audio_yue', language: 'cantonese', legacy: false },
-    { assetId: 'audio_en', language: 'english', legacy: false },
-  ]);
 });
 
 test('single-track viewer audio control plays directly and exposes a neutral Stop state', async () => {
