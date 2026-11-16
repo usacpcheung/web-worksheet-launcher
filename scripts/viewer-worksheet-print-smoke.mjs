@@ -69,6 +69,8 @@ try {
     // Chromium can stall document.write CSS imports while opener interception is active.
     // API fixtures are only needed during viewer loading; let the real popup load fonts.
     await page.unrouteAll({ behavior: 'wait' });
+    // Also cover the first Print click offline, before any report window exists.
+    if (locale === 'zh-Hant') await context.setOffline(true);
     const popupReady = page.waitForEvent('popup');
     await printButton.click();
     const printed = await popupReady;
@@ -103,10 +105,23 @@ try {
       await printed.screenshot({ path: `${shots}/print-${locale}.png` });
       await printed.pdf({ path: `${shots}/worksheet-${locale}.pdf`, format: 'A4', printBackground: true, preferCSSPageSize: true });
     }
+    // The refactor must not defer module loading until a later Print click.
+    // Reuse this loaded worksheet and its assets without refreshing offline.
+    await printed.close();
+    await context.setOffline(true);
+    const offlinePopupReady = page.waitForEvent('popup');
+    await printButton.click();
+    const offlinePrint = await offlinePopupReady;
+    await offlinePrint.waitForFunction(() => window.printRequests === 1);
+    assert.deepEqual(await offlinePrint.locator('.print-report > article').evaluateAll(nodes => nodes.map(node => node.dataset.blockId)),
+      ['intro', 'text', 'between', 'choices', 'bool', 'number', 'blank', 'long-reading', 'long-answer', 'end']);
+    assert(await offlinePrint.locator('.print-question-image').evaluate(image => image.complete && image.naturalWidth === 240));
+    assert.equal(await page.evaluate(() => JSON.stringify({ answers: window.viewerSession.state.answers, blocks: window.viewerSession.state.viewerPayload.blocks })), before);
+    await context.setOffline(false);
     assert.deepEqual(errors, []);
     await context.close();
   }
-  console.log('Worksheet print order, formatting, answers, shuffle identity, real popup and bilingual layout passed');
+  console.log('Worksheet print order, formatting, answers, shuffle identity, real popup, offline repeat print and bilingual layout passed');
 } finally {
   await browser.close();
 }

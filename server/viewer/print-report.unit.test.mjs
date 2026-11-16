@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { t } from '../app/i18n/index.js';
+import { t, getLocale, setLocale } from '../app/i18n/index.js';
 import * as model from './print-report-model.js';
 import { buildWorksheetPrintReportHtml } from './print-report-html.js';
 import { deterministicShuffle } from './worksheet-values.js';
@@ -490,3 +490,32 @@ test('print keeps leading Markdown whitespace and therefore matches viewer forma
   assert.ok(mod.buildWorksheetPrintReportHtml(report).includes('<p>  ## Literal heading</p>'));
 });
 
+
+test('statically imported report builders follow locale changes without mutating attempt data', async () => {
+  const previousLocale = getLocale();
+  const input = {
+    viewerPayload: { title: 'Local worksheet', blocks: [{
+      blockId: 'q', kind: 'question', position: 0,
+      prompt: { text: 'A question' }, responseConfig: { inputType: 'text' },
+    }] },
+    answers: { q: { value: 'Student answer' } },
+    studentName: '<Learner & family>',
+  };
+  const before = structuredClone(input);
+  try {
+    for (const locale of ['en', 'zh-Hant', 'en']) {
+      setLocale(locale, { persist: false });
+      const report = await mod.buildWorksheetPrintReportModel(input);
+      const html = mod.buildWorksheetPrintReportHtml(report);
+      assert.equal(report.locale, locale);
+      assert.equal(report.schoolName, locale === 'en'
+        ? 'Hong Kong Red Cross Hospital Schools' : '香港紅十字會醫院學校');
+      assert.ok(html.includes(`<html lang="${locale}">`));
+      assert.ok(html.includes(`<h3>${t('viewer.print.answerHeading')}</h3>`));
+      assert.ok(html.includes('&lt;Learner &amp; family&gt;'));
+      assert.deepEqual(input, before);
+    }
+  } finally {
+    setLocale(previousLocale, { persist: false });
+  }
+});
