@@ -1,6 +1,38 @@
 import roleplayscene from './roleplayscene/en.js';
 
 export default {
+  editorStatus: {
+    "emptyOptions": "Add at least one option.",
+    "emptyOption": "Each option needs text or an image.",
+    "duplicateOptions": "Option values must be unique. Repeated value: {value}.",
+    "invalidChoiceAnswer": "The correct answer must refer to an existing option.",
+    "invalidNumberRange": "The minimum must not exceed the maximum.",
+    "invalidNumberAnswer": "The correct answer must satisfy the number rules and minimum/maximum limits.",
+    "invalidDecimals": "Decimal places must be a whole number of zero or more, or left empty.",
+    "feedbackTargets": "Enter 1–5 learning targets, complete each target, and select at least one assessment category.",
+    "feedbackText": "Feedback text limits must be 1–1,200 characters; instructions must not exceed 500 characters.",
+    "feedbackTarget": "Check the learning targets: each needs a valid unique ID and at most 200 characters.",
+    "feedbackEnabled": "Enable assessment or at least one feedback text field.",
+    "noBlanks": "Add at least one blank.",
+    "blankAnswer": "Enter a main answer for each automatically checked or word-bank blank.",
+    "title": "Save and validation",
+    "infoTitle": "Draft information",
+    "openDetails": "{status}. View save and validation details",
+    "savedTime": "Last saved on this device: {time}",
+    "savedWarning": "Last saved snapshot warning: {warning}",
+    "fixIssues": "Review these issues before distributing the worksheet:",
+    "noIssues": "No current validation issues.",
+    "issueList": "Validation issues",
+    "retrySave": "Retry saving",
+    "goBlock": "Go to block",
+    "goFeedback": "Go to feedback",
+    "copyId": "Copy ID",
+    "copied": "Copied.",
+    "copyFallback": "Select the ID and press Ctrl+C or ⌘C to copy.",
+    "viewActivity": "View activity",
+    "dismiss": "Dismiss notification",
+    "language": "Interface language"
+},
   attemptLifecycle: {
     "replaceTitle": "Open another worksheet?",
     "replace": "Open and replace",

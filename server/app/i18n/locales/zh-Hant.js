@@ -1,6 +1,38 @@
 import roleplayscene from './roleplayscene/zh-Hant.js';
 
 export default {
+  editorStatus: {
+    "emptyOptions": "請新增至少一個選項。",
+    "emptyOption": "每個選項都需要文字或圖片。",
+    "duplicateOptions": "選項值不可重複。重複值：{value}。",
+    "invalidChoiceAnswer": "正確答案必須對應現有的選項。",
+    "invalidNumberRange": "最小值不可大於最大值。",
+    "invalidNumberAnswer": "正確答案必須符合數值規則及最小／最大值限制。",
+    "invalidDecimals": "小數位數必須是零或以上的整數，亦可留空。",
+    "feedbackTargets": "請輸入 1–5 個學習目標、填寫每個目標，並選擇至少一個評估類別。",
+    "feedbackText": "回饋文字上限須為 1–1,200 字元；說明不可超過 500 字元。",
+    "feedbackTarget": "請檢查學習目標：每個目標須有有效且不重複的 ID，文字不可超過 200 字元。",
+    "feedbackEnabled": "請啟用評估或至少一個文字回饋欄位。",
+    "noBlanks": "請新增至少一個填空。",
+    "blankAnswer": "自動核對或詞庫填空必須填寫主要答案。",
+    "title": "儲存與檢查",
+    "infoTitle": "草稿資訊",
+    "openDetails": "{status}。查看儲存與檢查詳情",
+    "savedTime": "上次儲存於此裝置：{time}",
+    "savedWarning": "上次儲存版本的提醒：{warning}",
+    "fixIssues": "發佈或匯出工作紙前，請檢查以下問題：",
+    "noIssues": "目前沒有檢查問題。",
+    "issueList": "檢查問題",
+    "retrySave": "重試儲存",
+    "goBlock": "前往區塊",
+    "goFeedback": "前往評估與回饋",
+    "copyId": "複製 ID",
+    "copied": "已複製。",
+    "copyFallback": "請選取 ID，然後按 Ctrl+C 或 ⌘C 複製。",
+    "viewActivity": "查看活動",
+    "dismiss": "關閉通知",
+    "language": "介面語言"
+},
   attemptLifecycle: {
     "replaceTitle": "開啟另一份工作紙？",
     "replace": "開啟並取代",

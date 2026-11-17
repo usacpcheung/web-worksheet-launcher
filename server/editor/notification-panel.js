@@ -15,7 +15,7 @@ export function getNotificationToastRemainingMs(notification, nowMs = Date.now()
 }
 
 /** Owns activity/toast DOM and timers, never worksheet or session state. */
-export function createNotificationPanel({ t, requestRefresh }) {
+export function createNotificationPanel({ t, requestRefresh, presentation = { dismissedIds: new Set() } }) {
   const activityFeed = document.createElement('section');
   activityFeed.className = 'notification-feed';
   const activityFeedToggle = document.createElement('details');
@@ -33,11 +33,13 @@ export function createNotificationPanel({ t, requestRefresh }) {
   activityFeed.append(activityFeedSummary, activityFeedList, loadOlderActivityBtn);
   activityFeedToggle.append(activityFeedHeading, activityFeed);
   const toastContainer = document.createElement('div');
-  toastContainer.className = 'notification-toast-container';
+  toastContainer.className = 'editor-header-notification';
+  toastContainer.hidden = true;
   let visibleActivityCount = ACTIVITY_VISIBLE_INITIAL;
   let activityLog = [];
   let destroyed = false;
-  const dismissedToastIds = new Set();
+  const dismissedToastIds = presentation.dismissedIds;
+  let currentToastId = null, historySignature = "";
   const toastTimers = new Map();
 
   const getNotificationAriaLive = (kind) => (kind === 'error' ? 'assertive' : 'polite');
@@ -89,23 +91,27 @@ export function createNotificationPanel({ t, requestRefresh }) {
     const feedNotifications = activityLog
       .slice(-visibleActivityCount)
       .reverse();
-    activityFeedList.innerHTML = '';
-    activityFeedSummary.textContent = totalActivity > 0
-      ? `Showing ${Math.min(visibleActivityCount, totalActivity)} of ${totalActivity} recent activities.`
-      : 'Showing 0 of 0 recent activities.';
-    if (feedNotifications.length === 0) {
-      const emptyFeed = document.createElement('p');
-      emptyFeed.className = 'muted';
-      emptyFeed.textContent = t('common.activity.empty');
-      activityFeedList.appendChild(emptyFeed);
-    } else {
-      feedNotifications.forEach((notification) => {
-        activityFeedList.appendChild(renderNotificationCard(notification, 'notification-feed-item', { announce: false }));
-      });
+    const nextHistorySignature = JSON.stringify([visibleActivityCount, activityLog]);
+    if (nextHistorySignature !== historySignature) {
+      historySignature = nextHistorySignature;
+      activityFeedList.innerHTML = '';
+      activityFeedSummary.textContent = totalActivity > 0
+        ? `Showing ${Math.min(visibleActivityCount, totalActivity)} of ${totalActivity} recent activities.`
+        : 'Showing 0 of 0 recent activities.';
+      if (feedNotifications.length === 0) {
+        const emptyFeed = document.createElement('p');
+        emptyFeed.className = 'muted';
+        emptyFeed.textContent = t('common.activity.empty');
+        activityFeedList.appendChild(emptyFeed);
+      } else {
+        feedNotifications.forEach((notification) => {
+          activityFeedList.appendChild(renderNotificationCard(notification, 'notification-feed-item', { announce: false }));
+        });
+      }
+      const hasOlderActivity = totalActivity > visibleActivityCount;
+      loadOlderActivityBtn.hidden = !hasOlderActivity;
+      loadOlderActivityBtn.disabled = !hasOlderActivity;
     }
-    const hasOlderActivity = totalActivity > visibleActivityCount;
-    loadOlderActivityBtn.hidden = !hasOlderActivity;
-    loadOlderActivityBtn.disabled = !hasOlderActivity;
 
     const activeNotificationIds = new Set(notifications.map((item) => item?.id).filter(Boolean));
     Array.from(toastTimers.keys()).forEach((notificationId) => {
@@ -115,29 +121,52 @@ export function createNotificationPanel({ t, requestRefresh }) {
         dismissedToastIds.delete(notificationId);
       }
     });
-    const toastNowMs = Date.now();
-    const toastNotifications = notifications
-      .map((notification) => ({
-        notification,
-        remainingMs: getNotificationToastRemainingMs(notification, toastNowMs),
-      }))
-      .filter(({ notification, remainingMs }) => notification?.id
-        && remainingMs > 0
-        && !dismissedToastIds.has(notification.id))
-      .slice(-4);
-    toastContainer.innerHTML = '';
-    toastNotifications.forEach(({ notification, remainingMs }) => {
-      if (!toastTimers.has(notification.id)) {
-        const timerHandle = window.setTimeout(() => {
-          if (destroyed) return;
-          dismissedToastIds.add(notification.id);
-          toastTimers.delete(notification.id);
-          requestRefresh();
-        }, remainingMs);
-        toastTimers.set(notification.id, timerHandle);
-      }
-      toastContainer.appendChild(renderNotificationCard(notification, 'notification-toast'));
-    });
+    for (const id of dismissedToastIds) if (!activeNotificationIds.has(id)) dismissedToastIds.delete(id);
+    const candidates = notifications.filter(item => item?.id && item.showToast !== false);
+    const latest = candidates.at(-1);
+    // Superseded messages must not reappear after a newer message expires or is cleared.
+    candidates.slice(0, -1).forEach(item => dismissedToastIds.add(item.id));
+    const remainingMs = getNotificationToastRemainingMs(latest);
+    const notification = latest && remainingMs > 0 && !dismissedToastIds.has(latest.id) ? latest : null;
+    if (!notification) {
+      if (currentToastId) { toastContainer.replaceChildren(); currentToastId = null; }
+      toastContainer.hidden = true;
+      return;
+    }
+    if (!toastTimers.has(notification.id)) {
+      toastTimers.set(notification.id, window.setTimeout(() => {
+        if (destroyed) return;
+        dismissedToastIds.add(notification.id);
+        toastTimers.delete(notification.id);
+        requestRefresh();
+      }, remainingMs));
+    }
+    if (currentToastId === notification.id) return;
+    currentToastId = notification.id;
+    toastContainer.hidden = false;
+    const display = notification.source === 'save.manual' && notification.kind === 'success'
+      ? { ...notification, text: t('editor.notifications.save.savedLocalDraft') } : notification;
+    const card = renderNotificationCard(display, 'notification-toast');
+    const meta = card.querySelector('.notification-toast__meta');
+    meta.replaceChildren();
+    const history = document.createElement('button'); history.type = 'button';
+    history.className = 'editor-status-link'; history.textContent = t('editorStatus.viewActivity');
+    history.onclick = () => {
+      if (destroyed || !history.isConnected) return;
+      activityFeedToggle.open = true;
+      activityFeedToggle.scrollIntoView({ block: 'center' });
+      activityFeedHeading.focus({ preventScroll: true });
+    };
+    const dismiss = document.createElement('button'); dismiss.type = 'button';
+    dismiss.className = 'editor-notification-dismiss'; dismiss.setAttribute('aria-label', t('editorStatus.dismiss'));
+    dismiss.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg>';
+    dismiss.onclick = () => {
+      if (destroyed || !dismiss.isConnected) return;
+      dismissedToastIds.add(notification.id); requestRefresh();
+      toastContainer.closest('.editor-topbar')?.querySelector('.editor-status-badge')?.focus({ preventScroll: true });
+    };
+    meta.append(history, dismiss);
+    toastContainer.replaceChildren(card);
   }
 
   function loadOlderActivity() {
@@ -151,10 +180,10 @@ export function createNotificationPanel({ t, requestRefresh }) {
     destroyed = true;
     toastTimers.forEach(handle => window.clearTimeout(handle));
     toastTimers.clear();
-    dismissedToastIds.clear();
+
     loadOlderActivityBtn.removeEventListener('click', loadOlderActivity);
     activityLog = [];
   }
 
-  return { activityRoot: activityFeedToggle, toastRoot: toastContainer, update, destroy };
+  return { activityRoot: activityFeedToggle, headerRoot: toastContainer, update, destroy };
 }

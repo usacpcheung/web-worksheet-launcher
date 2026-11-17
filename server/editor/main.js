@@ -1,3 +1,4 @@
+import { createStatusPanel } from './status-panel.js';
 import { createMultipleChoiceControls } from './multiple-choice-controls.js';
 import { createEditorDialogs } from './dialogs.js';
 import { createAnswerSettings } from './answer-settings.js';
@@ -773,25 +774,6 @@ function getBooleanAnswerLabel(value) {
   if (value === 'true') return t('editor.question.booleanValues.true');
   if (value === 'false') return t('editor.question.booleanValues.false');
   return toTitleCaseLabel(value);
-}
-
-function getEditorSaveStateLabel(saveState) {
-  const keyByState = {
-    error: 'editor.saveState.error',
-    saving: 'editor.saveState.saving',
-    unsaved: 'editor.saveState.unsaved',
-    warning: 'editor.saveState.savedWithWarnings',
-    saved: 'editor.saveState.saved',
-  };
-  return t(keyByState[saveState] || keyByState.saved);
-}
-
-function getEditorIssueCountLabel(count) {
-  const normalizedCount = Number.isFinite(Number(count)) ? Number(count) : 0;
-  return t(
-    normalizedCount === 1 ? 'editor.validation.issueCountOne' : 'editor.validation.issueCountOther',
-    { count: normalizedCount }
-  );
 }
 
 function getEditorTextTooLongForAudioLabel(max) {
@@ -4922,6 +4904,7 @@ function renderEditorShell(session) {
   session.destroyAnswerSettings?.();
   session.destroyMultipleChoiceControls?.();
   session.destroyNotificationPanel?.();
+  session.destroyStatusPanel?.();
   if (!app) return;
 
   const shell = document.createElement('div');
@@ -4938,21 +4921,6 @@ function renderEditorShell(session) {
 
   const topBar = document.createElement('section');
   topBar.className = 'editor-topbar';
-  const saveStateEl = document.createElement('p');
-  saveStateEl.className = 'editor-topbar-item';
-  const lastSavedEl = document.createElement('p');
-  lastSavedEl.className = 'editor-topbar-item';
-  const validationEl = document.createElement('p');
-  validationEl.className = 'editor-topbar-item';
-  const localDraftIdEl = document.createElement('p');
-  localDraftIdEl.className = 'editor-topbar-item';
-  const localDraftIdLabel = document.createElement('span');
-  localDraftIdLabel.className = 'editor-label';
-  localDraftIdLabel.textContent = t('editor.labels.localDraftId');
-  const localDraftIdValue = document.createElement('span');
-  localDraftIdValue.className = 'editor-id-value';
-  localDraftIdEl.append(localDraftIdLabel, localDraftIdValue);
-
   const layout = document.createElement('section');
   layout.className = 'editor-layout';
 
@@ -5195,7 +5163,7 @@ function renderEditorShell(session) {
   };
 
   document.addEventListener('pointerdown', (event) => {
-    if (dialogs.isConfirmationOpen()) return;
+    if (dialogs.isConfirmationOpen() || statusPanel.isOpen()) return;
     rightPanel.querySelectorAll('details.audio-track-more-menu[open]').forEach((menu) => {
       if (!menu.contains(event.target)) menu.open = false;
     });
@@ -5352,24 +5320,6 @@ function renderEditorShell(session) {
     heading.textContent = title;
     header.append(iconWrap, heading);
     return header;
-  }
-
-  function formatLastSavedLabel(lastSavedAt) {
-    if (!isNonEmptyString(lastSavedAt)) {
-      return t(session.state.lastSavedRevision > 0 ? 'editor.saveTime.unknown' : 'editor.saveTime.never');
-    }
-    const savedTime = new Date(lastSavedAt).getTime();
-    if (!Number.isFinite(savedTime)) return t('editor.saveTime.unknown');
-    const elapsedMs = Date.now() - savedTime;
-    if (elapsedMs < 0) return t('editor.saveTime.future', { time: lastSavedAt });
-    const seconds = Math.floor(elapsedMs / 1000);
-    if (seconds < 10) return t('editor.saveTime.now');
-    if (seconds < 60) return t('editor.saveTime.seconds', { count: seconds });
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return t(minutes === 1 ? 'editor.saveTime.minute' : 'editor.saveTime.minutes', { count: minutes });
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return t(hours === 1 ? 'editor.saveTime.hour' : 'editor.saveTime.hours', { count: hours });
-    return lastSavedAt;
   }
 
   function emitServerNotification({ kind = 'info', text = '', source = 'editor.server' } = {}) {
@@ -5843,7 +5793,25 @@ function renderEditorShell(session) {
   signInBtn.textContent = t('feedback.login');
   const serverSessionStatus = document.createElement('p');
   serverSessionStatus.className = 'muted';
-  const notificationPanel = createNotificationPanel({ t, requestRefresh: () => updateSummary() });
+  const notificationPanel = createNotificationPanel({ t, requestRefresh: () => updateSummary(),
+    presentation: session.notificationPresentation ||= { dismissedIds: new Set() },
+  });
+  const statusPanel = createStatusPanel({ t, icon: createEditorIcon, backgroundRoot: shell,
+    getState: () => session.state, getGeneration: () => session._audioDraftGeneration,
+    onRetrySave: () => session.saveNow(),
+    onNavigate: target => {
+      if (session.state.draft?.localId !== target.draftId) return;
+      if (target.kind === 'feedback') session.state.feedbackSettingsDraftId = target.draftId;
+      else {
+        if (!session.findBlock(target.blockId)) return;
+        session.selectBlock(target.blockId);
+      }
+      updateSummary();
+      const panel = target.kind === 'feedback' ? feedbackEditor.root : rightPanel;
+      panel.tabIndex = -1; panel.focus({ preventScroll: true }); panel.scrollIntoView({ block: 'start' });
+    },
+  });
+  session.destroyStatusPanel = statusPanel.destroy;
   session.destroyNotificationPanel = notificationPanel.destroy;
   const browsePublishedModalRoot = document.createElement('div');
   const manageUploadedDraftsModalRoot = document.createElement('div');
@@ -7359,33 +7327,7 @@ function renderEditorShell(session) {
     refreshPromptT2AControlsForSelectedBlock();
     refreshImageBudget();
 
-    const saveState = session.state.lastPersistenceError
-      ? 'error'
-      : session.state.autosavePending
-        ? 'saving'
-        : session.state.draftRevision > session.state.lastSavedRevision
-          ? 'unsaved'
-          : session.state.lastValidationWarning
-            ? 'warning'
-            : 'saved';
-    const isSaved = saveState === 'saved';
-    saveStateEl.innerHTML = `<span class="editor-pill ${isSaved ? 'editor-pill--ok' : 'editor-pill--warn'}">${createEditorIcon('check')}${getEditorSaveStateLabel(saveState)}</span>`;
-    saveStateEl.title = session.state.lastPersistenceError || session.state.lastValidationWarning || '';
-    const lastSavedLabel = document.createElement('span');
-    lastSavedLabel.className = 'editor-label';
-    lastSavedLabel.textContent = t('editor.labels.lastSaved');
-    lastSavedEl.replaceChildren(lastSavedLabel, document.createTextNode(` ${formatLastSavedLabel(session.state.lastSavedAt)}`));
-    const validationIssues = session.state.validationErrors.length;
-    validationEl.innerHTML = `<span class="editor-pill ${validationIssues > 0 ? 'editor-pill--warn' : 'editor-pill--ok'}">${createEditorIcon('shield')}${getEditorIssueCountLabel(validationIssues)}</span>`;
-    const validationTooltip = [];
-    if (session.state.lastValidationWarning) {
-      validationTooltip.push(session.state.lastValidationWarning);
-    }
-    if (session.state.validationErrors.length > 0) {
-      validationTooltip.push(...session.state.validationErrors);
-    }
-    validationEl.title = validationIssues > 0 ? validationTooltip.join('\n') : '';
-    localDraftIdValue.textContent = session.state.draft?.localId || t('common.values.na');
+    statusPanel.update();
     statusRow.textContent = t('editor.status.selectedBlock', {
       value: session.state.selectedBlockId || t('common.values.noneLowercase'),
     });
@@ -7964,13 +7906,16 @@ function renderEditorShell(session) {
       renderEditorShell(session);
     },
   });
-  topBar.append(saveStateEl, validationEl, lastSavedEl, localDraftIdEl, languageSelector);
+  const languageSelect = languageSelector.querySelector('select');
+  languageSelect?.setAttribute('aria-label', t('editorStatus.language'));
+  languageSelector.querySelector('.editor-label')?.classList.add('editor-status-sr');
+  for (const option of languageSelect?.options || []) option.textContent = option.value === 'zh-Hant' ? '繁中' : 'EN';
+  topBar.append(statusPanel.badge, notificationPanel.headerRoot, statusPanel.infoButton, languageSelector);
   shell.append(topBar, layout);
   shell.appendChild(browsePublishedModalRoot);
   shell.appendChild(manageUploadedDraftsModalRoot);
   session.unsubscribeEditorPackageLoad?.();
   session.unsubscribeEditorPackageLoad = session.packageLoad.subscribe(refreshPackageLoadControls);
-  shell.appendChild(notificationPanel.toastRoot);
   app.innerHTML = '';
   app.append(shell);
   updateSummary();

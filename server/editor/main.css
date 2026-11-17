@@ -13,6 +13,8 @@
   font-family: 'Worksheet Chinese', Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
 }
 
+html { scrollbar-gutter: stable; }
+
 body {
   font-size: var(--editor-font-body);
   margin: 0;
@@ -1859,18 +1861,6 @@ textarea.control {
   }
 }
 
-.notification-toast-container {
-  position: fixed;
-  right: 16px;
-  bottom: 16px;
-  /* Keep transient notices below modal overlays and their action buttons (2000). */
-  z-index: 1900;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-width: min(360px, calc(100vw - 24px));
-  pointer-events: none;
-}
 
 .notification-toast,
 .notification-feed-item {
@@ -1999,10 +1989,6 @@ textarea.control {
     flex: 1 1 calc(50% - 6px);
   }
 
-  .editor-shell--option-audio-menu-open .notification-toast-container {
-    top: 16px;
-    bottom: auto;
-  }
 
   .media-action-btn {
     flex: 1 1 calc(50% - 8px);
@@ -2404,4 +2390,59 @@ textarea.control {
   .feedback-text-grid input {
     max-width: 140px;
   }
+}
+
+/* Editor status and notices share the existing header; no floating notice layer. */
+.editor-topbar { display: grid; grid-template-columns: auto minmax(80px, 1fr) 38px 90px; gap: 10px 16px; padding: 12px 16px; }
+.editor-status-badge { grid-column: 1; grid-row: 1; display: flex; align-items: center; gap: 7px; min-height: 38px; max-width: 280px; padding: 6px 10px; border-radius: 999px; border: 1px solid #bbf7d0; background: #ecfdf3; color: #166534; font: inherit; font-size: var(--editor-font-meta); cursor: pointer; }
+.editor-status-badge > span { display: inline-flex; align-items: center; min-width: 0; text-align: left; }
+.editor-status-badge > span:first-child, .editor-status-indicator { flex: none; }
+.editor-status-badge .editor-icon { width: 17px; height: 17px; }
+.editor-status-indicator { transform: rotate(-90deg); }
+.editor-status-badge[data-tone="warn"] { color: #854d0e; background: #fffbeb; border-color: #fde68a; }
+.editor-status-badge[data-tone="error"] { color: #b42318; background: #fff1f0; border-color: #fecdca; }
+.editor-status-badge[data-tone="info"] { color: #365f9e; background: #f0f5ff; border-color: #cddbf6; }
+.editor-status-info { grid-column: 3; grid-row: 1; }
+.editor-topbar .language-selector { grid-column: 4; grid-row: 1; gap: 0; }
+.editor-topbar .language-selector select { box-sizing: border-box; width: 90px; min-width: 0; min-height: 38px; padding: 6px 26px 6px 10px; font-size: var(--editor-font-meta); }
+.editor-status-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.editor-header-notification { grid-column: 2; grid-row: 1; min-width: 0; }
+.editor-header-notification[hidden] { display: none; }
+.editor-header-notification .notification-toast { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; border: 0; border-left: 3px solid #98a2b3; border-radius: 0; padding: 0 0 0 9px; background: transparent; box-shadow: none; }
+.editor-header-notification .notification-toast--success { border-color: #16a34a; }
+.editor-header-notification .notification-toast--info { border-color: #2563eb; }
+.editor-header-notification .notification-toast--warn { border-color: #d97706; }
+.editor-header-notification .notification-toast--error { border-color: #dc2626; }
+.editor-header-notification .notification-toast__text { flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; font-size: var(--editor-font-meta); }
+.editor-header-notification .notification-toast__meta { display: flex; align-items: center; gap: 8px; margin: 0; }
+.editor-status-link { border: 0; box-shadow: none; border-radius: 3px; background: transparent; color: #365f9e; text-decoration: underline; text-underline-offset: 3px; padding: 4px 0; min-height: 32px; font: inherit; cursor: pointer; }
+.editor-notification-dismiss { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; min-height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: #667085; cursor: pointer; }
+.editor-notification-dismiss:hover, .editor-status-close:hover { background: #f1f5f9; }
+.editor-status-overlay { box-sizing: border-box; padding: 16px; }
+.editor-status-dialog { box-sizing: border-box; width: min(560px, 100%); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); display: flex; flex-direction: column; overflow: hidden; padding: 20px; min-width: 0; }
+.editor-status-dialog[data-kind="info"] { width: min(440px, 100%); }
+.editor-status-dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex: none; margin-bottom: 12px; }
+.editor-status-dialog-header h3 { margin: 0; font-size: var(--editor-font-section); }
+.editor-status-close { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; min-height: 38px; flex: 0 0 38px; padding: 0; }
+.editor-status-close svg { display: block; width: 20px; height: 20px; margin: 0; }
+.editor-status-dialog-body { overflow: auto; overscroll-behavior: contain; min-height: 0; line-height: 1.6; }
+.editor-status-dialog-body p { margin: 0 0 12px; overflow-wrap: anywhere; }
+.editor-status-dialog-body .muted, .editor-status-warning { font-size: var(--editor-font-meta); }
+.editor-status-error { color: #b42318; }
+.editor-status-warning { color: #854d0e; }
+.editor-status-issues { max-height: min(300px, 40vh); overflow: auto; overscroll-behavior: contain; }
+.editor-status-issue { padding: 10px 0; border-top: 1px solid #eef0f3; }
+.editor-status-issue ul { margin: 0 0 4px; padding-left: 20px; overflow-wrap: anywhere; }
+.editor-status-id { display: block; width: 100%; min-width: 0; box-sizing: border-box; margin: 8px 0; font-family: ui-monospace, monospace; font-size: var(--editor-font-meta); }
+.editor-status-badge:focus-visible, .editor-status-link:focus-visible, .editor-notification-dismiss:focus-visible { outline: 2px solid #416cbd; outline-offset: 3px; }
+@media (max-width: 700px) {
+  .editor-topbar { grid-template-columns: minmax(0, 1fr) 38px 80px; gap: 10px; padding: 12px; }
+  .editor-status-badge { justify-self: start; max-width: 100%; box-sizing: border-box; gap: 5px; padding: 6px 8px; min-height: 40px; }
+  .editor-status-info { grid-column: 2; }
+  .editor-topbar .language-selector { grid-column: 3; }
+  .editor-topbar .language-selector select { width: 80px; min-height: 40px; }
+  .editor-header-notification { grid-column: 1 / -1; grid-row: 2; }
+  .editor-status-dialog { padding: 16px; }
+  .editor-status-dialog-header h3 { font-size: 1.125rem; }
+  .editor-status-issues { max-height: 38vh; }
 }
