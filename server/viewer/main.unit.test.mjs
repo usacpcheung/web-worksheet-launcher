@@ -303,7 +303,7 @@ async function loadViewerModule(overrides = {}) {
   globalThis.document = globalThis[bagName].document;
   globalThis.window = globalThis[bagName].window;
 
-  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource.replace(/from '(\.\/(?:answer-(?:voice-workflow|voice-ui)|voice-sign-in|attempt-menu|browser-entry|package-load-progress|block-view-host|block-presentation|check-feedback|number-answer-control|boolean-answer-control|text-answer-presentation|section-navigation|worksheet-navigation|entry-motion)\.js)'/g, (_, path) => 'from ' + JSON.stringify(new NodeURL(path, import.meta.url).href)))}`;
+  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource.replace(/from '(\.\/(?:answer-(?:voice-workflow|voice-ui)|voice-sign-in|attempt-menu|browser-entry|package-load-progress|block-view-host|block-presentation|check-feedback|number-answer-control|boolean-answer-control|text-answer-presentation|answer-checking|section-navigation|worksheet-navigation|entry-motion)\.js)'/g, (_, path) => 'from ' + JSON.stringify(new NodeURL(path, import.meta.url).href)))}`;
   return import(dataUrl);
 }
 
@@ -2715,59 +2715,11 @@ test('partitionBlocksForDisplay returns ordered content and question sets', asyn
   assert.deepEqual(result.questionBlocks.map((b) => b.blockId), ['q1', 'q2']);
 });
 
-test('computeAnswerSummary counts only question blocks with non-empty answers', async () => {
-  const mod = await loadViewerModule();
-  const summary = mod.computeAnswerSummary(
-    {
-      blocks: [
-        { blockId: 'c1', kind: 'content' },
-        { blockId: 'q1', kind: 'question' },
-        { blockId: 'q2', kind: 'question' },
-      ],
-    },
-    {
-      q1: { value: 'hello' },
-      q2: { value: '' },
-    }
-  );
-  assert.deepEqual(summary, { answered: 1, total: 2 });
-});
 
-test('computeAnswerSummary treats whitespace-only answers as unanswered', async () => {
-  const mod = await loadViewerModule();
-  const summary = mod.computeAnswerSummary(
-    {
-      blocks: [
-        { blockId: 'q1', kind: 'question' },
-        { blockId: 'q2', kind: 'question' },
-        { blockId: 'q3', kind: 'question' },
-      ],
-    },
-    {
-      q1: { value: '   ' },
-      q2: { value: '\t\n' },
-      q3: { value: 'real answer' },
-    }
-  );
-  assert.deepEqual(summary, { answered: 1, total: 3 });
-});
 
-test('computeAnswerSummary treats empty multi-select arrays as unanswered', async () => {
-  const mod = await loadViewerModule();
-  const summary = mod.computeAnswerSummary(
-    {
-      blocks: [
-        { blockId: 'q1', kind: 'question' },
-        { blockId: 'q2', kind: 'question' },
-      ],
-    },
-    {
-      q1: { value: [] },
-      q2: { value: ['a'] },
-    }
-  );
-  assert.deepEqual(summary, { answered: 1, total: 2 });
-});
+
+
+
 
 test('getInputHelperText maps input types to guidance', async () => {
   const mod = await loadViewerModule();
@@ -3849,44 +3801,9 @@ test('bootstrapViewer renders fatal panel for explicit localAttemptId resume fai
 });
 
 
-test('areMultiSelectValuesEqual normalizes, deduplicates, and compares membership without sort/join', async () => {
-  const mod = await loadViewerModule();
 
-  assert.equal(mod.areMultiSelectValuesEqual(['a', 2, 'a', 2], ['2', 'a']), true);
-  assert.equal(mod.areMultiSelectValuesEqual(['a', 'b'], ['b', 'a', 'a']), true);
-  assert.equal(mod.areMultiSelectValuesEqual(['a', 'b'], ['a']), false);
-  assert.equal(mod.areMultiSelectValuesEqual('a', ['a']), false);
-});
 
-test('computeCheckResult uses set membership for multi-select grading', async () => {
-  const mod = await loadViewerModule();
 
-  const viewerPayload = {
-    blocks: [
-      {
-        blockId: 'q1',
-        kind: 'question',
-        responseConfig: {
-          inputType: 'multiple_choice',
-          selectionMode: 'multi',
-          correctAnswer: ['b', 'a', 'a'],
-        },
-      },
-    ],
-  };
-
-  const resultMatch = mod.computeCheckResult(viewerPayload, {
-    q1: { value: ['a', 'b', 'a'] },
-  });
-  const resultMiss = mod.computeCheckResult(viewerPayload, {
-    q1: { value: ['a'] },
-  });
-
-  assert.equal(resultMatch.byBlockId.q1, true);
-  assert.equal(resultMatch.correctCount, 1);
-  assert.equal(resultMiss.byBlockId.q1, false);
-  assert.equal(resultMiss.correctCount, 0);
-});
 
 
 test('ViewerAttemptSession initializes checkResult as null transient state', async () => {
@@ -3984,145 +3901,13 @@ test('autosave preserves scoped imported attempt checked results without persist
 });
 
 
-test('hasGradeableQuestions only returns true for question blocks with supported inputType and correctAnswer', async () => {
-  const mod = await loadViewerModule();
 
-  const noGradeable = {
-    blocks: [
-      { kind: 'content', blockId: 'c1' },
-      { kind: 'question', blockId: 'q_text', responseConfig: { inputType: 'text', correctAnswer: 'x' } },
-      { kind: 'question', blockId: 'q_unknown', responseConfig: { inputType: 'date', correctAnswer: '2026-01-01' } },
-      { kind: 'question', blockId: 'q_missing', responseConfig: { inputType: 'number' } },
-    ],
-  };
 
-  const hasGradeable = {
-    blocks: [
-      { kind: 'question', blockId: 'q_bool', responseConfig: { inputType: 'boolean', correctAnswer: true } },
-    ],
-  };
 
-  assert.equal(mod.hasGradeableQuestions(noGradeable), false);
-  assert.equal(mod.hasGradeableQuestions(hasGradeable), true);
-});
 
-test('computeCheckResult grades only supported input types with correctAnswer', async () => {
-  const mod = await loadViewerModule();
 
-  const viewerPayload = {
-    blocks: [
-      {
-        blockId: 'q_multi',
-        kind: 'question',
-        responseConfig: { inputType: 'multiple_choice', selectionMode: 'multi', correctAnswer: ['a', 'b'] },
-      },
-      {
-        blockId: 'q_bool',
-        kind: 'question',
-        responseConfig: { inputType: 'boolean', correctAnswer: true },
-      },
-      {
-        blockId: 'q_number',
-        kind: 'question',
-        responseConfig: { inputType: 'number', correctAnswer: 3 },
-      },
-      {
-        blockId: 'q_text',
-        kind: 'question',
-        responseConfig: { inputType: 'text', correctAnswer: 'hello' },
-      },
-      {
-        blockId: 'q_unknown',
-        kind: 'question',
-        responseConfig: { inputType: 'date', correctAnswer: '2026-04-02' },
-      },
-      {
-        blockId: 'q_missing',
-        kind: 'question',
-        responseConfig: { inputType: 'number' },
-      },
-    ],
-  };
 
-  const result = mod.computeCheckResult(viewerPayload, {
-    q_multi: { value: ['b', 'a', 'a'] },
-    q_bool: { value: true },
-    q_number: { value: '3' },
-    q_text: { value: 'hello' },
-    q_unknown: { value: '2026-04-02' },
-    q_missing: { value: 5 },
-  });
 
-  assert.deepEqual(Object.keys(result.byBlockId).sort(), ['q_bool', 'q_multi', 'q_number']);
-  assert.deepEqual(result.statusByBlockId, {
-    q_multi: 'correct',
-    q_bool: 'correct',
-    q_number: 'correct',
-    q_missing: 'ungraded_missing_or_invalid_key',
-  });
-  assert.equal(result.correctCount, 3);
-  assert.equal(result.totalQuestions, 3);
-  assert.equal(Object.hasOwn(result, 'ungradedCount'), false);
-});
-
-test('computeCheckResult does not treat unanswered number input as 0 when correctAnswer is 0', async () => {
-  const mod = await loadViewerModule();
-
-  const viewerPayload = {
-    blocks: [
-      {
-        blockId: 'q_number',
-        kind: 'question',
-        responseConfig: { inputType: 'number', correctAnswer: 0 },
-      },
-    ],
-  };
-
-  const resultEmpty = mod.computeCheckResult(viewerPayload, { q_number: { value: '' } });
-  const resultNull = mod.computeCheckResult(viewerPayload, { q_number: { value: null } });
-  const resultUndef = mod.computeCheckResult(viewerPayload, { q_number: { value: undefined } });
-  const resultZero = mod.computeCheckResult(viewerPayload, { q_number: { value: '0' } });
-
-  assert.equal(resultEmpty.byBlockId.q_number, false, 'empty string should not be correct');
-  assert.equal(resultEmpty.correctCount, 0);
-  assert.equal(resultNull.byBlockId.q_number, false, 'null should not be correct');
-  assert.equal(resultNull.correctCount, 0);
-  assert.equal(resultUndef.byBlockId.q_number, false, 'undefined should not be correct');
-  assert.equal(resultUndef.correctCount, 0);
-  assert.equal(resultZero.byBlockId.q_number, true, 'string "0" should be correct when correctAnswer is 0');
-  assert.equal(resultZero.correctCount, 1);
-});
-
-test('computeCheckResult marks gradeable missing key questions as ungraded without changing summary fields', async () => {
-  const mod = await loadViewerModule();
-
-  const viewerPayload = {
-    blocks: [
-      {
-        blockId: 'q_missing_key',
-        kind: 'question',
-        responseConfig: { inputType: 'number' },
-      },
-      {
-        blockId: 'q_graded',
-        kind: 'question',
-        responseConfig: { inputType: 'boolean', correctAnswer: true },
-      },
-    ],
-  };
-
-  const result = mod.computeCheckResult(viewerPayload, {
-    q_missing_key: { value: '12' },
-    q_graded: { value: false },
-  });
-
-  assert.equal(result.byBlockId.q_missing_key, undefined);
-  assert.equal(result.statusByBlockId.q_missing_key, 'ungraded_missing_or_invalid_key');
-  assert.equal(result.statusByBlockId.q_graded, 'incorrect');
-  assert.deepEqual(Object.keys(result).sort(), ['byBlockId', 'correctCount', 'statusByBlockId', 'totalQuestions']);
-  assert.equal(result.correctCount, 0);
-  assert.equal(result.totalQuestions, 1);
-});
 
 test('viewer stylesheet defines neutral ungraded check banner styles', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.css'), 'utf8');

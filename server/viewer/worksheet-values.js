@@ -60,3 +60,10 @@ export function deterministicShuffle(items, seedText) {
   return list;
 }
 
+// Shared completion rule for navigation and the worksheet answer summary.
+export function isAnsweredValue(value) {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'string') return value.trim() !== '';
+  if (Array.isArray(value)) return value.length > 0;
+  return true;
+}

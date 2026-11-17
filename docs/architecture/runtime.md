@@ -46,9 +46,10 @@ learner answer and already computed status. It returns the banner/reveal nodes
 and optional card class; it does not access session state or calculate scores.
 The reveal formatter remains re-exported by `main.js` for existing callers.
 
-`main.js` keeps checking eligibility and calculations, when feedback becomes
-visible, card placement/recreation, submission and persistence. Ordinary text
-questions remain ungraded and fill-in-the-blanks keeps its own feedback renderer.
+`answer-checking.js` owns checking eligibility and calculations. `main.js` decides
+when checking runs and feedback becomes visible, and owns card placement/recreation,
+submission and persistence. Ordinary text questions remain ungraded and
+fill-in-the-blanks keeps its own feedback renderer.
 Boolean display labels use the editor's existing translated vocabulary through
 `getBooleanAnswerLabel` in `worksheet-values.js`: English True/False and
 Traditional Chinese 是/否. Viewer buttons, checking reveals and printed choices
@@ -178,3 +179,24 @@ presentation listeners without canceling session-owned transcription/rewrite.
 The shared text-input binding, text-limit contract, voice workflow and consumers
 in feedback, fill-in-the-blanks and RolePlayScene are unchanged. Text counters
 retain UTF-16 lengths and rewrite retains its separate code-point ceiling.
+
+## Worksheet viewer answer-checking calculations
+
+`server/viewer/answer-checking.js` owns checking eligibility, multi-select
+comparison, result calculation and the answered-question summary. It reads
+supplied worksheet/answer data without changing it, accessing the DOM, persisting
+results or calling services. It delegates per-blank rules to the existing shared
+fill-in-the-blanks contract. Grading counts auto-checked blanks individually;
+completion still counts a blank question only when all its blanks are answered,
+including free-response blanks.
+
+`ViewerAttemptSession.checkAnswers()` retains the submitted/not-finalizing guard,
+assignment of the result and state notification. `main.js` retains result display,
+card recreation, import normalization and transient-versus-restored result
+persistence, and re-exports the existing calculation helpers for compatibility.
+`check-feedback.js` remains responsible only for presentation.
+
+`worksheet-values.js` owns the single `isAnsweredValue` implementation used by
+navigation and the summary. `worksheet-navigation.js` retains its compatibility
+re-export. Empty strings/arrays remain unanswered; numeric zero and Boolean False
+remain answered. Saved formats, answer-key interpretation and scoring are unchanged.

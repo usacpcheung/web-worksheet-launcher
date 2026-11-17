@@ -1,3 +1,5 @@
+import { isAnsweredValue } from './worksheet-values.js';
+export { isAnsweredValue } from './worksheet-values.js';
 import { isFillInBlanks, blankAnswered } from '../app/fill-in-blanks.js';
 import { worksheetTextToPlain } from '../app/worksheet-text.js';
 
@@ -15,12 +17,6 @@ const button = (className, text) => {
   node.type = 'button';
   return node;
 };
-export function isAnsweredValue(value) {
-  if (value === null || value === undefined) return false;
-  if (typeof value === 'string') return value.trim() !== '';
-  if (Array.isArray(value)) return value.length > 0;
-  return true;
-}
 export function describeSections(blocks, t) {
   let question = 0, reading = 0;
   return blocks.map(block => {
