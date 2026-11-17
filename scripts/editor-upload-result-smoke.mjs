@@ -9,13 +9,21 @@ try {
     try {
       const page = await context.newPage(), errors = [];
       page.on('pageerror', e => errors.push(e.message));
-      let mode = 'conflict', posts = [];
+      let mode = 'conflict', posts = [], deletions = 0;
       await page.addInitScript(locale => localStorage.setItem('worksheetLauncher.locale', locale), locale);
       await page.route(url => url.pathname.startsWith('/api/'), async route => {
         const url = new URL(route.request().url());
         if (url.pathname.endsWith('/session')) return route.fulfill({ json: { ok: true, data: { ready: true, user: { sub: 'fixture' } } } });
+        if (route.request().method() === 'DELETE') {
+          assert.ok(url.pathname.endsWith('/drafts/slot-fixture'));
+          deletions++;
+          return route.fulfill({ json: { ok: true, data: {} } });
+        }
         if (route.request().method() === 'POST' && url.pathname.endsWith('/drafts/upload')) {
           const action = url.searchParams.get('conflictAction') || ''; posts.push(action);
+          if (mode === 'slot-delete') return deletions
+            ? route.fulfill({ status: 201, json: { ok: true, data: { uploaded_draft_id: 'fixture' } } })
+            : route.fulfill({ status: 409, json: { ok: false, error: { code: 'DRAFT_SLOT_LIMIT_REACHED', details: { slotLimit: 3, uploadedDrafts: [{ uploaded_draft_id: 'slot-fixture', title: 'Disposable slot fixture' }] } } } });
           if (mode === 'slot' || (mode === 'copy-slot' && action === 'copy')) return route.fulfill({ status: 409, json: { ok: false, error: { code: 'DRAFT_SLOT_LIMIT_REACHED', details: { slotLimit: 3 } } } });
           if (action === '') return route.fulfill({ status: 409, json: { ok: false, error: { code: 'DRAFT_NAME_CONFLICT', message: 'Raw English server conflict', details: { existingDraft: { title: 'Fixture' } } } } });
           return route.fulfill({ status: 201, json: { ok: true, data: { uploaded_draft_id: 'fixture' } } });
@@ -51,8 +59,23 @@ try {
         await page.waitForFunction(() => !window.editorSession.state.isUploadDraftFlowActive);
         assert.deepEqual(posts, scenario === 'slot' ? [''] : ['', 'copy']);
       }
+      // A nested confirmation must leave slot recovery open on cancel, then allow one retry after deletion.
+      mode = 'slot-delete'; posts = [];
+      await upload.click();
+      const slot = page.locator('.browse-modal');
+      await slot.locator('.published-result-row button').click();
+      const confirmation = page.locator('.confirm-modal:not(.browse-modal)');
+      await confirmation.locator('button').first().click();
+      assert.equal(deletions, 0);
+      assert.deepEqual(posts, ['']);
+      await slot.locator('.published-result-row button').click();
+      await confirmation.locator('button').last().click();
+      await page.waitForFunction(() => !window.editorSession.state.isUploadDraftFlowActive);
+      assert.equal(deletions, 1);
+      assert.deepEqual(posts, ['', '']);
+      assert.equal(await page.getByRole('dialog').count(), 0);
       assert.deepEqual(errors, []);
     } finally { await context.close(); }
   }
-  console.log('PASS: editor conflict choices and slot cancellation through actual UI in both locales');
+  console.log('PASS: editor conflict choices, slot cancellation and confirmed-deletion retry in both locales');
 } finally { await browser.close(); }

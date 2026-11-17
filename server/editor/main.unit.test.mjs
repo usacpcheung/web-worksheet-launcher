@@ -153,7 +153,7 @@ test('modal load-status copies are visual-only and preserve the single shell ann
 
 async function loadEditorModule() {
   const filePath = path.resolve('server/editor/main.js');
-  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'./answer-settings.js'", JSON.stringify(new NodeURL('./answer-settings.js', import.meta.url).href)).replaceAll("'./notification-panel.js'", JSON.stringify(new NodeURL('./notification-panel.js', import.meta.url).href)).replaceAll("'../app/contracts/worksheet-readiness.js'", JSON.stringify(new NodeURL('../app/contracts/worksheet-readiness.js', import.meta.url).href)).replaceAll("'./feedback-editor.js'", JSON.stringify(new NodeURL('./feedback-editor.js', import.meta.url).href)).replaceAll("'../app/worksheet-feedback.js'", JSON.stringify(new NodeURL('../app/worksheet-feedback.js', import.meta.url).href)).replaceAll("'./question-type-conversion.js'", JSON.stringify(new NodeURL('./question-type-conversion.js', import.meta.url).href)).replaceAll("'../app/fill-in-blanks.js'", JSON.stringify(new NodeURL('../app/fill-in-blanks.js', import.meta.url).href)).replaceAll("'./fill-in-blanks-editor.js'", JSON.stringify(new NodeURL('./fill-in-blanks-editor.js', import.meta.url).href)).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'../app/bridge/audio-generation.js'", JSON.stringify(new NodeURL('../app/bridge/audio-generation.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./rich-text-editor.js'", JSON.stringify(new NodeURL('./rich-text-editor.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
+  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'./dialogs.js'", JSON.stringify(new NodeURL('./dialogs.js', import.meta.url).href)).replaceAll("'./answer-settings.js'", JSON.stringify(new NodeURL('./answer-settings.js', import.meta.url).href)).replaceAll("'./notification-panel.js'", JSON.stringify(new NodeURL('./notification-panel.js', import.meta.url).href)).replaceAll("'../app/contracts/worksheet-readiness.js'", JSON.stringify(new NodeURL('../app/contracts/worksheet-readiness.js', import.meta.url).href)).replaceAll("'./feedback-editor.js'", JSON.stringify(new NodeURL('./feedback-editor.js', import.meta.url).href)).replaceAll("'../app/worksheet-feedback.js'", JSON.stringify(new NodeURL('../app/worksheet-feedback.js', import.meta.url).href)).replaceAll("'./question-type-conversion.js'", JSON.stringify(new NodeURL('./question-type-conversion.js', import.meta.url).href)).replaceAll("'../app/fill-in-blanks.js'", JSON.stringify(new NodeURL('../app/fill-in-blanks.js', import.meta.url).href)).replaceAll("'./fill-in-blanks-editor.js'", JSON.stringify(new NodeURL('./fill-in-blanks-editor.js', import.meta.url).href)).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'../app/bridge/audio-generation.js'", JSON.stringify(new NodeURL('../app/bridge/audio-generation.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./rich-text-editor.js'", JSON.stringify(new NodeURL('./rich-text-editor.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
 
   const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/option-images.js'", JSON.stringify(new NodeURL('../app/option-images.js', import.meta.url).href)).replaceAll("'./option-image-editor.js'", JSON.stringify(new NodeURL('./option-image-editor.js', import.meta.url).href)).replaceAll("'../app/api/publication-flow.js'", JSON.stringify(new NodeURL('../app/api/publication-flow.js', import.meta.url).href)).replaceAll("'../app/auth/mutation-auth.js'", JSON.stringify(new NodeURL('../app/auth/mutation-auth.js', import.meta.url).href)).replaceAll("'../app/auth/session-state-adapter.js'", JSON.stringify(new NodeURL('../app/auth/session-state-adapter.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-return.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-return.js', import.meta.url).href)).replaceAll("'../app/auth/session-coordinator.js'", JSON.stringify(new NodeURL('../app/auth/session-coordinator.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-flow.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-flow.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-prompt.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-prompt.js', import.meta.url).href)).replaceAll("'../app/api/deletion-flow.js'", JSON.stringify(new NodeURL('../app/api/deletion-flow.js', import.meta.url).href)).replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-navigation.js'", JSON.stringify(new NodeURL('./block-navigation.js', import.meta.url).href)), [
     {
@@ -1762,12 +1762,8 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes("? t('editor.uploadedDraft.publishing')"), true);
   assert.equal(source.includes("? t('editor.uploadedDraft.publishNewVersion')"), true);
   assert.equal(source.includes(": t('common.actions.publish');"), true);
-  assert.equal(source.includes("heading.textContent = t('editor.modal.publishConflict.title');"), true);
-  assert.equal(source.includes("editBtn.textContent = t('editor.modal.publishConflict.editNameSubject');"), true);
   // Retained publication metadata/conflict editing is exercised through the real UI
-  // in publication-flow-smoke.mjs, rather than asserting the loop's variable names.
-  assert.equal(source.includes("if (event.key !== 'Tab') return;"), true);
-  assert.equal(source.includes("dialog.removeEventListener('keydown', onKeyDown);"), true);
+  // in publication-flow-smoke.mjs and editor-dialogs-smoke.mjs.
   assert.equal(
     source.includes("subjectOwner.textContent = t('editor.published.metaSubjectOwner', {"),
     true
@@ -2484,17 +2480,6 @@ test('question input type change flow routes destructive switches through in-app
   assert.equal(source.includes('await showConfirmDialog({'), true);
 });
 
-test('confirm modal uses configurable description copy and defaults initial focus to cancel', async () => {
-  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.match(source, /function showConfirmDialog\(\{\s*title,\s*bodyText,\s*entityLabel,\s*descriptionText,/m);
-  assert.match(source, /cancelLabel\s*=\s*t\('common\.actions\.cancel'\)/);
-  assert.match(source, /variant\s*=\s*'danger'/);
-  assert.match(source, /resolvedBodyText\s*=\s*isNonEmptyString\(bodyText\)\s*\?\s*bodyText\s*:\s*descriptionText/);
-  assert.match(source, /fallbackDescription\s*=\s*isNonEmptyString\(entityLabel\)/);
-  assert.match(source, /t\('editor\.modal\.confirm\.defaultDescription'\)/);
-  assert.equal(source.includes('cancelBtn.focus();'), true);
-});
-
 test('opening an uploaded draft confirms, saves pending edits, and closes its modal only on success', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.match(source, /title:\s*t\('editor\.uploadedDraft\.openDialog\.title'\)/);
@@ -2505,14 +2490,6 @@ test('opening an uploaded draft confirms, saves pending edits, and closes its mo
   assert.match(source, /if \(!confirmed\) return;/);
   assert.match(source, /await this\.saveBeforeWorksheetReplacement\(\);/);
   assert.match(source, /if \(result\?\.ok\)\s*\{\s*manageUploadedDraftsDialogOpen = false;/m);
-});
-
-test('confirm modal supports warning copy without destructive styling', async () => {
-  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.match(source, /warningText = t\('editor\.modal\.confirm\.irreversibleWarning'\)/);
-  assert.match(source, /confirm-modal__warning--caution/);
-  assert.match(source, /confirm-modal__btn--warning/);
-  assert.match(source, /if \(isNonEmptyString\(warningText\)\)/);
 });
 
 test('replace/delete image flows use shared confirm modal and avoid native confirm', async () => {

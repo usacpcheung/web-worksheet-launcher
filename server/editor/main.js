@@ -1,3 +1,4 @@
+import { createEditorDialogs } from './dialogs.js';
 import { createAnswerSettings } from './answer-settings.js';
 import { createNotificationPanel, getNotificationToastRemainingMs } from './notification-panel.js';
 import { validateWorksheetReadiness } from '../app/contracts/worksheet-readiness.js';
@@ -4914,6 +4915,7 @@ class EditorDraftSession {
 }
 
 function renderEditorShell(session) {
+  session.destroyEditorDialogs?.();
   session.destroyTextEditor?.();
   session.destroyBlockNavigation?.();
   session.destroyAnswerSettings?.();
@@ -4922,6 +4924,15 @@ function renderEditorShell(session) {
 
   const shell = document.createElement('div');
   shell.className = 'editor-shell';
+  const dialogs = createEditorDialogs({ host: shell, t, createLocalId, formatUploadedDraftTimestamp });
+  const { showConfirmDialog, showPublishModal, showPublishedPackageConflictModal, showUploadConflictModal } = dialogs;
+  const dialogEvents = new AbortController();
+  let shellDisposed = false;
+  session.destroyEditorDialogs = () => {
+    shellDisposed = true;
+    dialogEvents.abort();
+    dialogs.destroy();
+  };
 
   const topBar = document.createElement('section');
   topBar.className = 'editor-topbar';
@@ -5149,7 +5160,6 @@ function renderEditorShell(session) {
   const optionTrackGenerationLanguageByKey = new Map();
   let openOptionAudioMenuKey = null;
   let promptAudioHintRef = null;
-  let activeConfirmDialog = null;
   let mediaActionInFlight = false;
   const loadStatus = document.createElement('p');
   loadStatus.className = 'muted';
@@ -5212,7 +5222,7 @@ function renderEditorShell(session) {
   };
 
   document.addEventListener('pointerdown', (event) => {
-    if (activeConfirmDialog) return;
+    if (dialogs.isConfirmationOpen()) return;
     rightPanel.querySelectorAll('details.audio-track-more-menu[open]').forEach((menu) => {
       if (!menu.contains(event.target)) menu.open = false;
     });
@@ -5220,144 +5230,7 @@ function renderEditorShell(session) {
     const openMenu = Array.from(rightPanel.querySelectorAll('details.option-audio-menu[open]'))
       .find((menu) => menu.dataset.optionAudioMenuKey === openOptionAudioMenuKey);
     if (openMenu && !openMenu.contains(event.target)) closeOpenOptionAudioMenu();
-  });
-
-  function closeActiveConfirmDialog(confirmed = false) {
-    const dialog = activeConfirmDialog;
-    if (!dialog) return;
-    dialog.cleanup();
-    activeConfirmDialog = null;
-    dialog.resolve(Boolean(confirmed));
-  }
-
-  function showConfirmDialog({
-    title,
-    bodyText,
-    entityLabel,
-    descriptionText,
-    removalItems = [],
-    confirmLabel = t('common.actions.delete'),
-    cancelLabel = t('common.actions.cancel'),
-    variant = 'danger',
-    warningText = t('editor.modal.confirm.irreversibleWarning'),
-    content = null,
-  }) {
-    if (activeConfirmDialog) {
-      closeActiveConfirmDialog(false);
-    }
-    const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const overlay = document.createElement('div');
-    overlay.className = 'confirm-modal-overlay';
-    overlay.setAttribute('role', 'presentation');
-    const dialog = document.createElement('section');
-    dialog.className = 'confirm-modal';
-    dialog.setAttribute('role', 'dialog');
-    dialog.setAttribute('aria-modal', 'true');
-    const heading = document.createElement('h3');
-    const titleId = `confirm-modal-title-${createLocalId('dlg')}`;
-    heading.id = titleId;
-    heading.textContent = title;
-    dialog.setAttribute('aria-labelledby', titleId);
-    const description = document.createElement('p');
-    description.className = 'confirm-modal__description';
-    const resolvedBodyText = isNonEmptyString(bodyText) ? bodyText : descriptionText;
-    const fallbackDescription = isNonEmptyString(entityLabel)
-      ? t('editor.modal.confirm.deleteEntity', { entity: entityLabel })
-      : t('editor.modal.confirm.defaultDescription');
-    description.textContent = isNonEmptyString(resolvedBodyText)
-      ? resolvedBodyText
-      : fallbackDescription;
-    const detailsHeading = document.createElement('p');
-    detailsHeading.className = 'confirm-modal__details-heading';
-    detailsHeading.textContent = t('editor.modal.confirm.thisWillRemove');
-    const detailsList = document.createElement('ul');
-    detailsList.className = 'confirm-modal__details-list';
-    removalItems.forEach((item) => {
-      const line = document.createElement('li');
-      line.textContent = item;
-      detailsList.appendChild(line);
-    });
-    const warning = document.createElement('p');
-    warning.className = variant === 'warning'
-      ? 'confirm-modal__warning confirm-modal__warning--caution'
-      : 'confirm-modal__warning';
-    warning.textContent = warningText;
-    const actionRow = document.createElement('div');
-    actionRow.className = 'confirm-modal__actions';
-    const cancelBtn = document.createElement('button');
-    cancelBtn.type = 'button';
-    cancelBtn.className = 'confirm-modal__btn';
-    cancelBtn.textContent = cancelLabel;
-    const deleteBtn = document.createElement('button');
-    deleteBtn.type = 'button';
-    deleteBtn.className = variant === 'danger'
-      ? 'confirm-modal__btn confirm-modal__btn--destructive'
-      : variant === 'warning'
-        ? 'confirm-modal__btn confirm-modal__btn--warning'
-        : 'confirm-modal__btn';
-    deleteBtn.textContent = confirmLabel;
-    actionRow.append(cancelBtn, deleteBtn);
-    dialog.append(heading, description);
-    if (content) dialog.append(content);
-    if (removalItems.length > 0) {
-      dialog.append(detailsHeading, detailsList);
-    }
-    if (isNonEmptyString(warningText)) {
-      dialog.append(warning);
-    }
-    dialog.append(actionRow);
-    overlay.appendChild(dialog);
-    shell.appendChild(overlay);
-
-    const focusableSelector = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
-    const getFocusable = () => Array.from(dialog.querySelectorAll(focusableSelector))
-      .filter((candidate) => !candidate.hasAttribute('disabled'));
-    const onKeyDown = (event) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        closeActiveConfirmDialog(false);
-        return;
-      }
-      if (event.key === 'Enter' && document.activeElement === cancelBtn) {
-        event.preventDefault();
-        closeActiveConfirmDialog(false);
-        return;
-      }
-      if (event.key !== 'Tab') return;
-      const focusable = getFocusable();
-      if (focusable.length === 0) return;
-      const currentIndex = focusable.indexOf(document.activeElement);
-      if (event.shiftKey) {
-        if (currentIndex <= 0) {
-          event.preventDefault();
-          focusable[focusable.length - 1].focus();
-        }
-        return;
-      }
-      if (currentIndex === focusable.length - 1) {
-        event.preventDefault();
-        focusable[0].focus();
-      }
-    };
-    dialog.addEventListener('keydown', onKeyDown);
-    cancelBtn.addEventListener('click', () => closeActiveConfirmDialog(false));
-    deleteBtn.addEventListener('click', () => closeActiveConfirmDialog(true));
-
-    cancelBtn.focus();
-
-    return new Promise((resolve) => {
-      activeConfirmDialog = {
-        resolve,
-        cleanup: () => {
-          dialog.removeEventListener('keydown', onKeyDown);
-          overlay.remove();
-          if (previousActive && typeof previousActive.focus === 'function') {
-            previousActive.focus();
-          }
-        },
-      };
-    });
-  }
+  }, { signal: dialogEvents.signal });
 
   // Launcher editor policy: do not use native window.confirm in UI flows.
   // Always route confirmations through showConfirmDialog for consistent keyboard/focus behavior.
@@ -5540,267 +5413,6 @@ function renderEditorShell(session) {
 
   function emitPublishedBrowseNotification({ kind = 'info', text = '', source = 'browse.published' } = {}) {
     emitServerNotification({ kind, text, source });
-  }
-
-  function showPublishModal({ uploadedDraft, initialTitle = null, initialSubject = null }) {
-    return new Promise((resolve) => {
-      const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      const overlay = document.createElement('div');
-      overlay.className = 'confirm-modal-overlay';
-      const dialog = document.createElement('section');
-      dialog.className = 'confirm-modal';
-      dialog.setAttribute('role', 'dialog');
-      dialog.setAttribute('aria-modal', 'true');
-      const heading = document.createElement('h3');
-      heading.textContent = t('editor.modal.publish.title');
-      const description = document.createElement('p');
-      description.className = 'confirm-modal__description';
-      description.textContent = t('editor.modal.publish.description');
-      const publishTitleField = document.createElement('div');
-      publishTitleField.className = 'editor-field';
-      const publishTitleLabel = document.createElement('label');
-      publishTitleLabel.textContent = t('editor.modal.publish.publishedTitle');
-      const publishTitleInput = document.createElement('input');
-      publishTitleInput.className = 'control';
-      publishTitleInput.value = initialTitle !== null
-        ? String(initialTitle)
-        : String(uploadedDraft?.title || '');
-      publishTitleField.append(publishTitleLabel, publishTitleInput);
-      const publishSubjectField = document.createElement('div');
-      publishSubjectField.className = 'editor-field';
-      const publishSubjectLabel = document.createElement('label');
-      publishSubjectLabel.textContent = t('editor.modal.publish.publishedSubject');
-      const publishSubjectInput = document.createElement('input');
-      publishSubjectInput.className = 'control';
-      publishSubjectInput.value = initialSubject !== null
-        ? String(initialSubject)
-        : String(uploadedDraft?.subject || '');
-      publishSubjectField.append(publishSubjectLabel, publishSubjectInput);
-      const actions = document.createElement('div');
-      actions.className = 'confirm-modal__actions confirm-modal__actions--publish';
-      const cancelBtn = document.createElement('button');
-      cancelBtn.type = 'button';
-      cancelBtn.className = 'confirm-modal__btn';
-      cancelBtn.textContent = t('common.actions.cancel');
-      const confirmBtn = document.createElement('button');
-      confirmBtn.type = 'button';
-      confirmBtn.className = 'confirm-modal__btn confirm-modal__btn--primary';
-      confirmBtn.textContent = t('common.actions.publish');
-      actions.append(cancelBtn, confirmBtn);
-      dialog.append(heading, description, publishTitleField, publishSubjectField, actions);
-      overlay.appendChild(dialog);
-      shell.appendChild(overlay);
-
-      const getFocusable = () => [
-        publishTitleInput,
-        publishSubjectInput,
-        cancelBtn,
-        confirmBtn,
-      ].filter((node) => !node.disabled);
-      const cleanup = () => {
-        dialog.removeEventListener('keydown', onKeyDown);
-        overlay.remove();
-        if (previousActive && typeof previousActive.focus === 'function') {
-          previousActive.focus();
-        }
-      };
-      const onKeyDown = (event) => {
-        if (event.key === 'Escape') {
-          event.preventDefault();
-          cleanup();
-          resolve({ confirmed: false });
-          return;
-        }
-        if (event.key !== 'Tab') return;
-        const focusable = getFocusable();
-        if (focusable.length === 0) return;
-        const currentIndex = focusable.indexOf(document.activeElement);
-        if (event.shiftKey) {
-          if (currentIndex <= 0) {
-            event.preventDefault();
-            focusable[focusable.length - 1].focus();
-          }
-          return;
-        }
-        if (currentIndex === focusable.length - 1 || currentIndex === -1) {
-          event.preventDefault();
-          focusable[0].focus();
-        }
-      };
-      dialog.addEventListener('keydown', onKeyDown);
-      cancelBtn.addEventListener('click', () => {
-        cleanup();
-        resolve({ confirmed: false });
-      });
-      confirmBtn.addEventListener('click', () => {
-        cleanup();
-        resolve({
-          confirmed: true,
-          title: publishTitleInput.value,
-          subject: publishSubjectInput.value,
-        });
-      });
-      publishTitleInput.focus();
-    });
-  }
-
-  function showPublishedPackageConflictModal() {
-    return new Promise((resolve) => {
-      const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      const overlay = document.createElement('div');
-      overlay.className = 'confirm-modal-overlay';
-      const dialog = document.createElement('section');
-      dialog.className = 'confirm-modal';
-      dialog.setAttribute('role', 'dialog');
-      dialog.setAttribute('aria-modal', 'true');
-
-      const heading = document.createElement('h3');
-      heading.textContent = t('editor.modal.publishConflict.title');
-      const description = document.createElement('p');
-      description.className = 'confirm-modal__description';
-      description.textContent = t('editor.modal.publishConflict.description');
-      const warning = document.createElement('p');
-      warning.className = 'confirm-modal__warning';
-      warning.textContent = t('editor.modal.publishConflict.warning');
-
-      const actions = document.createElement('div');
-      actions.className = 'confirm-modal__actions';
-      const cancelBtn = document.createElement('button');
-      cancelBtn.type = 'button';
-      cancelBtn.className = 'confirm-modal__btn';
-      cancelBtn.textContent = t('common.actions.cancel');
-      const editBtn = document.createElement('button');
-      editBtn.type = 'button';
-      editBtn.className = 'confirm-modal__btn confirm-modal__btn--destructive';
-      editBtn.textContent = t('editor.modal.publishConflict.editNameSubject');
-      actions.append(cancelBtn, editBtn);
-      dialog.append(heading, description, warning, actions);
-      overlay.appendChild(dialog);
-      shell.appendChild(overlay);
-
-      const getFocusable = () => [cancelBtn, editBtn].filter((node) => !node.disabled);
-      const cleanup = () => {
-        dialog.removeEventListener('keydown', onKeyDown);
-        overlay.remove();
-        if (previousActive && typeof previousActive.focus === 'function') previousActive.focus();
-      };
-      const onKeyDown = (event) => {
-        if (event.key === 'Escape') {
-          event.preventDefault();
-          cleanup();
-          resolve({ action: 'cancel' });
-          return;
-        }
-        if (event.key !== 'Tab') return;
-        const focusable = getFocusable();
-        if (focusable.length === 0) return;
-        const currentIndex = focusable.indexOf(document.activeElement);
-        if (event.shiftKey) {
-          if (currentIndex <= 0) {
-            event.preventDefault();
-            focusable[focusable.length - 1].focus();
-          }
-          return;
-        }
-        if (currentIndex === focusable.length - 1 || currentIndex === -1) {
-          event.preventDefault();
-          focusable[0].focus();
-        }
-      };
-      cancelBtn.addEventListener('click', () => {
-        cleanup();
-        resolve({ action: 'cancel' });
-      });
-      editBtn.addEventListener('click', () => {
-        cleanup();
-        resolve({ action: 'edit' });
-      });
-      dialog.addEventListener('keydown', onKeyDown);
-      editBtn.focus();
-    });
-  }
-
-  function showUploadConflictModal({ existingDraft }) {
-    return new Promise((resolve) => {
-      const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      const overlay = document.createElement('div');
-      overlay.className = 'confirm-modal-overlay';
-      const dialog = document.createElement('section');
-      dialog.className = 'confirm-modal';
-      dialog.setAttribute('role', 'dialog');
-      dialog.setAttribute('aria-modal', 'true');
-      const heading = document.createElement('h3');
-      heading.textContent = t('editor.modal.uploadConflict.title');
-      const description = document.createElement('p');
-      description.className = 'confirm-modal__description';
-      description.textContent = t('editor.modal.uploadConflict.description', {
-        title: existingDraft?.title || t('common.values.untitled'),
-      });
-      const details = document.createElement('div');
-      details.className = 'muted uploaded-draft-details-body';
-      const subjectLine = document.createElement('div');
-      subjectLine.textContent = t('common.meta.subject', { value: existingDraft?.subject || '-' });
-      const uploadedLine = document.createElement('div');
-      uploadedLine.textContent = t('common.meta.uploaded', { value: formatUploadedDraftTimestamp(existingDraft?.created_at) });
-      const statusLine = document.createElement('div');
-      statusLine.textContent = existingDraft?.published_package_id
-        ? t('common.meta.status', { value: t('editor.modal.uploadConflict.statusAlreadyPublished') })
-        : t('common.meta.status', { value: t('editor.modal.uploadConflict.statusDraftOnly') });
-      details.append(subjectLine, uploadedLine, statusLine);
-      const warning = document.createElement('p');
-      warning.className = 'confirm-modal__warning';
-      warning.textContent = existingDraft?.published_package_id
-        ? t('editor.modal.uploadConflict.warningPublishedCopyUnaffected')
-        : t('editor.modal.uploadConflict.warningReplaceArtifact');
-      const actions = document.createElement('div');
-      actions.className = 'confirm-modal__actions';
-      const cancelBtn = document.createElement('button');
-      cancelBtn.type = 'button';
-      cancelBtn.className = 'confirm-modal__btn';
-      cancelBtn.textContent = t('common.actions.cancel');
-      const copyBtn = document.createElement('button');
-      copyBtn.type = 'button';
-      copyBtn.className = 'confirm-modal__btn';
-      copyBtn.textContent = t('editor.modal.uploadConflict.saveAsNewCopy');
-      const replaceBtn = document.createElement('button');
-      replaceBtn.type = 'button';
-      replaceBtn.className = 'confirm-modal__btn confirm-modal__btn--destructive';
-      replaceBtn.textContent = t('editor.modal.uploadConflict.replaceUploadedDraft');
-      actions.append(cancelBtn, copyBtn, replaceBtn);
-      dialog.append(heading, description, details, warning, actions);
-      overlay.appendChild(dialog);
-      shell.appendChild(overlay);
-      let resolved = false;
-      const cleanup = () => {
-        overlay.remove();
-        if (previousActive && typeof previousActive.focus === 'function') previousActive.focus();
-      };
-      const choose = (action) => {
-        if (resolved) return;
-        resolved = true;
-        cancelBtn.disabled = true;
-        copyBtn.disabled = true;
-        replaceBtn.disabled = true;
-        cleanup();
-        resolve({ action });
-      };
-      cancelBtn.addEventListener('click', () => {
-        choose('cancel');
-      });
-      copyBtn.addEventListener('click', () => {
-        choose('copy');
-      });
-      replaceBtn.addEventListener('click', () => {
-        choose('replace');
-      });
-      dialog.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape') {
-          event.preventDefault();
-          choose('cancel');
-        }
-      });
-      cancelBtn.focus();
-    });
   }
 
   async function showSlotFullModal({ uploadedDrafts = [] } = {}) {
@@ -7812,6 +7424,7 @@ function renderEditorShell(session) {
   };
 
   const updateSummary = ({ preserveDetailEditor = false } = {}) => {
+    if (shellDisposed) return;
     session.pruneExpiredNotifications();
     session.validateCurrentDraft();
     syncFormControls();
