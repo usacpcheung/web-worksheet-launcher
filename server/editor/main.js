@@ -1,3 +1,4 @@
+import { createMultipleChoiceControls } from './multiple-choice-controls.js';
 import { createEditorDialogs } from './dialogs.js';
 import { createAnswerSettings } from './answer-settings.js';
 import { createNotificationPanel, getNotificationToastRemainingMs } from './notification-panel.js';
@@ -4919,6 +4920,7 @@ function renderEditorShell(session) {
   session.destroyTextEditor?.();
   session.destroyBlockNavigation?.();
   session.destroyAnswerSettings?.();
+  session.destroyMultipleChoiceControls?.();
   session.destroyNotificationPanel?.();
   if (!app) return;
 
@@ -5098,44 +5100,15 @@ function renderEditorShell(session) {
     onDecimalPlacesChange: (id, value) => { session.updateQuestionNumberRulesDecimalPlacesAllowed(id, value); updateSummary(); },
   });
   session.destroyAnswerSettings = answerSettings.destroy;
-  const questionOptions = document.createElement('textarea');
-  questionOptions.id = 'editor-question-options';
-  questionOptions.style.display = 'none';
-  const questionOptionsList = document.createElement('div');
-  questionOptionsList.className = 'question-options-list';
-  const questionOptionWarning = document.createElement('p');
-  questionOptionWarning.className = 'control-error option-warning';
-  questionOptionWarning.hidden = true;
-  const addOptionBtn = document.createElement('button');
-  addOptionBtn.type = 'button';
-  addOptionBtn.className = 'option-add-btn';
-  addOptionBtn.textContent = t('editor.option.add');
-  const questionSelectionMode = document.createElement('select');
-  questionSelectionMode.id = 'editor-question-selection-mode';
-  questionSelectionMode.className = 'control';
-  [
-    { value: 'single', label: getSelectionModeLabel('single') },
-    { value: 'multi', label: getSelectionModeLabel('multi') },
-  ].forEach(({ value, label }) => {
-    const option = document.createElement('option');
-    option.value = value;
-    option.textContent = label;
-    questionSelectionMode.appendChild(option);
+  const multipleChoiceControls = createMultipleChoiceControls({
+    t, createEditorIcon, setIconButtonContent, getSelectionModeLabel,
+    onSelectionModeChange: (id, value) => { session.updateQuestionSelectionMode(id, value); updateSummary(); },
+    onShuffleChange: (id, value) => { session.updateQuestionShuffleOptions(id, value); updateSummary(); },
+    onOptionsTextChange: (id, value) => { session.updateQuestionOptionsFromText(id, value); updateSummary(); },
+    onAddOption: id => { session.addQuestionOption(id); updateSummary(); },
   });
-  const questionShuffleOptions = document.createElement('input');
-  questionShuffleOptions.id = 'editor-question-shuffle-options';
-  questionShuffleOptions.type = 'checkbox';
-  questionShuffleOptions.hidden = true;
-  const questionShuffleToggle = document.createElement('button');
-  questionShuffleToggle.type = 'button';
-  questionShuffleToggle.className = 'option-correct-toggle inline-toggle__tick-btn';
-  questionShuffleToggle.setAttribute('aria-label', t('editor.question.toggleShuffleAria'));
-  questionShuffleToggle.setAttribute('aria-pressed', 'false');
-  const questionShuffleTick = document.createElement('span');
-  questionShuffleTick.className = 'option-correct-toggle__tick';
-  questionShuffleTick.setAttribute('aria-hidden', 'true');
-  questionShuffleTick.innerHTML = createEditorIcon('check');
-  questionShuffleToggle.appendChild(questionShuffleTick);
+  session.destroyMultipleChoiceControls = multipleChoiceControls.destroy;
+  const { questionOptions, questionOptionsList, questionOptionWarning, addOptionBtn } = multipleChoiceControls;
   const mediaFeedback = document.createElement('p');
   mediaFeedback.className = 'control-error';
 
@@ -5927,19 +5900,11 @@ function renderEditorShell(session) {
       if (activeElement !== questionInputType) {
         questionInputType.value = responseConfig.inputType || 'text';
       }
-      if (activeElement !== questionOptions) {
-        questionOptions.value = (responseConfig.options || [])
-          .map((option) => String(option?.value ?? option?.label ?? ''))
-          .join('\n');
-      }
-      if (activeElement !== questionSelectionMode) {
-        questionSelectionMode.value = responseConfig.selectionMode || 'single';
-      }
-      if (activeElement !== questionShuffleOptions) {
-        questionShuffleOptions.checked = Boolean(responseConfig.shuffleOptions);
-      }
-      questionShuffleToggle.setAttribute('aria-pressed', questionShuffleOptions.checked ? 'true' : 'false');
     }
+    multipleChoiceControls.sync(selectedBlock?.kind === 'question' ? {
+      blockId: selectedBlock.blockId,
+      responseConfig: normalizeQuestionResponseConfig(selectedBlock.responseConfig),
+    } : {});
     answerSettings.sync(selectedBlock?.kind === 'question' ? {
       blockId: selectedBlock.blockId,
       responseConfig: normalizeQuestionResponseConfig(selectedBlock.responseConfig),
@@ -6315,6 +6280,7 @@ function renderEditorShell(session) {
     const focusedPromptAction = focusedPromptControl?.dataset.audioTrackAction;
     detailSignature = nextSignature;
     optionActionSignature = nextOptionActionSignature;
+    multipleChoiceControls.resetRows();
     rightPanel.innerHTML = '';
     const detailHeader = document.createElement('div');
     detailHeader.className = 'block-detail-header';
@@ -6690,13 +6656,7 @@ function renderEditorShell(session) {
     }
 
     if (activeInputType === 'multiple_choice') {
-      const selectionModeLabel = document.createElement('label');
-      selectionModeLabel.textContent = t('editor.question.selectionMode');
-      selectionModeLabel.htmlFor = 'editor-question-selection-mode';
-      const selectionModeField = document.createElement('div');
-      selectionModeField.className = 'editor-field';
-      selectionModeField.append(selectionModeLabel, questionSelectionMode);
-      answerGrid.appendChild(selectionModeField);
+      answerGrid.appendChild(multipleChoiceControls.selectionModeField);
     }
     answerSection.appendChild(answerGrid);
     answerSettings.mount(answerSection, selectedBlock, activeInputType);
@@ -6708,12 +6668,7 @@ function renderEditorShell(session) {
 
 
     if (activeInputType === 'multiple_choice') {
-      const shuffleRow = document.createElement('div');
-      shuffleRow.className = 'inline-toggle inline-toggle--custom';
-      const shuffleText = document.createElement('span');
-      shuffleText.textContent = t('editor.question.shuffleOptions');
-      shuffleRow.append(questionShuffleToggle, questionShuffleOptions, shuffleText);
-      answerSection.append(shuffleRow);
+      answerSection.append(multipleChoiceControls.shuffleRow);
 
       rightPanel.appendChild(answerSection);
       rightPanel.appendChild(createEditorSectionHeader({ icon: 'list', title: t('editor.option.sectionTitle') }));
@@ -6735,16 +6690,10 @@ function renderEditorShell(session) {
         ? normalizedResponseConfig.correctAnswerOptionId
         : '';
       const duplicateOptionValues = getDuplicateOptionValues(normalizedOptions);
-      if (duplicateOptionValues.length > 0) {
-        questionOptionWarning.hidden = false;
-        questionOptionWarning.textContent = `Option values must be unique. Duplicate values: ${duplicateOptionValues.join(', ')}.`;
-      } else if (isNonEmptyString(normalizedResponseConfig.correctAnswerMappingWarning)) {
-        questionOptionWarning.hidden = false;
-        questionOptionWarning.textContent = normalizedResponseConfig.correctAnswerMappingWarning;
-      } else {
-        questionOptionWarning.hidden = true;
-        questionOptionWarning.textContent = '';
-      }
+      multipleChoiceControls.setWarning(duplicateOptionValues.length > 0
+        ? `Option values must be unique. Duplicate values: ${duplicateOptionValues.join(', ')}.`
+        : isNonEmptyString(normalizedResponseConfig.correctAnswerMappingWarning)
+          ? normalizedResponseConfig.correctAnswerMappingWarning : '');
 
       questionOptionsList.innerHTML = '';
       optionList.forEach((option, optionIndex) => {
@@ -6757,112 +6706,93 @@ function renderEditorShell(session) {
         const optionTextEligibleForT2A = optionTextState.eligible;
         const optionT2AKey = `${selectedBlock.blockId}:${optionId}`;
         const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey || optionT2AInFlightKeys.has(optionT2AKey);
-        const row = document.createElement('div');
-        row.className = 'option-row';
-        row.dataset.persistedOption = isPersistedOption ? '1' : '0';
-        row.dataset.optionId = optionId;
-
         const isSelected = isMultiSelect
           ? selectedOptionIds.has(optionId)
           : hasSelectedSingleOptionId && selectedSingleOptionId === optionId;
-        const correctToggle = document.createElement('button');
-        correctToggle.type = 'button';
-        correctToggle.className = 'option-correct-toggle';
-        correctToggle.title = isMultiSelect
-          ? t('editor.option.includeInCorrectAnswers')
-          : t('editor.option.markAsCorrectAnswer');
-        correctToggle.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
-        correctToggle.setAttribute(
-          'aria-label',
-          isMultiSelect
-            ? t('editor.option.toggleCorrectAnswerAriaLabelMulti', { index: optionIndex + 1 })
-            : t('editor.option.toggleCorrectAnswerAriaLabelSingle', { index: optionIndex + 1 })
-        );
-        correctToggle.addEventListener('click', () => {
-          if (!isMultiSelect) {
-            session.updateQuestionCorrectAnswerChoice(
-              selectedBlock.blockId,
-              isSelected ? '' : optionId
-            );
-            updateSummary();
-            return;
-          }
-          const nextOptionIds = Array.from(selectedOptionIds);
-          if (selectedOptionIds.has(optionId)) {
-            const removeIndex = nextOptionIds.indexOf(optionId);
-            if (removeIndex >= 0) {
-              nextOptionIds.splice(removeIndex, 1);
+        const { row, optionInput, correctToggle, removeBtn } = multipleChoiceControls.createRow({
+          optionId, optionIndex, label: optionDisplayText, isPersistedOption, isSelected, isMultiSelect,
+          onToggleCorrect: () => {
+            if (!isMultiSelect) {
+              session.updateQuestionCorrectAnswerChoice(
+                selectedBlock.blockId,
+                isSelected ? '' : optionId
+              );
+              updateSummary();
+              return;
             }
-          } else {
-            nextOptionIds.push(optionId);
-          }
-          session.updateQuestionCorrectAnswerChoices(selectedBlock.blockId, nextOptionIds);
-          updateSummary();
-        });
-        const tickIcon = document.createElement('span');
-        tickIcon.className = 'option-correct-toggle__tick';
-        tickIcon.setAttribute('aria-hidden', 'true');
-        tickIcon.innerHTML = createEditorIcon('check');
-        correctToggle.appendChild(tickIcon);
-
-        const optionInput = document.createElement('input');
-        optionInput.type = 'text';
-        optionInput.dataset.optionInput = '1';
-        optionInput.dataset.optionIndex = String(optionIndex);
-        optionInput.className = 'control';
-        optionInput.placeholder = t('editor.option.placeholder', { index: optionIndex + 1 });
-        optionInput.value = String(option?.label ?? option?.value ?? '');
-        let isOptionInputComposing = false;
-        const commitOptionInputValue = () => {
-          const persistedOptionId = session.updateQuestionOptionAtIndex(
-            selectedBlock.blockId,
-            optionIndex,
-            optionInput.value,
-            { optionId }
-          );
-          if (persistedOptionId === optionId) row.dataset.persistedOption = '1';
-          refreshOptionRowT2AControls(selectedBlock.blockId, optionId, row);
-          updateSummary({ preserveDetailEditor: true });
-        };
-        optionInput.addEventListener('compositionstart', () => {
-          isOptionInputComposing = true;
-        });
-        optionInput.addEventListener('compositionend', () => {
-          isOptionInputComposing = false;
-          commitOptionInputValue();
-        });
-        optionInput.addEventListener('input', (event) => {
-          if (isOptionInputComposing || event.isComposing) return;
-          commitOptionInputValue();
-        });
-        optionInput.addEventListener('paste', async (event) => {
-          const pastedText = event.clipboardData?.getData('text') || '';
-          if (mapOptionsTextToLines(pastedText).length <= 1) return;
-          event.preventDefault();
-          const outcome = session.applyQuestionOptionMultilinePaste(
-            selectedBlock.blockId,
-            optionIndex,
-            pastedText
-          );
-          if (outcome?.reason === 'confirm-audio-removal-required') {
-            const audioOptionCount = Number.isInteger(outcome.audioOptionCount)
-              ? outcome.audioOptionCount
-              : 0;
-            const confirmed = await confirmDangerAction({
-              title: t('editor.question.multilinePasteConfirm.title'),
-              bodyText: t('editor.question.multilinePasteConfirm.description', { count: audioOptionCount }),
-              confirmLabel: t('editor.question.multilinePasteConfirm.confirmLabel'),
-              removalItems: [t('editor.question.multilinePasteConfirm.audioRemoval')],
-            });
-            if (!confirmed) return;
-            session.applyQuestionOptionMultilinePaste(
+            const nextOptionIds = Array.from(selectedOptionIds);
+            if (selectedOptionIds.has(optionId)) {
+              const removeIndex = nextOptionIds.indexOf(optionId);
+              if (removeIndex >= 0) {
+                nextOptionIds.splice(removeIndex, 1);
+              }
+            } else {
+              nextOptionIds.push(optionId);
+            }
+            session.updateQuestionCorrectAnswerChoices(selectedBlock.blockId, nextOptionIds);
+            updateSummary();
+          },
+          onTextChange: value => {
+            const persistedOptionId = session.updateQuestionOptionAtIndex(
               selectedBlock.blockId,
               optionIndex,
-              pastedText,
-              { confirmRemoveAudio: true }
+              value,
+              { optionId }
             );
-          }
-          updateSummary({ preserveDetailEditor: true });
+            if (persistedOptionId === optionId) row.dataset.persistedOption = '1';
+            refreshOptionRowT2AControls(selectedBlock.blockId, optionId, row);
+            updateSummary({ preserveDetailEditor: true });
+          },
+          onPaste: async event => {
+            const pastedText = event.clipboardData?.getData('text') || '';
+            if (mapOptionsTextToLines(pastedText).length <= 1) return;
+            event.preventDefault();
+            const outcome = session.applyQuestionOptionMultilinePaste(
+              selectedBlock.blockId,
+              optionIndex,
+              pastedText
+            );
+            if (outcome?.reason === 'confirm-audio-removal-required') {
+              const audioOptionCount = Number.isInteger(outcome.audioOptionCount)
+                ? outcome.audioOptionCount
+                : 0;
+              const confirmed = await confirmDangerAction({
+                title: t('editor.question.multilinePasteConfirm.title'),
+                bodyText: t('editor.question.multilinePasteConfirm.description', { count: audioOptionCount }),
+                confirmLabel: t('editor.question.multilinePasteConfirm.confirmLabel'),
+                removalItems: [t('editor.question.multilinePasteConfirm.audioRemoval')],
+              });
+              if (!confirmed) return;
+              session.applyQuestionOptionMultilinePaste(
+                selectedBlock.blockId,
+                optionIndex,
+                pastedText,
+                { confirmRemoveAudio: true }
+              );
+            }
+            updateSummary({ preserveDetailEditor: true });
+          },
+          onRemove: async () => {
+            const outcome = session.removeQuestionOptionWithPolicy(selectedBlock.blockId, optionIndex);
+            if (!outcome.ok && outcome.reason === 'confirm-delete-required') {
+              const removalItems = [];
+              if (outcome.policy.hasTypedContent) {
+                removalItems.push('Option value/text used in answers.');
+              }
+              if (outcome.policy.hasAssets) {
+                removalItems.push('Option image/audio files and attachment metadata.');
+              }
+              const confirmed = await showConfirmDialog({
+                title: `Delete option ${optionIndex + 1}?`,
+                entityLabel: `option ${optionIndex + 1}`,
+                removalItems,
+                confirmLabel: 'Delete option',
+              });
+              if (!confirmed) return;
+              session.removeQuestionOptionWithPolicy(selectedBlock.blockId, optionIndex, { confirmDelete: true });
+            }
+            updateSummary();
+          },
         });
         const optionActionsMenu = document.createElement('details');
         optionActionsMenu.className = 'option-actions-menu option-audio-menu';
@@ -7080,33 +7010,6 @@ function renderEditorShell(session) {
         optionActionsRow.appendChild(optionTrackList);
 
         optionActionsMenu.append(optionAudioMenuTrigger, optionActionsRow);
-        const removeBtn = document.createElement('button');
-        removeBtn.type = 'button';
-        removeBtn.className = 'icon-btn danger';
-        removeBtn.title = 'Delete this option';
-        removeBtn.setAttribute('aria-label', `Delete option ${optionIndex + 1}`);
-        setIconButtonContent(removeBtn, 'trash');
-        removeBtn.addEventListener('click', async () => {
-          const outcome = session.removeQuestionOptionWithPolicy(selectedBlock.blockId, optionIndex);
-          if (!outcome.ok && outcome.reason === 'confirm-delete-required') {
-            const removalItems = [];
-            if (outcome.policy.hasTypedContent) {
-              removalItems.push('Option value/text used in answers.');
-            }
-            if (outcome.policy.hasAssets) {
-              removalItems.push('Option image/audio files and attachment metadata.');
-            }
-            const confirmed = await showConfirmDialog({
-              title: `Delete option ${optionIndex + 1}?`,
-              entityLabel: `option ${optionIndex + 1}`,
-              removalItems,
-              confirmLabel: 'Delete option',
-            });
-            if (!confirmed) return;
-            session.removeQuestionOptionWithPolicy(selectedBlock.blockId, optionIndex, { confirmDelete: true });
-          }
-          updateSummary();
-        });
         row.append(correctToggle, optionInput, optionActionsMenu, removeBtn);
         mountOptionImageEditor({ row, option, blockId: selectedBlock.blockId, session, icon: createEditorIcon,
           confirm: bodyText => confirmDangerAction({ title: t('optionImages.manage'), bodyText, confirmLabel: t('common.actions.apply'), removalItems: [] }),
@@ -7776,22 +7679,6 @@ function renderEditorShell(session) {
     }
     updateSummary();
     if (session.state.selectedBlockId === selectedBlockId) questionInputType.focus();
-  });
-  questionSelectionMode.addEventListener('change', () => {
-    session.updateQuestionSelectionMode(session.state.selectedBlockId, questionSelectionMode.value);
-    updateSummary();
-  });
-  questionShuffleToggle.addEventListener('click', () => {
-    session.updateQuestionShuffleOptions(session.state.selectedBlockId, !questionShuffleOptions.checked);
-    updateSummary();
-  });
-  questionOptions.addEventListener('input', () => {
-    session.updateQuestionOptionsFromText(session.state.selectedBlockId, questionOptions.value);
-    updateSummary();
-  });
-  addOptionBtn.addEventListener('click', () => {
-    session.addQuestionOption(session.state.selectedBlockId);
-    updateSummary();
   });
   questionImageInput.addEventListener('change', async () => {
     await runMediaAction(async () => {
