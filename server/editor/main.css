@@ -1037,15 +1037,19 @@ textarea.control {
 
 .number-answer-field {
   display: grid;
-  grid-template-columns: max-content minmax(0, 120px);
+  /* Wrap the label instead of squeezing the value beside a validation message. */
+  grid-template-columns: minmax(0, max-content) 120px;
   gap: 6px 8px;
   align-items: center;
+  min-width: 0;
   max-width: 100%;
 }
 
 .number-answer-field .control-error {
   grid-column: 1 / -1;
+  min-width: 0;
   max-width: 260px;
+  overflow-wrap: anywhere;
   margin: 0;
 }
 
