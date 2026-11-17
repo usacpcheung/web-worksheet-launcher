@@ -6,7 +6,7 @@ import path from 'node:path';
 const base = process.env.VIEWER_SMOKE_URL || 'http://127.0.0.1:8765';
 const browser = await chromium.launch();
 try {
-  for (const locale of ['en', 'zh-Hant']) for (const width of [1280, 390]) {
+  for (const locale of ['en', 'zh-Hant']) for (const width of [1280, 390, 320]) {
     const context = await browser.newContext({ viewport: { width, height: 950 } });
     try {
       await context.addInitScript(locale => localStorage.setItem('worksheetLauncher.locale', locale), locale);
@@ -67,6 +67,28 @@ try {
       assert.equal(await decimals.inputValue(), '1.5');
       assert.equal(await decimals.evaluate(el => el === window.focusedDecimal && el === document.activeElement), true);
       assert.equal(await decimals.evaluate(el => el.classList.contains('control-invalid')), true);
+      // An error must not steal the input's space, even when its text spans both columns.
+      await page.evaluate(() => document.fonts.ready);
+      await decimals.scrollIntoViewIfNeeded();
+      const geometry = await decimals.evaluate(el => {
+        const field = el.parentElement;
+        const input = el.getBoundingClientRect(), label = field.querySelector('label').getBoundingClientRect();
+        const error = field.querySelector('.control-error').getBoundingClientRect();
+        return { inputWidth: input.width, clientWidth: el.clientWidth, scrollWidth: el.scrollWidth,
+          labelRight: label.right, inputLeft: input.left, inputRight: input.right,
+          errorTop: error.top, controlsBottom: Math.max(input.bottom, label.bottom),
+          pageWidth: document.documentElement.scrollWidth, viewportWidth: innerWidth };
+      });
+      assert.ok(geometry.inputWidth >= 100, 'focused invalid value has usable space including its spinner');
+      assert.ok(geometry.scrollWidth <= geometry.clientWidth, 'raw 1.5 fits inside the input');
+      assert.ok(geometry.labelRight <= geometry.inputLeft, 'label does not overlap input');
+      assert.ok(geometry.inputRight <= width, 'input stays inside narrow viewport');
+      assert.ok(geometry.errorTop >= geometry.controlsBottom, 'validation stays below label and input');
+      assert.ok(geometry.pageWidth <= geometry.viewportWidth, 'numeric error does not cause horizontal overflow');
+      if (process.env.VIEWER_SMOKE_SCREENSHOTS) {
+        await mkdir(process.env.VIEWER_SMOKE_SCREENSHOTS, { recursive: true });
+        await page.locator('.number-answer-rules').screenshot({ path: path.join(process.env.VIEWER_SMOKE_SCREENSHOTS, `number-invalid-${locale}-${width}.png`) });
+      }
       await decimals.fill('');
       assert.equal((await config('number')).numberRules.decimalPlacesAllowed, null);
       await decimals.fill('2');
