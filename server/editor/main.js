@@ -7570,6 +7570,7 @@ function renderEditorShell(session) {
   async function openServerManager(kind) {
     if (pendingManagerEntry || browsePublishedDialogOpen || manageUploadedDraftsDialogOpen) return;
     const entry = { kind };
+    let cancelled = false;
     const draftId = session.state.draft?.localId;
     const generation = session._audioDraftGeneration;
     const contextCurrent = () => !shellDisposed && session.state.draft?.localId === draftId
@@ -7582,6 +7583,7 @@ function renderEditorShell(session) {
         ? { kind, filters: { title: browsePublishedState.title, subject: browsePublishedState.subject, owner: browsePublishedState.owner } }
         : { kind };
       const ready = await session.ensureReadSessionReady({ isCurrent, intent });
+      cancelled = ready.result?.cancelled === true;
       if (!isCurrent() || !ready.ok || !ready.isCurrent?.()) return;
       // The entry owns only authentication. Once mounted, the modal revision
       // owns the list so Close/reopen can supersede a pending request immediately.
@@ -7604,6 +7606,10 @@ function renderEditorShell(session) {
     } finally {
       if (pendingManagerEntry === entry) pendingManagerEntry = null;
       updateSummary();
+      // The shared prompt cannot restore focus while its entry is disabled.
+      if (cancelled && contextCurrent() && document.activeElement === document.body) {
+        (kind === 'published' ? browsePublishedBtn : manageUploadedDraftsBtn).focus();
+      }
     }
   }
   browsePublishedBtn.addEventListener('click', () => openServerManager('published'));

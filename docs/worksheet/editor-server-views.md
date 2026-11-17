@@ -21,7 +21,8 @@ may apply.
 Initial manager entry verifies authentication before mounting either view. Both
 entry buttons are temporarily disabled while one opener owns that check; the
 selected button shows Loading. Cancel leaves the editor intact with no manager
-or authentication error. Successful login opens the requested manager and passes
+or authentication error, and returns keyboard focus to the entry once enabled.
+Successful login opens the requested manager and passes
 the verified account guard to its list read without a duplicate preflight.
 Replacing the draft or disposing the shell invalidates a pending opener. Once
 mounted, the existing modal revisions own list requests and Close/reopen behavior.

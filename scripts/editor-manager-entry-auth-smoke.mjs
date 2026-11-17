@@ -81,6 +81,8 @@ try {
       assert.deepEqual(await snapshot(), before);
       assert.equal(await page.evaluate(() => window.editorSession.state.notifications.some(item => item.source === 'session.read')), false);
       assert.equal(await page.evaluate(() => window.editorSession.state.serverActionMessage), null);
+      assert.equal(await page.getByRole('button', { name: await label(entryKey), exact: true })
+        .evaluate(button => button === document.activeElement), true, 'Cancel restores focus to the requested entry');
 
       // A real service failure is retryable and never opens a login prompt/manager.
       serviceError = true; await open(); await entryReady(); serviceError = false;
