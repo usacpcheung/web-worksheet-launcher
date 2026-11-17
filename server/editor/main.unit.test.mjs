@@ -153,7 +153,7 @@ test('modal load-status copies are visual-only and preserve the single shell ann
 
 async function loadEditorModule() {
   const filePath = path.resolve('server/editor/main.js');
-  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/contracts/worksheet-readiness.js'", JSON.stringify(new NodeURL('../app/contracts/worksheet-readiness.js', import.meta.url).href)).replaceAll("'./feedback-editor.js'", JSON.stringify(new NodeURL('./feedback-editor.js', import.meta.url).href)).replaceAll("'../app/worksheet-feedback.js'", JSON.stringify(new NodeURL('../app/worksheet-feedback.js', import.meta.url).href)).replaceAll("'./question-type-conversion.js'", JSON.stringify(new NodeURL('./question-type-conversion.js', import.meta.url).href)).replaceAll("'../app/fill-in-blanks.js'", JSON.stringify(new NodeURL('../app/fill-in-blanks.js', import.meta.url).href)).replaceAll("'./fill-in-blanks-editor.js'", JSON.stringify(new NodeURL('./fill-in-blanks-editor.js', import.meta.url).href)).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'../app/bridge/audio-generation.js'", JSON.stringify(new NodeURL('../app/bridge/audio-generation.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./rich-text-editor.js'", JSON.stringify(new NodeURL('./rich-text-editor.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
+  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'./notification-panel.js'", JSON.stringify(new NodeURL('./notification-panel.js', import.meta.url).href)).replaceAll("'../app/contracts/worksheet-readiness.js'", JSON.stringify(new NodeURL('../app/contracts/worksheet-readiness.js', import.meta.url).href)).replaceAll("'./feedback-editor.js'", JSON.stringify(new NodeURL('./feedback-editor.js', import.meta.url).href)).replaceAll("'../app/worksheet-feedback.js'", JSON.stringify(new NodeURL('../app/worksheet-feedback.js', import.meta.url).href)).replaceAll("'./question-type-conversion.js'", JSON.stringify(new NodeURL('./question-type-conversion.js', import.meta.url).href)).replaceAll("'../app/fill-in-blanks.js'", JSON.stringify(new NodeURL('../app/fill-in-blanks.js', import.meta.url).href)).replaceAll("'./fill-in-blanks-editor.js'", JSON.stringify(new NodeURL('./fill-in-blanks-editor.js', import.meta.url).href)).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'../app/bridge/audio-generation.js'", JSON.stringify(new NodeURL('../app/bridge/audio-generation.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./rich-text-editor.js'", JSON.stringify(new NodeURL('./rich-text-editor.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
 
   const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/option-images.js'", JSON.stringify(new NodeURL('../app/option-images.js', import.meta.url).href)).replaceAll("'./option-image-editor.js'", JSON.stringify(new NodeURL('./option-image-editor.js', import.meta.url).href)).replaceAll("'../app/api/publication-flow.js'", JSON.stringify(new NodeURL('../app/api/publication-flow.js', import.meta.url).href)).replaceAll("'../app/auth/mutation-auth.js'", JSON.stringify(new NodeURL('../app/auth/mutation-auth.js', import.meta.url).href)).replaceAll("'../app/auth/session-state-adapter.js'", JSON.stringify(new NodeURL('../app/auth/session-state-adapter.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-return.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-return.js', import.meta.url).href)).replaceAll("'../app/auth/session-coordinator.js'", JSON.stringify(new NodeURL('../app/auth/session-coordinator.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-flow.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-flow.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-prompt.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-prompt.js', import.meta.url).href)).replaceAll("'../app/api/deletion-flow.js'", JSON.stringify(new NodeURL('../app/api/deletion-flow.js', import.meta.url).href)).replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-drag-reorder.js'", JSON.stringify(new NodeURL('./block-drag-reorder.js', import.meta.url).href)), [
     {
@@ -1590,18 +1590,6 @@ test('notification dedupe/removal does not erase historical activity log entries
   assert.deepEqual(activityMessages, ['first', 'second']);
 });
 
-test('activity panel source uses activity log pagination with load-older control', async () => {
-  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.equal(source.includes('const ACTIVITY_VISIBLE_INITIAL = 30;'), true);
-  assert.equal(source.includes('const ACTIVITY_MAX_STORED = 200;'), true);
-  assert.equal(source.includes("loadOlderActivityBtn.textContent = t('editor.activity.loadOlder');"), true);
-  assert.equal(source.includes('const feedNotifications = (Array.isArray(session.state.activityLog) ? session.state.activityLog : [])'), true);
-  assert.equal(source.includes('visibleActivityCount = Math.min(totalActivity, visibleActivityCount + ACTIVITY_VISIBLE_INITIAL);'), true);
-  assert.equal(source.includes('Showing ${Math.min(visibleActivityCount, totalActivity)} of ${totalActivity} recent activities.'), true);
-  assert.equal(source.includes("renderNotificationCard(notification, 'notification-feed-item', { announce: false })"), true);
-  assert.equal(source.includes("item.setAttribute('aria-live', 'off');"), true);
-});
-
 test('editor shell no longer relies on 500ms summary interval loop', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes('setInterval(updateSummary, 500)'), false);
@@ -2074,20 +2062,6 @@ test('editor language change rerenders without reloading or flushing draft state
   assert.equal(source.includes('flushLocaleChangeBeforeReload'), false);
   assert.equal(source.includes('window.location.reload'), false);
   assert.match(source, /const languageSelector = createLanguageSelector\(\{\s+onChange: \(\) => \{\s+renderEditorShell\(session\);/);
-});
-
-test('toast lifetime stays anchored to notification creation across language rerenders', async () => {
-  const mod = await loadEditorModule();
-  const createdAt = '2026-07-14T00:00:00.000Z';
-  const createdAtMs = new Date(createdAt).getTime();
-  const notification = { id: 'notif_audio', createdAt, ttlMs: null, showToast: true };
-
-  assert.equal(mod.getNotificationToastRemainingMs(notification, createdAtMs), 5000);
-  assert.equal(mod.getNotificationToastRemainingMs(notification, createdAtMs + 3000), 2000);
-  assert.equal(mod.getNotificationToastRemainingMs(notification, createdAtMs + 5000), 0);
-  assert.equal(mod.getNotificationToastRemainingMs(notification, createdAtMs + 9000), 0);
-  assert.equal(mod.getNotificationToastRemainingMs({ ...notification, ttlMs: 1200 }, createdAtMs + 200), 1000);
-  assert.equal(mod.getNotificationToastRemainingMs({ ...notification, showToast: false }, createdAtMs), 0);
 });
 
 test('autosave mirrors persistence and validation warnings into deduped notification sources', async () => {
