@@ -29,6 +29,8 @@ Contributor instructions, discoverable UI skills, colocated module/font notes an
 
 ## Worksheet editor and viewer
 
+- [Editor status, validation dialogs and notifications](worksheet/editor-status-notifications.md)
+
 - [Replacement and package opening](worksheet/editor-worksheet-replacement.md)
 - [Move commands and mouse dragging](worksheet/worksheet-block-reordering.md)
 - [Limited Markdown, prompt limits and typography](worksheet/worksheet-limited-markdown.md)

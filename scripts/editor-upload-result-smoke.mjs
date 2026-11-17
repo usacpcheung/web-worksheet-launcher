@@ -52,8 +52,8 @@ try {
           });
           session.notifyStateChange();
         });
-        const toasts = page.locator('.notification-toast-container');
-        assert.equal(await toasts.locator('.notification-toast').count(), 4);
+        const toasts = page.locator('.editor-header-notification');
+        assert.equal(await toasts.locator('.notification-toast').count(), 1);
         // Toasts normally ignore pointers. Temporarily enable hit testing to check
         // actual stacking, not just clickability or the numeric z-index values.
         const covered = await toasts.evaluate(container => {
@@ -84,7 +84,7 @@ try {
         await page.waitForFunction(() => !window.editorSession.state.isUploadDraftFlowActive);
         assert.deepEqual(posts, action === 'cancel' ? [''] : ['', action]);
         if (action === 'cancel') {
-          assert.equal(await page.locator('.notification-toast').count(), 4, 'closing the dialog preserves unexpired notifications');
+          assert.equal(await page.locator('.notification-toast').count(), 1, 'closing the dialog preserves the latest unexpired notification');
           assert.ok(await page.evaluate(() => window.editorSession.state.activityLog.some(item => item.text?.startsWith('Layer fixture'))));
         }
       }

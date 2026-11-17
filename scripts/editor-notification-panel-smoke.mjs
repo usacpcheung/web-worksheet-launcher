@@ -52,9 +52,9 @@ try {
         for (let i = 1; i <= 6; i++) s.pushNotification({ text: `Toast ${i}`, kind: i === 6 ? 'error' : 'success' });
         s.notifyStateChange();
       });
-      assert.deepEqual(await page.locator('.notification-toast__text').allTextContents(), ['Toast 3', 'Toast 4', 'Toast 5', 'Toast 6']);
+      assert.deepEqual(await page.locator('.notification-toast__text').allTextContents(), ['Toast 6']);
       assert.equal(await page.locator('.notification-toast[role="alert"][aria-live="assertive"]').count(), 1);
-      assert.equal(await page.locator('.notification-toast[role="status"][aria-live="polite"]').count(), 3);
+      assert.equal(await page.locator('.notification-toast[role="status"][aria-live="polite"]').count(), 0);
       if (process.env.VIEWER_SMOKE_SCREENSHOTS) {
         await mkdir(process.env.VIEWER_SMOKE_SCREENSHOTS, { recursive: true });
         await page.screenshot({ path: path.join(process.env.VIEWER_SMOKE_SCREENSHOTS, `${locale}-${width}.png`), fullPage: true });
@@ -84,6 +84,19 @@ try {
       await page.evaluate(() => window.oldShellObserver.disconnect());
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
 
+      // A short newer progress notice expires without replaying an older long notice.
+      const historyCount = await page.evaluate(() => window.editorSession.state.activityLog.length);
+      await page.evaluate(() => {
+        const s = window.editorSession;
+        s.pushNotification({ text: 'Older long notice', ttlMs: 60000, logActivity: false });
+        s.pushNotification({ text: 'Transient progress', ttlMs: 250, logActivity: false });
+        s.notifyStateChange();
+      });
+      await page.locator('.notification-toast').waitFor({ state: 'detached', timeout: 3000 });
+      await page.evaluate(() => window.editorSession.notifyStateChange());
+      assert.equal(await page.locator('.notification-toast').count(), 0);
+      assert.equal(await page.evaluate(() => window.editorSession.state.activityLog.length), historyCount);
+
       // Deterministic disposal checks on the component itself, including queued callbacks.
       const lifecycle = await page.evaluate(async () => {
         const { createNotificationPanel } = await import('/server/editor/notification-panel.js');
@@ -99,8 +112,8 @@ try {
           component.update(data);
           component.update(data);
           const oneTimer = scheduled.size === 1;
-          const literalText = component.toastRoot.querySelector('.notification-toast__text').textContent === record.text
-            && component.toastRoot.querySelector('img, b') === null;
+          const literalText = component.headerRoot.querySelector('.notification-toast__text').textContent === record.text
+            && component.headerRoot.querySelector('img, b') === null;
           component.update({ activityLog: [record], notifications: [] });
           const removedTimer = scheduled.size === 0;
           component.update(data);

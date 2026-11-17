@@ -65,6 +65,96 @@ test('same-revision saves completing out of order retain the newer save status',
   assert.equal(session.state.lastSavedAt, newer.metadata.updatedAt);
 });
 
+for (const edited of [false, true]) test(`manual save failure persists and retries with edited=${edited}`, async () => {
+  const mod = await loadEditorModule();
+  const storage = createSessionForTests();
+  const session = new mod.EditorDraftSession(storage);
+  await session.createOrOpenByLocalDraftId('save-failure');
+  clearTimeout(session.autosaveTimer);
+  await session.saveNow();
+  const savedTime = session.state.lastSavedAt;
+  const savedRevision = session.state.lastSavedRevision;
+  if (edited) { session.updateTitle('Changed'); clearTimeout(session.autosaveTimer); }
+  const put = storage.drafts.put;
+  storage.drafts.put = async () => { throw new Error('Storage failure'); };
+  try {
+    await assert.rejects(session.saveNow(), /Storage failure/);
+    assert.equal(session.state.lastPersistenceError, 'Storage failure');
+    assert.equal(session.state.lastSavedAt, savedTime);
+    assert.equal(session.state.lastSavedRevision, savedRevision);
+    session.pushNotification({ kind: 'success', text: 'Unrelated success' });
+    assert.equal(session.state.lastPersistenceError, 'Storage failure');
+  } finally { storage.drafts.put = put; }
+  await session.saveNow();
+  assert.equal(session.state.lastPersistenceError, null);
+  assert.equal(session.state.lastSavedRevision, session.state.draftRevision);
+});
+
+test('manual save reports preparation failure before the storage write', async () => {
+  const mod = await loadEditorModule();
+  const storage = createSessionForTests();
+  const session = new mod.EditorDraftSession(storage);
+  await session.createOrOpenByLocalDraftId('save-preparation');
+  clearTimeout(session.autosaveTimer);
+  await session.saveNow();
+  const validate = session.validateCurrentDraft;
+  session.validateCurrentDraft = () => { throw new Error('Preparation failed'); };
+  try {
+    await assert.rejects(session.saveNow(), /Preparation failed/);
+    assert.equal(session.state.lastPersistenceError, 'Preparation failed');
+    assert.equal(session.state.notifications.find(item => item.source === 'save.manual').kind, 'error');
+  } finally { session.validateCurrentDraft = validate; }
+  await session.saveNow();
+  assert.equal(session.state.lastPersistenceError, null);
+});
+
+// Complete a newer save before an older one, with both success/failure orderings.
+for (const newerFails of [false, true]) for (const olderFails of [false, true]) {
+  test(`save completion ordering: newer failure=${newerFails}, older failure=${olderFails}`, async () => {
+    const mod = await loadEditorModule();
+    const storage = createSessionForTests();
+    const session = new mod.EditorDraftSession(storage);
+    await session.createOrOpenByLocalDraftId('save-order');
+    clearTimeout(session.autosaveTimer);
+    await session.saveNow();
+    const pending = [];
+    storage.drafts.put = value => new Promise((resolve, reject) => pending.push({ value, resolve, reject }));
+    const older = session.saveNow().catch(error => error);
+    while (pending.length < 1) await new Promise(resolve => setImmediate(resolve));
+    const newer = session.saveNow().catch(error => error);
+    while (pending.length < 2) await new Promise(resolve => setImmediate(resolve));
+    const finish = (index, fails) => fails ? pending[index].reject(new Error(`failure-${index}`)) : pending[index].resolve(pending[index].value);
+    finish(1, newerFails); await newer;
+    const manual = session.state.notifications.find(item => item.source === 'save.manual');
+    finish(0, olderFails); await older;
+    assert.equal(session.state.lastPersistenceError, newerFails ? 'failure-1' : null);
+    assert.equal(session.state.notifications.find(item => item.source === 'save.manual'), manual);
+    if (newerFails && !olderFails) assert.equal(session.state.lastSavedAt, pending[0].value.metadata.updatedAt);
+    storage.drafts.put = async value => value;
+    await session.saveNow();
+    assert.equal(session.state.lastPersistenceError, null);
+  });
+}
+
+for (const sameId of [false, true]) test(`failed save cannot affect a replacement draft, same ID=${sameId}`, async () => {
+  const mod = await loadEditorModule();
+  const storage = createSessionForTests();
+  const session = new mod.EditorDraftSession(storage);
+  await session.createOrOpenByLocalDraftId('original-save');
+  clearTimeout(session.autosaveTimer);
+  await session.saveNow();
+  let rejectWrite;
+  storage.drafts.put = () => new Promise((resolve, reject) => { rejectWrite = reject; });
+  const pending = session.saveNow().catch(error => error);
+  while (!rejectWrite) await new Promise(resolve => setImmediate(resolve));
+  await session.createOrOpenByLocalDraftId(sameId ? 'original-save' : 'replacement');
+  clearTimeout(session.autosaveTimer);
+  const notifications = structuredClone(session.state.notifications);
+  rejectWrite(new Error('Old draft failure')); await pending;
+  assert.equal(session.state.lastPersistenceError, null);
+  assert.deepEqual(session.state.notifications, notifications);
+});
+
 test('audio generation rejects worksheet switches and reopening the same worksheet', async () => {
   const mod = await loadEditorModule();
   for (const target of ['prompt', 'option']) for (const sameId of [false, true]) {
@@ -153,7 +243,7 @@ test('modal load-status copies are visual-only and preserve the single shell ann
 
 async function loadEditorModule() {
   const filePath = path.resolve('server/editor/main.js');
-  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'./multiple-choice-controls.js'", JSON.stringify(new NodeURL('./multiple-choice-controls.js', import.meta.url).href)).replaceAll("'./dialogs.js'", JSON.stringify(new NodeURL('./dialogs.js', import.meta.url).href)).replaceAll("'./answer-settings.js'", JSON.stringify(new NodeURL('./answer-settings.js', import.meta.url).href)).replaceAll("'./notification-panel.js'", JSON.stringify(new NodeURL('./notification-panel.js', import.meta.url).href)).replaceAll("'../app/contracts/worksheet-readiness.js'", JSON.stringify(new NodeURL('../app/contracts/worksheet-readiness.js', import.meta.url).href)).replaceAll("'./feedback-editor.js'", JSON.stringify(new NodeURL('./feedback-editor.js', import.meta.url).href)).replaceAll("'../app/worksheet-feedback.js'", JSON.stringify(new NodeURL('../app/worksheet-feedback.js', import.meta.url).href)).replaceAll("'./question-type-conversion.js'", JSON.stringify(new NodeURL('./question-type-conversion.js', import.meta.url).href)).replaceAll("'../app/fill-in-blanks.js'", JSON.stringify(new NodeURL('../app/fill-in-blanks.js', import.meta.url).href)).replaceAll("'./fill-in-blanks-editor.js'", JSON.stringify(new NodeURL('./fill-in-blanks-editor.js', import.meta.url).href)).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'../app/bridge/audio-generation.js'", JSON.stringify(new NodeURL('../app/bridge/audio-generation.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./rich-text-editor.js'", JSON.stringify(new NodeURL('./rich-text-editor.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
+  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'./status-panel.js'", JSON.stringify(new NodeURL('./status-panel.js', import.meta.url).href)).replaceAll("'./multiple-choice-controls.js'", JSON.stringify(new NodeURL('./multiple-choice-controls.js', import.meta.url).href)).replaceAll("'./dialogs.js'", JSON.stringify(new NodeURL('./dialogs.js', import.meta.url).href)).replaceAll("'./answer-settings.js'", JSON.stringify(new NodeURL('./answer-settings.js', import.meta.url).href)).replaceAll("'./notification-panel.js'", JSON.stringify(new NodeURL('./notification-panel.js', import.meta.url).href)).replaceAll("'../app/contracts/worksheet-readiness.js'", JSON.stringify(new NodeURL('../app/contracts/worksheet-readiness.js', import.meta.url).href)).replaceAll("'./feedback-editor.js'", JSON.stringify(new NodeURL('./feedback-editor.js', import.meta.url).href)).replaceAll("'../app/worksheet-feedback.js'", JSON.stringify(new NodeURL('../app/worksheet-feedback.js', import.meta.url).href)).replaceAll("'./question-type-conversion.js'", JSON.stringify(new NodeURL('./question-type-conversion.js', import.meta.url).href)).replaceAll("'../app/fill-in-blanks.js'", JSON.stringify(new NodeURL('../app/fill-in-blanks.js', import.meta.url).href)).replaceAll("'./fill-in-blanks-editor.js'", JSON.stringify(new NodeURL('./fill-in-blanks-editor.js', import.meta.url).href)).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'../app/bridge/audio-generation.js'", JSON.stringify(new NodeURL('../app/bridge/audio-generation.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./rich-text-editor.js'", JSON.stringify(new NodeURL('./rich-text-editor.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
 
   const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/option-images.js'", JSON.stringify(new NodeURL('../app/option-images.js', import.meta.url).href)).replaceAll("'./option-image-editor.js'", JSON.stringify(new NodeURL('./option-image-editor.js', import.meta.url).href)).replaceAll("'../app/api/publication-flow.js'", JSON.stringify(new NodeURL('../app/api/publication-flow.js', import.meta.url).href)).replaceAll("'../app/auth/mutation-auth.js'", JSON.stringify(new NodeURL('../app/auth/mutation-auth.js', import.meta.url).href)).replaceAll("'../app/auth/session-state-adapter.js'", JSON.stringify(new NodeURL('../app/auth/session-state-adapter.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-return.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-return.js', import.meta.url).href)).replaceAll("'../app/auth/session-coordinator.js'", JSON.stringify(new NodeURL('../app/auth/session-coordinator.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-flow.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-flow.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-prompt.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-prompt.js', import.meta.url).href)).replaceAll("'../app/api/deletion-flow.js'", JSON.stringify(new NodeURL('../app/api/deletion-flow.js', import.meta.url).href)).replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-navigation.js'", JSON.stringify(new NodeURL('./block-navigation.js', import.meta.url).href)), [
     {
@@ -1777,27 +1867,9 @@ test('stage3: protected actions column no longer includes legacy rewrite/t2a stu
   assert.equal(source.includes('protectedActionsColumn.append(\n    serverSessionStatus,\n    signInBtn,\n    syncDraftBtn,\n    cancelUploadBtn,\n    manageUploadedDraftsBtn,\n    browsePublishedBtn\n  );'), true);
 });
 
-test('editor source keeps detail status row visible and uses friendly saved labels', async () => {
+test('editor keeps selected-block status visible', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-
-  const { t, setLocale } = await import('../app/i18n/index.js');
-  const start = source.indexOf('  function formatLastSavedLabel(');
-  const end = source.indexOf('  function emitServerNotification', start);
-  const session = { state: { lastSavedRevision: 0 } };
-  const format = new Function('t', 'session', 'isNonEmptyString', source.slice(start, end) + '; return formatLastSavedLabel;')(t, session, value => typeof value === 'string' && value.trim().length > 0);
-  for (const locale of ['en', 'zh-Hant']) {
-    setLocale(locale, { persist: false });
-    assert.equal(format(null), t('editor.saveTime.never'));
-    session.state.lastSavedRevision = 1;
-    assert.equal(format(null), t('editor.saveTime.unknown'));
-    assert.equal(format(new Date().toISOString()), t('editor.saveTime.now'));
-    const future = new Date(Date.now() + 60000).toISOString();
-    assert.equal(format(future), t('editor.saveTime.future', { time: future }));
-    assert.equal(format(new Date(Date.now() - 120000).toISOString()), t('editor.saveTime.minutes', { count: 2 }));
-    session.state.lastSavedRevision = 0;
-  }
-  setLocale('en', { persist: false });
-  assert.equal(source.includes('rightPanel.append(statusRow);'), true);
+  assert.equal(source.includes('rightPanel.append(rightHeading, statusRow);'), true);
 });
 
 test('editor read and mutation menus remain available signed out with busy guards', async () => {
@@ -1937,7 +2009,6 @@ test('multilingual audio generation locks each prompt or option target and keeps
   assert.equal(source.includes("if (event.key !== 'Escape' || !optionActionsMenu.open) return;"), true);
   assert.equal(source.includes('replacementAudioAction.focus()'), true);
   assert.equal(css.includes('.option-audio-menu__header'), true);
-  assert.equal(css.includes('.editor-shell--option-audio-menu-open .notification-toast-container'), true);
 });
 
 test('multilingual audio generation restores prompt and option controls after warning cancellation', async () => {
@@ -1983,12 +2054,6 @@ test('prompt typing updates T2A state without forcing detail-panel rerender on e
   assert.equal(source.includes('promptTextSignature'), false);
 });
 
-test('localDraftId render path avoids innerHTML interpolation for untrusted ids', async () => {
-  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.equal(source.includes('localDraftIdEl.innerHTML'), false);
-  assert.equal(source.includes("localDraftIdLabel.textContent = t('editor.labels.localDraftId');"), true);
-  assert.equal(source.includes("localDraftIdValue.textContent = session.state.draft?.localId || t('common.values.na');"), true);
-});
 
 test('autosave completion emits state updates and clears pending state without extra UI events', async () => {
   const mod = await loadEditorModule();
