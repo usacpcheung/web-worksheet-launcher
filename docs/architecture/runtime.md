@@ -55,6 +55,23 @@ Traditional Chinese 是/否. Viewer buttons, checking reveals and printed choice
 and answers use the same labels; boolean storage values and grading are unchanged.
 Authored text and option labels are not translated.
 
+## Worksheet viewer number and boolean controls
+
+`number-answer-control.js` creates the existing text/decimal input and its
+pattern/title hints, validates typed values with the shared number validator,
+and updates its displayed value, disabled state and error text.
+`boolean-answer-control.js` creates the labelled True/False group and updates
+selection, pressed state and disabled state. It reads the latest answer on each
+click so selecting an already selected option still clears the answer.
+
+Both modules receive callbacks and the card abort signal, without a session
+reference. `main.js` retains answer writes, raw-input/error maps, redraws,
+autosave, card recreation and submission/checking decisions. Numeric updates
+preserve focused raw text and selection; normalization after focus leaves the
+input follows the existing redraw policy. The existing helper exports remain
+available through `main.js`. Number rules, validation wording, boolean values,
+translations and saved-content formats are unchanged.
+
 ## Worksheet viewer audio-control ownership
 
 `server/viewer/audio-controls.js` owns the existing question/option audio buttons,

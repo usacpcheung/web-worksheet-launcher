@@ -1,3 +1,5 @@
+import { createNumberAnswerControl, updateNumberAnswerControl, getNumberInputErrorMessage } from './number-answer-control.js';
+import { createBooleanAnswerControl, applyBooleanGroupState, getBooleanSelectionState } from './boolean-answer-control.js';
 import { createCheckFeedback, getCheckRevealMessage } from './check-feedback.js';
 import { createReadingBlockPresentation, createQuestionPromptPresentation } from './block-presentation.js';
 import { createViewerAudioControls, resolveViewerAudioSources } from './audio-controls.js';
@@ -57,7 +59,7 @@ import {
   normalizePublishedPackageFilters,
 } from '../app/api/published-packages-service.js';
 import { getAvailableLocales, getLocale, resolveInitialLocale, setLocale, t } from '../app/i18n/index.js';
-import { firstNonBlankString, normalizePromptMediaRefs, coerceAnswerValueByInputType, getBooleanAnswerLabel, deterministicShuffle } from './worksheet-values.js';
+import { firstNonBlankString, normalizePromptMediaRefs, coerceAnswerValueByInputType, deterministicShuffle } from './worksheet-values.js';
 import { VIEWER_PRINT_DEFAULT_SCHOOL_NAMES, getDefaultViewerPrintSchoolName, normalizeViewerPrintSchoolName, classifyPrintQuestionLayout, buildWorksheetPrintReportModel } from './print-report-model.js';
 import { buildWorksheetPrintReportHtml } from './print-report-html.js';
 
@@ -965,27 +967,6 @@ function updateTextCounterUI(counterNode, statusNode, feedback) {
   }
 }
 
-function getBooleanSelectionState(rawValue) {
-  const normalized = coerceAnswerValueByInputType('boolean', rawValue);
-  return {
-    selectedValue: normalized,
-    truePressed: normalized === true,
-    falsePressed: normalized === false,
-  };
-}
-
-function applyBooleanGroupState(groupNode, rawValue, isDisabled = false) {
-  if (!groupNode) return;
-  const state = getBooleanSelectionState(rawValue);
-  Array.from(groupNode.querySelectorAll('button[data-boolean-value]')).forEach((button) => {
-    const buttonValue = button.dataset.booleanValue;
-    const isPressed = (buttonValue === 'true' && state.truePressed) || (buttonValue === 'false' && state.falsePressed);
-    button.classList.toggle('is-selected', isPressed);
-    button.setAttribute('aria-pressed', String(isPressed));
-    button.disabled = isDisabled;
-  });
-}
-
 function createChoiceButtonGroup(options) {
   return renderChoiceButtonGroup({ ...options, createViewerAudioControl });
 }
@@ -1347,58 +1328,6 @@ function getInputHelperText(inputType, responseConfig = {}) {
       : t('viewer.inputHelper.multipleChoiceSingle');
   }
   return t('viewer.inputHelper.text');
-}
-
-function getNumberInputErrorMessage(rawValue, responseConfig = {}) {
-  const trimmed = String(rawValue ?? '').trim();
-  if (trimmed === '') {
-    return { message: '', normalizedValue: '' };
-  }
-
-  const normalizedRules = normalizeNumberRules(responseConfig.numberRules);
-  const formatValidation = validateNumberInputFormat(trimmed, {
-    allowedKinds: ['integer', 'decimal'],
-    allowSigned: true,
-    decimalPlacesAllowed: null,
-  });
-  if (!formatValidation.ok) {
-    const messageByCode = {
-      fraction_not_allowed: 'Fractions are not supported (for example, 2/3).',
-      invalid_syntax: 'Enter a valid integer or decimal number.',
-    };
-    return {
-      message: messageByCode[formatValidation.errorCode] || 'Enter a valid integer or decimal number.',
-      normalizedValue: '',
-    };
-  }
-
-  const numericValue = formatValidation.normalizedValue;
-  const min = Number.isFinite(responseConfig.min) ? Number(responseConfig.min) : null;
-  const max = Number.isFinite(responseConfig.max) ? Number(responseConfig.max) : null;
-  if (min !== null && numericValue < min) {
-    return { message: `Value is below minimum (${min}).`, normalizedValue: '' };
-  }
-  if (max !== null && numericValue > max) {
-    return { message: `Value is above maximum (${max}).`, normalizedValue: '' };
-  }
-
-  if (!normalizedRules.allowSigned && (/^[+-]/).test(trimmed)) {
-    return { message: 'Signed values are not allowed for this question.', normalizedValue: '' };
-  }
-
-  const strictValidation = validateNumberInputFormat(trimmed, normalizedRules);
-  if (!strictValidation.ok) {
-    const messageByCode = {
-      kind_not_allowed: 'Only the configured number format is allowed.',
-      decimal_places_exceeded: 'Too many decimal places for this question.',
-      sign_not_allowed: 'Signed values are not allowed for this question.',
-      fraction_not_allowed: 'Fractions are not supported (for example, 2/3).',
-      invalid_syntax: 'Enter a valid integer or decimal number.',
-    };
-    return { message: messageByCode[strictValidation.errorCode] || 'Invalid number format.', normalizedValue: '' };
-  }
-
-  return { message: '', normalizedValue: strictValidation.normalizedValue };
 }
 
 function ensureControlDescribedBy(control, describedById) {
@@ -5377,90 +5306,20 @@ function renderViewerShell(session) {
         control.type = 'text';
 
       } else if (inputType === 'number') {
-        control = document.createElement('input');
-        control.type = 'text';
-        control.inputMode = 'decimal';
-        const numberRules = normalizeNumberRules(block.responseConfig?.numberRules);
-        const allowSignedPrefix = numberRules.allowSigned ? '[+-]?' : '';
-        let decimalPattern;
-        if (numberRules.allowedKinds.includes('decimal') && typeof numberRules.decimalPlacesAllowed === 'number') {
-          decimalPattern = numberRules.decimalPlacesAllowed > 0
-            ? `\\d+\\.\\d{1,${numberRules.decimalPlacesAllowed}}`
-            : '\\d+';
-        } else {
-          decimalPattern = '\\d+\\.\\d+';
-        }
-        const kindPattern = numberRules.allowedKinds.includes('integer') && numberRules.allowedKinds.includes('decimal')
-          ? '\\d+(\\.\\d+)?'
-          : numberRules.allowedKinds.includes('decimal')
-            ? decimalPattern
-            : '\\d+';
-        control.pattern = `${allowSignedPrefix}${kindPattern}`;
-        const kinds = numberRules.allowedKinds;
-        let kindDescription;
-        if (kinds.includes('integer') && kinds.includes('decimal')) {
-          kindDescription = 'integer or decimal number';
-        } else if (kinds.includes('integer')) {
-          kindDescription = 'integer';
-        } else if (kinds.includes('decimal')) {
-          kindDescription = 'decimal number';
-        } else {
-          kindDescription = 'number';
-        }
-        const constraints = [];
-        if (!numberRules.allowSigned) {
-          constraints.push('without a leading + or - sign');
-        }
-        if (kinds.includes('decimal') && typeof numberRules.decimalPlacesAllowed === 'number') {
-          if (numberRules.decimalPlacesAllowed === 1) {
-            constraints.push('with at most 1 digit after the decimal point');
-          } else if (numberRules.decimalPlacesAllowed > 1) {
-            constraints.push(`with at most ${numberRules.decimalPlacesAllowed} digits after the decimal point`);
-          }
-        }
-        let title = `Enter a valid ${kindDescription}`;
-        if (constraints.length > 0) {
-          title += ` (${constraints.join(', ')}).`;
-        } else {
-          title += '.';
-        }
-        control.title = title;
-        control.addEventListener('input', () => {
-          cacheRawControlValue(block.blockId, control.value);
-          const { message, normalizedValue } = getNumberInputErrorMessage(control.value, block.responseConfig || {});
-          if (message) {
+        control = createNumberAnswerControl({
+          responseConfig: block.responseConfig, signal: scope.signal,
+          onInput: ({ rawValue, message, normalizedValue }) => {
+            cacheRawControlValue(block.blockId, rawValue);
             numberInputErrors.set(block.blockId, message);
-            session.setAnswer(block.blockId, '');
+            session.setAnswer(block.blockId, normalizedValue);
             renderUI();
-            return;
-          }
-          numberInputErrors.set(block.blockId, '');
-          session.setAnswer(block.blockId, normalizedValue);
-          renderUI();
-        }, { signal: scope.signal });
+          },
+        });
       } else if (inputType === 'boolean') {
-        control = document.createElement('div');
-        control.className = 'boolean-segmented-control';
-        control.setAttribute('role', 'group');
-        control.setAttribute('aria-labelledby', label.id);
-        [
-          { value: true, datasetValue: 'true', label: getBooleanAnswerLabel(true, t) },
-          { value: false, datasetValue: 'false', label: getBooleanAnswerLabel(false, t) },
-        ].forEach((optionConfig) => {
-          const button = document.createElement('button');
-          button.type = 'button';
-          button.className = 'boolean-segmented-control__button';
-          button.dataset.booleanValue = optionConfig.datasetValue;
-          button.textContent = optionConfig.label;
-          button.setAttribute('aria-pressed', 'false');
-          button.addEventListener('click', () => {
-            const currentValue = session.state.answers?.[block.blockId]?.value;
-            const normalizedCurrentValue = coerceAnswerValueByInputType('boolean', currentValue);
-            const nextValue = normalizedCurrentValue === optionConfig.value ? null : optionConfig.value;
-            session.setAnswer(block.blockId, nextValue);
-            renderUI();
-          }, { signal: scope.signal });
-          control.appendChild(button);
+        control = createBooleanAnswerControl({
+          labelId: label.id, t, signal: scope.signal,
+          getValue: () => session.state.answers?.[block.blockId]?.value,
+          onChange: value => { session.setAnswer(block.blockId, value); renderUI(); },
         });
       } else if (inputType === 'multiple_choice' && Array.isArray(block.responseConfig?.options)) {
         const optionSource = block.responseConfig.shuffleOptions
@@ -5656,13 +5515,21 @@ function renderViewerShell(session) {
         && controlState === lastControlState) return;
       lastControlState = controlState;
       const inputType = block.responseConfig?.inputType || 'text';
+      if (inputType === 'number') {
+        updateNumberAnswerControl(control, {
+          storedValue: session.state.answers?.[block.blockId]?.value,
+          cachedRawValue: localInputCache.get(block.blockId),
+          completed: session.state.status === 'completed',
+          errorNode: inputError, errorMessage: numberInputErrors.get(block.blockId),
+          cacheRawValue: value => cacheRawControlValue(block.blockId, value),
+        });
+        return;
+      }
       const storedValue = session.state.answers?.[block.blockId]?.value;
       const cachedRawValue = localInputCache.get(block.blockId);
-      const stateValue = inputType === 'number'
-        ? (storedValue === '' || storedValue === null || storedValue === undefined ? '' : String(storedValue))
-        : inputType === 'boolean'
-          ? (storedValue === true ? 'true' : storedValue === false ? 'false' : '')
-          : String(storedValue || '');
+      const stateValue = inputType === 'boolean'
+        ? (storedValue === true ? 'true' : storedValue === false ? 'false' : '')
+        : String(storedValue || '');
       const isControlFocused = control === activeElement;
       const nextValue = isControlFocused && cachedRawValue !== undefined
         ? String(cachedRawValue)
@@ -5741,7 +5608,7 @@ function renderViewerShell(session) {
       const answerCard = control.closest('.question-card');
       const errorNode = answerCard?.querySelector('.input-error');
       if (errorNode && inputType !== 'image_response' && inputType !== 'text') {
-        errorNode.textContent = inputType === 'number' ? (numberInputErrors.get(block.blockId) || '') : '';
+        errorNode.textContent = '';
       }
     };
 
