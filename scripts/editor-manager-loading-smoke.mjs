@@ -50,7 +50,10 @@ try {
       };
       let session = hold(true), list = hold(false);
       await open();
-      await session.began; await assertLoading(); session.release();
+      await session.began;
+      assert.equal(await modal.count(), 0, 'entry preflight must finish before mounting the manager');
+      assert.equal(await page.locator('[aria-busy="true"]').count(), 1, 'entry button indicates readiness check');
+      session.release();
       await list.began; await assertLoading(); list.release();
       await modal.getByText(await empty(), { exact: true }).waitFor();
       for (const failure of [true, false]) {

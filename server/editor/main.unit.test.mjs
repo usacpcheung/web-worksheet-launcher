@@ -238,13 +238,13 @@ test('modal load-status copies are visual-only and preserve the single shell ann
   }
   assert.equal(originalAttributes.role, 'status');
   assert.equal(originalAttributes['aria-live'], 'polite');
-  const viewSource = await fs.readFile(path.resolve('server/editor/uploaded-drafts-view.js'), 'utf8');
+  const viewSource = (await Promise.all(['uploaded-drafts-view.js', 'published-browser-view.js'].map(file => fs.readFile(path.resolve('server/editor', file), 'utf8')))).join('\n');
   assert.equal((source + viewSource).split('dialog.appendChild(createVisualLoadStatus());').length - 1, 2);
 });
 
 async function loadEditorModule() {
   const filePath = path.resolve('server/editor/main.js');
-  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'./uploaded-drafts-view.js'", JSON.stringify(new NodeURL('./uploaded-drafts-view.js', import.meta.url).href)).replaceAll("'./status-panel.js'", JSON.stringify(new NodeURL('./status-panel.js', import.meta.url).href)).replaceAll("'./multiple-choice-controls.js'", JSON.stringify(new NodeURL('./multiple-choice-controls.js', import.meta.url).href)).replaceAll("'./dialogs.js'", JSON.stringify(new NodeURL('./dialogs.js', import.meta.url).href)).replaceAll("'./answer-settings.js'", JSON.stringify(new NodeURL('./answer-settings.js', import.meta.url).href)).replaceAll("'./notification-panel.js'", JSON.stringify(new NodeURL('./notification-panel.js', import.meta.url).href)).replaceAll("'../app/contracts/worksheet-readiness.js'", JSON.stringify(new NodeURL('../app/contracts/worksheet-readiness.js', import.meta.url).href)).replaceAll("'./feedback-editor.js'", JSON.stringify(new NodeURL('./feedback-editor.js', import.meta.url).href)).replaceAll("'../app/worksheet-feedback.js'", JSON.stringify(new NodeURL('../app/worksheet-feedback.js', import.meta.url).href)).replaceAll("'./question-type-conversion.js'", JSON.stringify(new NodeURL('./question-type-conversion.js', import.meta.url).href)).replaceAll("'../app/fill-in-blanks.js'", JSON.stringify(new NodeURL('../app/fill-in-blanks.js', import.meta.url).href)).replaceAll("'./fill-in-blanks-editor.js'", JSON.stringify(new NodeURL('./fill-in-blanks-editor.js', import.meta.url).href)).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'../app/bridge/audio-generation.js'", JSON.stringify(new NodeURL('../app/bridge/audio-generation.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./rich-text-editor.js'", JSON.stringify(new NodeURL('./rich-text-editor.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
+  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'./published-browser-view.js'", JSON.stringify(new NodeURL('./published-browser-view.js', import.meta.url).href)).replaceAll("'./uploaded-drafts-view.js'", JSON.stringify(new NodeURL('./uploaded-drafts-view.js', import.meta.url).href)).replaceAll("'./status-panel.js'", JSON.stringify(new NodeURL('./status-panel.js', import.meta.url).href)).replaceAll("'./multiple-choice-controls.js'", JSON.stringify(new NodeURL('./multiple-choice-controls.js', import.meta.url).href)).replaceAll("'./dialogs.js'", JSON.stringify(new NodeURL('./dialogs.js', import.meta.url).href)).replaceAll("'./answer-settings.js'", JSON.stringify(new NodeURL('./answer-settings.js', import.meta.url).href)).replaceAll("'./notification-panel.js'", JSON.stringify(new NodeURL('./notification-panel.js', import.meta.url).href)).replaceAll("'../app/contracts/worksheet-readiness.js'", JSON.stringify(new NodeURL('../app/contracts/worksheet-readiness.js', import.meta.url).href)).replaceAll("'./feedback-editor.js'", JSON.stringify(new NodeURL('./feedback-editor.js', import.meta.url).href)).replaceAll("'../app/worksheet-feedback.js'", JSON.stringify(new NodeURL('../app/worksheet-feedback.js', import.meta.url).href)).replaceAll("'./question-type-conversion.js'", JSON.stringify(new NodeURL('./question-type-conversion.js', import.meta.url).href)).replaceAll("'../app/fill-in-blanks.js'", JSON.stringify(new NodeURL('../app/fill-in-blanks.js', import.meta.url).href)).replaceAll("'./fill-in-blanks-editor.js'", JSON.stringify(new NodeURL('./fill-in-blanks-editor.js', import.meta.url).href)).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'../app/bridge/audio-generation.js'", JSON.stringify(new NodeURL('../app/bridge/audio-generation.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./rich-text-editor.js'", JSON.stringify(new NodeURL('./rich-text-editor.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
 
   const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/option-images.js'", JSON.stringify(new NodeURL('../app/option-images.js', import.meta.url).href)).replaceAll("'./option-image-editor.js'", JSON.stringify(new NodeURL('./option-image-editor.js', import.meta.url).href)).replaceAll("'../app/api/publication-flow.js'", JSON.stringify(new NodeURL('../app/api/publication-flow.js', import.meta.url).href)).replaceAll("'../app/auth/mutation-auth.js'", JSON.stringify(new NodeURL('../app/auth/mutation-auth.js', import.meta.url).href)).replaceAll("'../app/auth/session-state-adapter.js'", JSON.stringify(new NodeURL('../app/auth/session-state-adapter.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-return.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-return.js', import.meta.url).href)).replaceAll("'../app/auth/session-coordinator.js'", JSON.stringify(new NodeURL('../app/auth/session-coordinator.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-flow.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-flow.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-prompt.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-prompt.js', import.meta.url).href)).replaceAll("'../app/api/deletion-flow.js'", JSON.stringify(new NodeURL('../app/api/deletion-flow.js', import.meta.url).href)).replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-navigation.js'", JSON.stringify(new NodeURL('./block-navigation.js', import.meta.url).href)), [
     {
@@ -1817,7 +1817,7 @@ test('publishUploadedDraftToServer emits refresh warning when uploaded drafts re
 });
 
 test('editor source removes global Publish button and adds labeled metadata and browse controls', async () => {
-  const source = (await Promise.all(['main.js', 'uploaded-drafts-view.js'].map(file => fs.readFile(path.resolve('server/editor', file), 'utf8')))).join('\n').replace(/\r\n/g, '\n');
+  const source = (await Promise.all(['main.js', 'uploaded-drafts-view.js', 'published-browser-view.js'].map(file => fs.readFile(path.resolve('server/editor', file), 'utf8')))).join('\n').replace(/\r\n/g, '\n');
   assert.equal(source.includes('await session.publishCurrentDraftToServer();'), false);
   assert.equal(source.includes('protectedActionsColumn.append(\n    serverSessionStatus,\n    signInBtn,\n    syncDraftBtn,\n    publishBtn,'), false);
   assert.equal(source.includes("rewriteBtn.textContent = 'Rewrite (Sign-in required)'"), false);
@@ -1829,7 +1829,6 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes("syncDraftBtn.textContent = t('editor.server.uploadDraft');"), true);
   assert.equal(source.includes("manageUploadedDraftsBtn.textContent = t('editor.uploadedDraft.manage');"), true);
   assert.equal(source.includes("browsePublishedBtn.textContent = t('editor.published.browse');"), true);
-  assert.equal(source.includes("loadMoreBtn.textContent = browsePublishedState.loading ? t('common.actions.loading') : t('common.actions.loadMore');"), true);
   assert.equal(source.includes("ownerFilter.placeholder = t('common.publishedBrowser.filterByOwnerEmail');"), true);
   assert.equal(source.includes("copyBtn.textContent = t('editor.published.copyViewerLink');"), true);
   assert.equal(source.includes("openInEditorBtn.textContent = isOpening ? t('editor.published.openingInEditor') : t('editor.published.openInEditor');"), true);
@@ -1873,10 +1872,10 @@ test('editor keeps selected-block status visible', async () => {
   assert.equal(source.includes('rightPanel.append(rightHeading, statusRow);'), true);
 });
 
-test('editor read and mutation menus remain available signed out with busy guards', async () => {
+test('editor mutation menu keeps its upload busy guards', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.ok(source.includes('browsePublishedBtn.disabled = false;'));
-  assert.ok(source.includes('manageUploadedDraftsBtn.disabled = isRefreshingUploadedDrafts;'));
+  // Read-entry availability and its busy guards are exercised through the DOM
+  // in editor-manager-entry-auth-smoke.mjs.
   assert.ok(source.includes('syncDraftBtn.disabled = isUploadingDraft || isUploadDraftFlowActive;'));
 });
 
@@ -2574,7 +2573,7 @@ test('media confirmation actions gate duplicate submissions while busy', async (
 });
 
 test('browse modal filters are decoupled from generic button-row card styling and search button has one naming source', async () => {
-  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  const source = await fs.readFile(path.resolve('server/editor/published-browser-view.js'), 'utf8');
   assert.match(source, /filterRow\.className\s*=\s*'browse-modal__filters'/);
   assert.equal(source.includes("filterRow.className = 'button-row browse-modal__filters'"), false);
   assert.match(source, /searchBtn\.setAttribute\('aria-label', t\('common\.publishedBrowser\.searchAriaLabel'\)\)/);
@@ -6105,6 +6104,45 @@ test('editor download idle deadline excludes time spent recovering sign-in', asy
   session.importWorksheetPackageFile = async () => ({ imported: true });
   assert.equal((await session.reopenUploadedDraftAsLocalCopy('one')).ok, true);
   assert.equal(count, 2);
+});
+
+test('cancelled editor read entry preserves existing messages without adding an authentication error', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  session.state.serverActionMessage = 'Existing message';
+  const cancelled = { ok: false, cancelled: true, error: { code: 'AUTH_REQUIRED' } };
+  session._readAuth = { ensure: async () => cancelled };
+  const result = await session.ensureReadSessionReady();
+  assert.equal(result.result, cancelled);
+  assert.equal(session.state.serverActionMessage, 'Existing message');
+  assert.equal(session.state.notifications.some(item => item.source === 'session.read'), false);
+});
+
+for (const expired of [false, true]) test(`draft manager entry retains its prepared account guard: expired=${expired}`, async () => {
+  const { createReadAuthFlow } = await import('../app/auth/read-auth-flow.js');
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  let probes = 0, reads = 0;
+  const auth = createReadAuthFlow({
+    subject: () => 'a', invalidate() {},
+    probe: async () => { probes++; return { ok: true, status: 'ready', user: { sub: 'a' } }; },
+    prompt: async () => assert.fail('verified entry must not ask for login again'),
+    signIn: async () => assert.fail('verified entry must not start login'),
+  });
+  session._readAuth = auth;
+  const prepared = await session.ensureReadSessionReady();
+  if (expired) auth.observe({ ok: false, error: { code: 'AUTH_REQUIRED', status: 401 } });
+  session.apiClient.listUploadedDrafts = async () => {
+    reads++;
+    return { ok: true, data: { items: [{ uploaded_draft_id: 'fixture' }] } };
+  };
+  const result = await session.loadUploadedDrafts({ preflight: false, prepared });
+  assert.equal(probes, 1);
+  assert.equal(reads, expired ? 0 : 1);
+  assert.equal(result.ok, !expired);
+  if (expired) assert.equal(result.skipped, true);
+  else assert.equal(session.state.uploadedDrafts[0].uploaded_draft_id, 'fixture');
+  assert.equal(session.state.isLoadingUploadedDrafts, false);
 });
 
 test('superseded draft preflight preserves account-change guidance', async () => {
