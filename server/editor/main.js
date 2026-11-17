@@ -1,3 +1,4 @@
+import { createAnswerSettings } from './answer-settings.js';
 import { createNotificationPanel, getNotificationToastRemainingMs } from './notification-panel.js';
 import { validateWorksheetReadiness } from '../app/contracts/worksheet-readiness.js';
 import { createFeedbackEditor, feedbackStarIcon } from './feedback-editor.js';
@@ -5,7 +6,7 @@ import { feedbackEnabled, cloneFeedback } from '../app/worksheet-feedback.js';
 import { questionTextConversion, passageToPrompt } from './question-type-conversion.js';
 import { createBlankPassageEditor } from './fill-in-blanks-editor.js';
 import { isFillInBlanks, emptyBlankConfig } from '../app/fill-in-blanks.js';
-import { isLongText, textLimitCeiling, textConfigError, STANDARD_TEXT_LIMIT, LONG_TEXT_LIMIT } from '../app/text-answer.js';
+import { isLongText, textLimitCeiling, STANDARD_TEXT_LIMIT, LONG_TEXT_LIMIT } from '../app/text-answer.js';
 import { imageQuestions, imageBudget } from '../app/image-response.js';
 import { mountOptionImageEditor } from './option-image-editor.js';
 import { optionImageRef, imageDescription } from '../app/option-images.js';
@@ -4915,6 +4916,7 @@ class EditorDraftSession {
 function renderEditorShell(session) {
   session.destroyTextEditor?.();
   session.destroyBlockNavigation?.();
+  session.destroyAnswerSettings?.();
   session.destroyNotificationPanel?.();
   if (!app) return;
 
@@ -5054,35 +5056,37 @@ function renderEditorShell(session) {
     option.textContent = label;
     questionInputType.appendChild(option);
   });
-  const questionTextDisplayMode = document.createElement('div');
-  questionTextDisplayMode.id = 'editor-question-text-display-mode';
-  questionTextDisplayMode.className = 'answer-toggle';
-  questionTextDisplayMode.setAttribute('role', 'group');
-  questionTextDisplayMode.setAttribute('aria-labelledby', 'editor-question-text-display-mode-label');
-  const questionTextDisplayModeButtons = [
-    { value: 'single_line', label: getTextDisplayModeLabel('single_line') },
-    { value: 'multi_line', label: getTextDisplayModeLabel('multi_line') },
-  ].map(({ value, label }) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'answer-toggle__btn';
-    button.dataset.textDisplayMode = value;
-    button.setAttribute('aria-pressed', 'false');
-    const tick = document.createElement('span');
-    tick.className = 'answer-toggle__tick';
-    tick.setAttribute('aria-hidden', 'true');
-    tick.innerHTML = createEditorIcon('check');
-    const text = document.createElement('span');
-    text.textContent = label;
-    button.append(tick, text);
-    questionTextDisplayMode.appendChild(button);
-    return button;
+  const answerSettings = createAnswerSettings({
+    t, createEditorIcon, getTextDisplayModeLabel, getBooleanAnswerLabel, getNumberQuestionValidationErrors,
+    onTextModeChange: async (id, nextMode, restoreLongMode) => {
+      const draft = session.state.draft;
+      const draftGeneration = session._audioDraftGeneration;
+      const configAtClick = JSON.stringify(draft.blocks.find(block => block.blockId === id)?.responseConfig);
+      const outcome = session.updateQuestionTextMode(id, nextMode);
+      if (outcome.reason === 'confirm-reduction') {
+        restoreLongMode();
+        const confirmed = await showConfirmDialog({
+          title: t('textAnswer.switchTitle'), descriptionText: t('textAnswer.switchDescription', { max: outcome.max }),
+          confirmLabel: t('textAnswer.switchConfirm'),
+        });
+        if (confirmed && session.state.draft?.localId === draft.localId
+          && session._audioDraftGeneration === draftGeneration && session.state.selectedBlockId === id
+          && JSON.stringify(session.state.draft.blocks.find(block => block.blockId === id)?.responseConfig) === configAtClick) {
+          session.updateQuestionTextMode(id, nextMode, { confirmReduction: true });
+        }
+      }
+      updateSummary();
+      if (session.state.selectedBlockId === id) rightPanel.querySelector('#editor-question-long-text')?.focus();
+    },
+    onMaxLengthChange: (id, value) => { session.updateQuestionMaxLength(id, value); updateSummary(); },
+    onDisplayModeChange: (id, value) => { session.updateQuestionTextDisplayMode(id, value); updateSummary(); },
+    onNumberRangeChange: (id, key, value) => { session.updateQuestionNumberConfig(id, key, value); updateSummary(); },
+    onBooleanAnswerChange: (id, value) => { session.updateQuestionCorrectAnswerBoolean(id, value); updateSummary(); },
+    onNumberAnswerChange: (id, value) => { session.updateQuestionCorrectAnswerNumber(id, value); updateSummary(); },
+    onAllowSignedChange: (id, value) => { session.updateQuestionNumberRulesAllowSigned(id, value); updateSummary(); },
+    onDecimalPlacesChange: (id, value) => { session.updateQuestionNumberRulesDecimalPlacesAllowed(id, value); updateSummary(); },
   });
-  const questionMaxLength = document.createElement('input');
-  questionMaxLength.id = 'editor-question-max-length';
-  questionMaxLength.type = 'number';
-  questionMaxLength.min = '1';
-  questionMaxLength.className = 'control';
+  session.destroyAnswerSettings = answerSettings.destroy;
   const questionOptions = document.createElement('textarea');
   questionOptions.id = 'editor-question-options';
   questionOptions.style.display = 'none';
@@ -5121,68 +5125,6 @@ function renderEditorShell(session) {
   questionShuffleTick.setAttribute('aria-hidden', 'true');
   questionShuffleTick.innerHTML = createEditorIcon('check');
   questionShuffleToggle.appendChild(questionShuffleTick);
-  const questionMin = document.createElement('input');
-  questionMin.id = 'editor-question-min';
-  questionMin.type = 'number';
-  questionMin.className = 'control';
-  const questionMax = document.createElement('input');
-  questionMax.id = 'editor-question-max';
-  questionMax.type = 'number';
-  questionMax.className = 'control';
-  const questionNumberAllowSigned = document.createElement('input');
-  questionNumberAllowSigned.id = 'editor-question-number-allow-signed';
-  questionNumberAllowSigned.type = 'checkbox';
-  questionNumberAllowSigned.hidden = true;
-  const questionNumberAllowSignedToggle = document.createElement('button');
-  questionNumberAllowSignedToggle.type = 'button';
-  questionNumberAllowSignedToggle.className = 'option-correct-toggle inline-toggle__tick-btn';
-  questionNumberAllowSignedToggle.setAttribute('aria-label', t('editor.question.toggleSignedValuesAria'));
-  questionNumberAllowSignedToggle.setAttribute('aria-pressed', 'false');
-  const questionNumberAllowSignedTick = document.createElement('span');
-  questionNumberAllowSignedTick.className = 'option-correct-toggle__tick';
-  questionNumberAllowSignedTick.setAttribute('aria-hidden', 'true');
-  questionNumberAllowSignedTick.innerHTML = createEditorIcon('check');
-  questionNumberAllowSignedToggle.appendChild(questionNumberAllowSignedTick);
-  const questionNumberDecimalPlacesAllowed = document.createElement('input');
-  questionNumberDecimalPlacesAllowed.id = 'editor-question-number-decimal-places-allowed';
-  questionNumberDecimalPlacesAllowed.type = 'number';
-  questionNumberDecimalPlacesAllowed.min = '0';
-  questionNumberDecimalPlacesAllowed.step = '1';
-  questionNumberDecimalPlacesAllowed.className = 'control';
-  const questionCorrectAnswerBoolean = document.createElement('div');
-  questionCorrectAnswerBoolean.id = 'editor-question-correct-answer-boolean';
-  questionCorrectAnswerBoolean.className = 'boolean-answer-toggle';
-  questionCorrectAnswerBoolean.setAttribute('role', 'group');
-  questionCorrectAnswerBoolean.setAttribute('aria-labelledby', 'editor-question-correct-answer-boolean-label');
-  const questionCorrectAnswerBooleanButtons = ['true', 'false'].map((value) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'boolean-answer-toggle__btn';
-    button.dataset.booleanAnswerValue = value;
-    button.setAttribute('aria-pressed', 'false');
-    const tick = document.createElement('span');
-    tick.className = 'boolean-answer-toggle__tick';
-    tick.setAttribute('aria-hidden', 'true');
-    tick.innerHTML = createEditorIcon('check');
-    const text = document.createElement('span');
-    text.textContent = getBooleanAnswerLabel(value);
-    button.append(tick, text);
-    questionCorrectAnswerBoolean.appendChild(button);
-    return button;
-  });
-  const questionCorrectAnswerNumber = document.createElement('input');
-  questionCorrectAnswerNumber.id = 'editor-question-correct-answer-number';
-  questionCorrectAnswerNumber.type = 'number';
-  questionCorrectAnswerNumber.step = 'any';
-  questionCorrectAnswerNumber.className = 'control';
-  const questionMinError = document.createElement('p');
-  questionMinError.className = 'control-error';
-  const questionMaxError = document.createElement('p');
-  questionMaxError.className = 'control-error';
-  const questionNumberDecimalPlacesAllowedError = document.createElement('p');
-  questionNumberDecimalPlacesAllowedError.className = 'control-error';
-  const questionCorrectAnswerNumberError = document.createElement('p');
-  questionCorrectAnswerNumberError.className = 'control-error';
   const mediaFeedback = document.createElement('p');
   mediaFeedback.className = 'control-error';
 
@@ -6350,39 +6292,6 @@ function renderEditorShell(session) {
   };
   let detailSignature = null;
   let optionActionSignature = null;
-  const updateNumberValidationFeedback = (selectedBlock) => {
-    const clearFieldError = (input, errorNode) => {
-      input.classList.remove('control-invalid');
-      errorNode.textContent = '';
-    };
-    clearFieldError(questionMin, questionMinError);
-    clearFieldError(questionMax, questionMaxError);
-    clearFieldError(questionNumberDecimalPlacesAllowed, questionNumberDecimalPlacesAllowedError);
-    clearFieldError(questionCorrectAnswerNumber, questionCorrectAnswerNumberError);
-
-    if (!selectedBlock || selectedBlock.kind !== 'question') return;
-    const responseConfig = normalizeQuestionResponseConfig(selectedBlock.responseConfig);
-    if (responseConfig.inputType !== 'number') return;
-
-    const errors = getNumberQuestionValidationErrors(responseConfig, {
-      decimalPlacesAllowed: questionNumberDecimalPlacesAllowed.value,
-      correctAnswer: questionCorrectAnswerNumber.value,
-    });
-    const setFieldError = (input, errorNode, message) => {
-      if (!message) return;
-      input.classList.add('control-invalid');
-      errorNode.textContent = message;
-    };
-    setFieldError(questionMin, questionMinError, errors.min);
-    setFieldError(questionMax, questionMaxError, errors.max);
-    setFieldError(
-      questionNumberDecimalPlacesAllowed,
-      questionNumberDecimalPlacesAllowedError,
-      errors.decimalPlacesAllowed
-    );
-    setFieldError(questionCorrectAnswerNumber, questionCorrectAnswerNumberError, errors.correctAnswer);
-  };
-
   const syncFormControls = () => {
     const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
     const draftId = session.state.draft?.localId;
@@ -6406,20 +6315,6 @@ function renderEditorShell(session) {
       if (activeElement !== questionInputType) {
         questionInputType.value = responseConfig.inputType || 'text';
       }
-      questionMaxLength.max = String(textLimitCeiling(responseConfig));
-      questionMaxLength.setAttribute('aria-invalid', String(Boolean(textConfigError(responseConfig, { authoring: true }))));
-      const textLimitError = rightPanel.querySelector('[data-text-limit-error]');
-      if (textLimitError) textLimitError.textContent = textConfigError(responseConfig, { authoring: true }) ? t(isLongText(responseConfig) ? 'textAnswer.invalidLong' : 'textAnswer.invalid', { max: textLimitCeiling(responseConfig) }) : '';
-      if (activeElement !== questionMaxLength) {
-        questionMaxLength.value = responseConfig.maxLength || 200;
-      }
-      const activeDisplayMode = responseConfig.displayMode === 'single_line' ? 'single_line' : 'multi_line';
-      questionTextDisplayModeButtons.forEach((button) => {
-        button.setAttribute(
-          'aria-pressed',
-          button.dataset.textDisplayMode === activeDisplayMode ? 'true' : 'false'
-        );
-      });
       if (activeElement !== questionOptions) {
         questionOptions.value = (responseConfig.options || [])
           .map((option) => String(option?.value ?? option?.label ?? ''))
@@ -6432,32 +6327,11 @@ function renderEditorShell(session) {
         questionShuffleOptions.checked = Boolean(responseConfig.shuffleOptions);
       }
       questionShuffleToggle.setAttribute('aria-pressed', questionShuffleOptions.checked ? 'true' : 'false');
-      if (activeElement !== questionMin) questionMin.value = responseConfig.min ?? '';
-      if (activeElement !== questionMax) questionMax.value = responseConfig.max ?? '';
-      if (activeElement !== questionNumberAllowSigned) {
-        questionNumberAllowSigned.checked = responseConfig.numberRules?.allowSigned !== false;
-      }
-      questionNumberAllowSignedToggle.setAttribute(
-        'aria-pressed',
-        questionNumberAllowSigned.checked ? 'true' : 'false'
-      );
-      if (activeElement !== questionNumberDecimalPlacesAllowed) {
-        questionNumberDecimalPlacesAllowed.value = Number.isInteger(responseConfig.numberRules?.decimalPlacesAllowed)
-          ? String(responseConfig.numberRules.decimalPlacesAllowed)
-          : '';
-      }
-      questionCorrectAnswerBooleanButtons.forEach((button) => {
-        const isSelected = typeof responseConfig.correctAnswer === 'boolean'
-          && button.dataset.booleanAnswerValue === String(responseConfig.correctAnswer);
-        button.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
-      });
-      if (activeElement !== questionCorrectAnswerNumber) {
-        questionCorrectAnswerNumber.value = typeof responseConfig.correctAnswer === 'number'
-          ? String(responseConfig.correctAnswer)
-          : '';
-      }
     }
-    updateNumberValidationFeedback(selectedBlock);
+    answerSettings.sync(selectedBlock?.kind === 'question' ? {
+      blockId: selectedBlock.blockId,
+      responseConfig: normalizeQuestionResponseConfig(selectedBlock.responseConfig),
+    } : {});
   };
 
   const blockNavigation = createBlockNavigation({
@@ -7213,123 +7087,7 @@ function renderEditorShell(session) {
       answerGrid.appendChild(selectionModeField);
     }
     answerSection.appendChild(answerGrid);
-    if (TEXT_INPUT_TYPES.has(activeInputType)) {
-      const longLabel = document.createElement('label');
-      longLabel.className = 'editor-long-text-toggle';
-      const longToggle = document.createElement('input');
-      longToggle.type = 'checkbox';
-      longToggle.id = 'editor-question-long-text';
-      longToggle.checked = isLongText(selectedBlock.responseConfig);
-      longLabel.append(longToggle, document.createTextNode(t('textAnswer.toggle')));
-      const modeHint = document.createElement('p');
-      modeHint.className = 'muted';
-      modeHint.textContent = t(isLongText(selectedBlock.responseConfig) ? 'textAnswer.longHint' : 'textAnswer.standardHint');
-      longToggle.addEventListener('change', async () => {
-        const draft = session.state.draft;
-        const id = selectedBlock.blockId;
-        const nextMode = longToggle.checked;
-        const draftGeneration = session._audioDraftGeneration;
-        const configAtClick = JSON.stringify(draft.blocks.find(block => block.blockId === id)?.responseConfig);
-        const outcome = session.updateQuestionTextMode(id, nextMode);
-        if (outcome.reason === 'confirm-reduction') {
-          longToggle.checked = true;
-          const confirmed = await showConfirmDialog({
-            title: t('textAnswer.switchTitle'), descriptionText: t('textAnswer.switchDescription', { max: outcome.max }),
-            confirmLabel: t('textAnswer.switchConfirm'),
-          });
-          if (confirmed && session.state.draft?.localId === draft.localId
-            && session._audioDraftGeneration === draftGeneration && session.state.selectedBlockId === id
-            && JSON.stringify(session.state.draft.blocks.find(block => block.blockId === id)?.responseConfig) === configAtClick) {
-            session.updateQuestionTextMode(id, nextMode, { confirmReduction: true });
-          }
-        }
-        updateSummary();
-        if (session.state.selectedBlockId === id) rightPanel.querySelector('#editor-question-long-text')?.focus();
-      });
-      answerSection.append(longLabel, modeHint);
-      const textSettingsRow = document.createElement('div');
-      textSettingsRow.className = 'text-answer-settings';
-      const maxLengthField = document.createElement('div');
-      maxLengthField.className = 'editor-field';
-      const maxLengthLabel = document.createElement('label');
-      maxLengthLabel.textContent = t('editor.question.maxLength');
-      maxLengthLabel.htmlFor = 'editor-question-max-length';
-      const limitError = document.createElement('p');
-      limitError.className = 'input-error';
-      limitError.dataset.textLimitError = '';
-      limitError.setAttribute('role', 'status');
-      limitError.textContent = textConfigError(selectedBlock.responseConfig, { authoring: true }) ? t(isLongText(selectedBlock.responseConfig) ? 'textAnswer.invalidLong' : 'textAnswer.invalid', { max: textLimitCeiling(selectedBlock.responseConfig) }) : '';
-      maxLengthField.append(maxLengthLabel, questionMaxLength, limitError);
-
-      const displayModeField = document.createElement('div');
-      displayModeField.className = 'editor-field';
-      const displayModeLabel = document.createElement('label');
-      displayModeLabel.id = 'editor-question-text-display-mode-label';
-      displayModeLabel.textContent = t('editor.question.responseFormat');
-      displayModeField.append(displayModeLabel, questionTextDisplayMode);
-      textSettingsRow.append(maxLengthField);
-      if (!isLongText(selectedBlock.responseConfig)) textSettingsRow.append(displayModeField);
-      answerSection.appendChild(textSettingsRow);
-    }
-
-    if (activeInputType === 'number') {
-      const correctAnswerLabel = document.createElement('label');
-      correctAnswerLabel.textContent = t('editor.question.correctAnswer');
-      correctAnswerLabel.htmlFor = 'editor-question-correct-answer-number';
-      const correctAnswerField = document.createElement('div');
-      correctAnswerField.className = 'editor-field number-answer-field';
-      correctAnswerField.append(correctAnswerLabel, questionCorrectAnswerNumber, questionCorrectAnswerNumberError);
-      const minLabel = document.createElement('label');
-      minLabel.textContent = t('editor.question.min');
-      minLabel.htmlFor = 'editor-question-min';
-      const minField = document.createElement('div');
-      minField.className = 'editor-field number-answer-field';
-      minField.append(minLabel, questionMin, questionMinError);
-      const maxLabel = document.createElement('label');
-      maxLabel.textContent = t('editor.question.max');
-      maxLabel.htmlFor = 'editor-question-max';
-      const maxField = document.createElement('div');
-      maxField.className = 'editor-field number-answer-field';
-      maxField.append(maxLabel, questionMax, questionMaxError);
-      const rangeRow = document.createElement('div');
-      rangeRow.className = 'number-answer-range';
-      rangeRow.append(correctAnswerField, minField, maxField);
-      answerSection.append(rangeRow);
-
-      const rulesRow = document.createElement('div');
-      rulesRow.className = 'number-answer-rules';
-      const signedField = document.createElement('div');
-      signedField.className = 'editor-field number-answer-signed-field';
-      const signedRow = document.createElement('div');
-      signedRow.className = 'inline-toggle inline-toggle--custom';
-      const signedText = document.createElement('span');
-      signedText.textContent = t('editor.question.allowSignedValues');
-      signedRow.append(questionNumberAllowSignedToggle, questionNumberAllowSigned, signedText);
-      signedField.append(signedRow);
-
-      const decimalPlacesField = document.createElement('div');
-      decimalPlacesField.className = 'editor-field number-answer-field';
-      const decimalPlacesLabel = document.createElement('label');
-      decimalPlacesLabel.textContent = t('editor.question.decimalPlaces');
-      decimalPlacesLabel.htmlFor = 'editor-question-number-decimal-places-allowed';
-      const decimalPlacesHint = document.createElement('p');
-      decimalPlacesHint.className = 'muted number-answer-hint';
-      decimalPlacesHint.textContent = t('editor.question.decimalPlacesHint');
-      decimalPlacesField.append(
-        decimalPlacesLabel,
-        questionNumberDecimalPlacesAllowed,
-        questionNumberDecimalPlacesAllowedError
-      );
-      rulesRow.append(decimalPlacesField, signedField, decimalPlacesHint);
-      answerSection.append(rulesRow);
-    }
-
-    if (activeInputType === 'boolean') {
-      const correctAnswerLabel = document.createElement('label');
-      correctAnswerLabel.id = 'editor-question-correct-answer-boolean-label';
-      correctAnswerLabel.textContent = t('editor.question.correctAnswer');
-      answerSection.append(correctAnswerLabel, questionCorrectAnswerBoolean);
-    }
+    answerSettings.mount(answerSection, selectedBlock, activeInputType);
 
     if (activeInputType !== 'multiple_choice' && activeInputType !== 'fill_in_blanks') {
       rightPanel.appendChild(answerSection);
@@ -8405,50 +8163,6 @@ function renderEditorShell(session) {
     }
     updateSummary();
     if (session.state.selectedBlockId === selectedBlockId) questionInputType.focus();
-  });
-  questionMaxLength.addEventListener('input', () => {
-    session.updateQuestionMaxLength(session.state.selectedBlockId, questionMaxLength.value);
-    updateSummary();
-  });
-  questionTextDisplayModeButtons.forEach((button) => {
-    button.addEventListener('click', () => {
-      session.updateQuestionTextDisplayMode(
-        session.state.selectedBlockId,
-        button.dataset.textDisplayMode || 'multi_line'
-      );
-      updateSummary();
-    });
-  });
-  questionMin.addEventListener('input', () => {
-    session.updateQuestionNumberConfig(session.state.selectedBlockId, 'min', questionMin.value);
-    updateSummary();
-  });
-  questionMax.addEventListener('input', () => {
-    session.updateQuestionNumberConfig(session.state.selectedBlockId, 'max', questionMax.value);
-    updateSummary();
-  });
-  questionCorrectAnswerBooleanButtons.forEach((button) => {
-    button.addEventListener('click', () => {
-      const selectedValue = button.dataset.booleanAnswerValue || '';
-      const nextValue = button.getAttribute('aria-pressed') === 'true' ? '' : selectedValue;
-      session.updateQuestionCorrectAnswerBoolean(session.state.selectedBlockId, nextValue);
-      updateSummary();
-    });
-  });
-  questionCorrectAnswerNumber.addEventListener('input', () => {
-    session.updateQuestionCorrectAnswerNumber(session.state.selectedBlockId, questionCorrectAnswerNumber.value);
-    updateSummary();
-  });
-  questionNumberAllowSignedToggle.addEventListener('click', () => {
-    session.updateQuestionNumberRulesAllowSigned(session.state.selectedBlockId, !questionNumberAllowSigned.checked);
-    updateSummary();
-  });
-  questionNumberDecimalPlacesAllowed.addEventListener('input', () => {
-    session.updateQuestionNumberRulesDecimalPlacesAllowed(
-      session.state.selectedBlockId,
-      questionNumberDecimalPlacesAllowed.value
-    );
-    updateSummary();
   });
   questionSelectionMode.addEventListener('change', () => {
     session.updateQuestionSelectionMode(session.state.selectedBlockId, questionSelectionMode.value);
