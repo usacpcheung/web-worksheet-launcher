@@ -1,3 +1,4 @@
+import { createTextAnswerControl, createTextFeedbackNodes, createTextAnswerPresentation, updateTextAnswerActions, updateTextAnswerReview, computeTextLengthFeedback, updateTextCounterUI } from './text-answer-presentation.js';
 import { createNumberAnswerControl, updateNumberAnswerControl, getNumberInputErrorMessage } from './number-answer-control.js';
 import { createBooleanAnswerControl, applyBooleanGroupState, getBooleanSelectionState } from './boolean-answer-control.js';
 import { createCheckFeedback, getCheckRevealMessage } from './check-feedback.js';
@@ -71,7 +72,6 @@ setLocale(resolveInitialLocale(), { persist: false });
 const AUTOSAVE_MS = 1000;
 const RESUME_FLAG_KEY = 'viewer:lastSession';
 const DEFAULT_LEARNER_ID = 'local_learner';
-const TEXT_WARNING_THRESHOLD_RATIO = 0.1;
 const VIEWER_SERVER_SESSION_STATES = Object.freeze({
   LOGGED_OUT: 'logged_out',
   CHECKING: 'checking',
@@ -909,62 +909,6 @@ function normalizeViewerPayload(payload, fallbackLabel = 'Local worksheet') {
 
 function normalizeTextForRewriteSnapshotCompare(questionBlock, rawValue) {
   return String(rawValue ?? '').trim();
-}
-
-function computeTextLengthFeedback(rawValue, maxLength, warningThresholdRatio = TEXT_WARNING_THRESHOLD_RATIO) {
-  const current = String(rawValue ?? '').length;
-  const max = Number.isFinite(maxLength) && maxLength > 0 ? Math.trunc(maxLength) : 0;
-  const remaining = max - current;
-  const warningThreshold = Math.ceil(max * warningThresholdRatio);
-  if (max === 0) {
-    return {
-      current,
-      max,
-      remaining,
-      state: 'normal',
-      statusText: '',
-      counterText: `${current}/${max}`,
-    };
-  }
-  if (remaining < 0) {
-    const absOver = Math.abs(remaining);
-    return {
-      current,
-      max,
-      remaining,
-      state: 'over',
-      statusText: t('textAnswer.over', { count: absOver, max }),
-      counterText: `${current}/${max}`,
-    };
-  }
-  if (remaining <= warningThreshold) {
-    return {
-      current,
-      max,
-      remaining,
-      state: 'warning',
-      statusText: t(remaining === 1 ? 'textAnswer.remainingOne' : 'textAnswer.remaining', { count: remaining }),
-      counterText: `${current}/${max}`,
-    };
-  }
-  return {
-    current,
-    max,
-    remaining,
-    state: 'normal',
-    statusText: '',
-    counterText: `${current}/${max}`,
-  };
-}
-
-function updateTextCounterUI(counterNode, statusNode, feedback) {
-  if (!counterNode || !feedback) return;
-  counterNode.textContent = feedback.counterText;
-  counterNode.className = `text-counter text-counter--${feedback.state}`;
-  if (statusNode) {
-    statusNode.textContent = feedback.statusText;
-    statusNode.className = `text-counter-status text-counter-status--${feedback.state}`;
-  }
 }
 
 function createChoiceButtonGroup(options) {
@@ -5284,14 +5228,7 @@ function renderViewerShell(session) {
       let textCounter = null;
       let textStatus = null;
       if (inputType === 'text') {
-        textCounter = document.createElement('p');
-        textCounter.className = 'text-counter';
-        textCounter.id = `${controlId}-counter`;
-        textStatus = document.createElement('p');
-        textStatus.className = 'text-counter-status';
-        textStatus.id = `${controlId}-status`;
-        textStatus.setAttribute('aria-live', 'polite');
-        textStatus.setAttribute('role', 'status');
+        ({ counter: textCounter, status: textStatus } = createTextFeedbackNodes(controlId));
       }
 
 
@@ -5301,9 +5238,8 @@ function renderViewerShell(session) {
         control = createFillInBlanksControls({session,block,t,signal:scope.signal,refresh:()=>renderUI(),sharedStatusId:crossQuestionStatus.root.id,view:id=>navigateToBlockIndex(getOrderedBlocks().findIndex(b=>b.blockId===session.voiceParentId(id)))});
       } else if (inputType === 'image_response') {
         control = createImageResponseControls({ session, block, signal: scope.signal });
-      } else if (inputType === 'text' && !isLongText(block.responseConfig) && block.responseConfig?.displayMode === 'single_line') {
-        control = document.createElement('input');
-        control.type = 'text';
+      } else if (inputType === 'text') {
+        control = createTextAnswerControl(block.responseConfig);
 
       } else if (inputType === 'number') {
         control = createNumberAnswerControl({
@@ -5348,7 +5284,6 @@ function renderViewerShell(session) {
       if (inputType === 'text') {
         if (isLongText(block.responseConfig)) {
           card.classList.add('question-card--long-text');
-          control.rows = 12;
         }
         bindTextAnswerInput(control, {
           config: block.responseConfig, signal: scope.signal,
@@ -5385,15 +5320,6 @@ function renderViewerShell(session) {
       }
 
       if (inputType === 'text') {
-        const textFooter = document.createElement('div');
-        textFooter.className = 'question-card__text-footer';
-        const textActionsRow = document.createElement('div');
-        textActionsRow.className = 'question-card__text-actions-row';
-        const rewriteRow = document.createElement('div');
-        rewriteRow.className = 'question-card__rewrite-row';
-        const rewriteMessages = document.createElement('div');
-        rewriteMessages.className = 'question-card__rewrite-messages';
-
         if (!isLongText(block.responseConfig)) {
           const voiceUi = createVoiceControls({ session, block, control, t, signal,
             sharedStatusId: crossQuestionStatus.root.id,
@@ -5412,22 +5338,16 @@ function renderViewerShell(session) {
             },
           });
           voiceControl = voiceUi;
-          const rewriteButton = document.createElement('button');
-          rewriteButton.type = 'button';
-          rewriteButton.className = 'question-card__rewrite-btn icon-nav-btn';
-          rewriteButton.textContent = t('viewer.rewrite.action');
-          rewriteButton.setAttribute('aria-describedby', crossQuestionStatus.root.id);
-          rewriteButton.addEventListener('click', () => {
-            if (!rewriteButton.disabled) voiceUi.rewrite();
-          }, { signal: scope.signal });
-
-          const undoButton = document.createElement('button');
-          undoButton.type = 'button';
-          undoButton.className = 'question-card__undo-btn icon-nav-btn';
-          undoButton.textContent = t('viewer.rewrite.undo');
-          undoButton.addEventListener('click', () => {
+        }
+        textFeedback = createTextAnswerPresentation({
+          control, counter: textCounter, status: textStatus, helper, label,
+          voiceElements: voiceControl ? { add: voiceControl.add, root: voiceControl.root } : null,
+          t, createIcon: createViewerIcon, sharedStatusId: crossQuestionStatus.root.id,
+          signal: scope.signal,
+          onRewrite: () => voiceControl.rewrite(),
+          onUndo: () => {
             const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;
-            if (undoButton.disabled || isRewriteInFlight) {
+            if (isRewriteInFlight) {
               return;
             }
             const savedUndoAnswer = session.state.undoBuffer?.[block.blockId];
@@ -5440,39 +5360,9 @@ function renderViewerShell(session) {
             delete nextUndoBuffer[block.blockId];
             session.state.undoBuffer = nextUndoBuffer;
             renderUI();
-          }, { signal: scope.signal });
-
-          const rewriteHint = document.createElement('p');
-          rewriteHint.className = 'question-card__rewrite-hint';
-          for (const [button, icon] of [[voiceUi.add, 'voice'], [rewriteButton, 'rewrite'], [undoButton, 'undo']]) {
-            const caption = document.createElement('span');
-            caption.className = 'viewer-action-label';
-            caption.textContent = button.textContent;
-            button.replaceChildren(caption);
-            button.insertAdjacentHTML('afterbegin', createViewerIcon(icon));
-          }
-          rewriteRow.append(voiceUi.add, rewriteButton, undoButton);
-          rewriteMessages.append(textStatus, rewriteHint);
-          textActionsRow.append(textCounter, rewriteRow);
-          textFooter.append(textActionsRow, rewriteMessages, voiceUi.root);
-        } else {
-          textActionsRow.append(textCounter);
-          textFooter.append(textActionsRow, textStatus);
-        }
-        // Presentation-only control: no answer event handlers or storage binding.
-        // Clone the input shape so blank and answered reviews have identical sizing.
-        const reviewStatus = control.cloneNode(false);
-        reviewStatus.id = `${control.id}-review`;
-        reviewStatus.className = 'question-card__review-status question-card__submitted-text';
-        reviewStatus.value = t('viewer.review.notAnswered');
-        reviewStatus.readOnly = true;
-        reviewStatus.disabled = false;
-        reviewStatus.removeAttribute('aria-describedby');
-        reviewStatus.hidden = true;
-        textFeedback = {
-          counter: textCounter, status: textStatus, footer: textFooter, helper, reviewStatus, label,
-          editingDescription: control.getAttribute('aria-describedby'),
-        };
+          },
+        });
+        const { reviewStatus, footer: textFooter } = textFeedback;
 
         if (!card.contains(label)) card.append(label);
         if (checkBanner && checkReveal) {
@@ -5551,13 +5441,6 @@ function renderViewerShell(session) {
         cacheRawControlValue(block.blockId, stateValue);
       }
       if (inputType === 'text') {
-        const feedbackNodes = textFeedback;
-        const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
-        updateTextCounterUI(feedbackNodes?.counter, feedbackNodes?.status, feedback);
-        const card = control.closest('.question-card');
-        const rewriteButton = card?.querySelector('.question-card__rewrite-btn');
-        const undoButton = card?.querySelector('.question-card__undo-btn');
-        const rewriteHint = card?.querySelector('.question-card__rewrite-hint');
         const trimmedAnswerLength = unicodeLength(getTrimmedAnswerTextForBlock(block.blockId));
         const isAttemptCompleted = session.state.status === 'completed';
         const hasUndoEntry = Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId);
@@ -5565,43 +5448,21 @@ function renderViewerShell(session) {
         const canRewriteByLength = trimmedAnswerLength > 0 && trimmedAnswerLength <= REWRITE_INPUT_LIMIT;
         const canRewrite = !isAttemptCompleted && !session.voice.active && !hasPendingRecovery(getVoiceRecovery(session.state.voiceRecovery, block.blockId)) && canRewriteByLength;
 
-        if (rewriteButton) {
-          rewriteButton.querySelector('.viewer-action-label').textContent = isRewriteInFlight ? t('viewer.rewrite.inProgress') : t('viewer.rewrite.action');
-          rewriteButton.disabled = !canRewrite;
-        }
-        if (undoButton) {
-          undoButton.disabled = isAttemptCompleted || Boolean(session.voice.active) || !hasUndoEntry;
-        }
-        if (rewriteHint) {
-          rewriteHint.classList.toggle('is-warning', trimmedAnswerLength > REWRITE_INPUT_LIMIT);
-          if (trimmedAnswerLength === 0) {
-            rewriteHint.textContent = t('viewer.rewrite.hintEnterText');
-          } else if (trimmedAnswerLength > REWRITE_INPUT_LIMIT) {
-            rewriteHint.textContent = t('viewer.rewrite.hintTooLong', { max: REWRITE_INPUT_LIMIT });
-          } else {
-            rewriteHint.textContent = '';
-          }
-        }
+        updateTextAnswerActions(textFeedback, {
+          counterFeedback: computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200),
+          rewriteLabel: isRewriteInFlight ? t('viewer.rewrite.inProgress') : t('viewer.rewrite.action'),
+          canRewrite,
+          undoDisabled: isAttemptCompleted || Boolean(session.voice.active) || !hasUndoEntry,
+          hintWarning: trimmedAnswerLength > REWRITE_INPUT_LIMIT,
+          hintText: trimmedAnswerLength === 0 ? t('viewer.rewrite.hintEnterText')
+            : trimmedAnswerLength > REWRITE_INPUT_LIMIT ? t('viewer.rewrite.hintTooLong', { max: REWRITE_INPUT_LIMIT }) : '',
+        });
       }
       voiceControl?.update();
       if (inputType === 'text') {
-        const completed = session.state.status === 'completed';
-        const feedback = textFeedback;
-        control.closest('.question-card').classList.toggle('question-card--text-review', completed);
-        feedback.footer.hidden = completed;
-        feedback.helper.hidden = completed;
-        feedback.reviewStatus.hidden = !completed || Boolean(stateValue.trim());
-        control.hidden = completed && !stateValue.trim();
-        feedback.label.htmlFor = control.hidden ? feedback.reviewStatus.id : control.id;
-        control.classList.toggle('question-card__submitted-text', completed);
-        control.disabled = false;
-        if (completed) {
-          control.readOnly = true;
-          // Hidden editing hints must not remain the review control's accessible description.
-          control.removeAttribute('aria-describedby');
-        } else if (feedback.editingDescription) {
-          control.setAttribute('aria-describedby', feedback.editingDescription);
-        }
+        updateTextAnswerReview(textFeedback, {
+          card, completed: session.state.status === 'completed', hasAnswer: Boolean(stateValue.trim()),
+        });
       } else if (inputType !== 'multiple_choice' && inputType !== 'boolean') {
         control.disabled = session.state.status === 'completed';
       }

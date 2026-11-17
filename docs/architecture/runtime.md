@@ -158,3 +158,23 @@ PostgreSQL stores listing/ownership/artifact metadata; canonical content is file
 Published worksheet opens perform session preflight and download/import every time. Imported records support local use/resume, but there is no implemented publication-ID cache lookup, ETag validation or cache-first network bypass. Uploaded attempts are portable snapshots, not a relational attempt-sync service. Guest server attempt APIs and continuous server autosave are not implemented.
 
 Historical proposals remain under [past/plans](../past/README.md). Their remaining ideas are not an approved current roadmap. The legacy widget/SDK files are absent; preserve the [active retirement boundary](../contracts/widget-retirement.md).
+
+## Worksheet viewer text-answer presentation
+
+`server/viewer/text-answer-presentation.js` creates ordinary text inputs,
+character counters, action footers and submitted-answer placeholders. It updates
+DOM presentation from supplied values and invokes action callbacks; it does not
+receive the viewer session or own answer writes, storage or service calls.
+Existing voice button/recovery nodes are passed through without cloning them.
+
+`main.js` retains text-input binding, raw-input caching, Undo mutations, button
+eligibility, voice construction and card lifecycle. It synchronizes the answer,
+updates text actions, calls the voice UI update, then applies submitted review.
+This order matters: voice also sets `readOnly`, so the final submitted lock must
+run afterwards. Submitted answers stay selectable and copyable; the unanswered
+placeholder is never bound to input or saved as an answer. Card disposal removes
+presentation listeners without canceling session-owned transcription/rewrite.
+
+The shared text-input binding, text-limit contract, voice workflow and consumers
+in feedback, fill-in-the-blanks and RolePlayScene are unchanged. Text counters
+retain UTF-16 lengths and rewrite retains its separate code-point ceiling.
