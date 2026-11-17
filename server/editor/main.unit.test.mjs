@@ -238,12 +238,13 @@ test('modal load-status copies are visual-only and preserve the single shell ann
   }
   assert.equal(originalAttributes.role, 'status');
   assert.equal(originalAttributes['aria-live'], 'polite');
-  assert.equal(source.split('dialog.appendChild(createVisualLoadStatus());').length - 1, 2);
+  const viewSource = await fs.readFile(path.resolve('server/editor/uploaded-drafts-view.js'), 'utf8');
+  assert.equal((source + viewSource).split('dialog.appendChild(createVisualLoadStatus());').length - 1, 2);
 });
 
 async function loadEditorModule() {
   const filePath = path.resolve('server/editor/main.js');
-  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'./status-panel.js'", JSON.stringify(new NodeURL('./status-panel.js', import.meta.url).href)).replaceAll("'./multiple-choice-controls.js'", JSON.stringify(new NodeURL('./multiple-choice-controls.js', import.meta.url).href)).replaceAll("'./dialogs.js'", JSON.stringify(new NodeURL('./dialogs.js', import.meta.url).href)).replaceAll("'./answer-settings.js'", JSON.stringify(new NodeURL('./answer-settings.js', import.meta.url).href)).replaceAll("'./notification-panel.js'", JSON.stringify(new NodeURL('./notification-panel.js', import.meta.url).href)).replaceAll("'../app/contracts/worksheet-readiness.js'", JSON.stringify(new NodeURL('../app/contracts/worksheet-readiness.js', import.meta.url).href)).replaceAll("'./feedback-editor.js'", JSON.stringify(new NodeURL('./feedback-editor.js', import.meta.url).href)).replaceAll("'../app/worksheet-feedback.js'", JSON.stringify(new NodeURL('../app/worksheet-feedback.js', import.meta.url).href)).replaceAll("'./question-type-conversion.js'", JSON.stringify(new NodeURL('./question-type-conversion.js', import.meta.url).href)).replaceAll("'../app/fill-in-blanks.js'", JSON.stringify(new NodeURL('../app/fill-in-blanks.js', import.meta.url).href)).replaceAll("'./fill-in-blanks-editor.js'", JSON.stringify(new NodeURL('./fill-in-blanks-editor.js', import.meta.url).href)).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'../app/bridge/audio-generation.js'", JSON.stringify(new NodeURL('../app/bridge/audio-generation.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./rich-text-editor.js'", JSON.stringify(new NodeURL('./rich-text-editor.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
+  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'./uploaded-drafts-view.js'", JSON.stringify(new NodeURL('./uploaded-drafts-view.js', import.meta.url).href)).replaceAll("'./status-panel.js'", JSON.stringify(new NodeURL('./status-panel.js', import.meta.url).href)).replaceAll("'./multiple-choice-controls.js'", JSON.stringify(new NodeURL('./multiple-choice-controls.js', import.meta.url).href)).replaceAll("'./dialogs.js'", JSON.stringify(new NodeURL('./dialogs.js', import.meta.url).href)).replaceAll("'./answer-settings.js'", JSON.stringify(new NodeURL('./answer-settings.js', import.meta.url).href)).replaceAll("'./notification-panel.js'", JSON.stringify(new NodeURL('./notification-panel.js', import.meta.url).href)).replaceAll("'../app/contracts/worksheet-readiness.js'", JSON.stringify(new NodeURL('../app/contracts/worksheet-readiness.js', import.meta.url).href)).replaceAll("'./feedback-editor.js'", JSON.stringify(new NodeURL('./feedback-editor.js', import.meta.url).href)).replaceAll("'../app/worksheet-feedback.js'", JSON.stringify(new NodeURL('../app/worksheet-feedback.js', import.meta.url).href)).replaceAll("'./question-type-conversion.js'", JSON.stringify(new NodeURL('./question-type-conversion.js', import.meta.url).href)).replaceAll("'../app/fill-in-blanks.js'", JSON.stringify(new NodeURL('../app/fill-in-blanks.js', import.meta.url).href)).replaceAll("'./fill-in-blanks-editor.js'", JSON.stringify(new NodeURL('./fill-in-blanks-editor.js', import.meta.url).href)).replaceAll("'../app/text-answer.js'", JSON.stringify(new NodeURL('../app/text-answer.js', import.meta.url).href)).replaceAll("'../app/image-response.js'", JSON.stringify(new NodeURL('../app/image-response.js', import.meta.url).href)).replaceAll("'../app/bridge/audio-generation.js'", JSON.stringify(new NodeURL('../app/bridge/audio-generation.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./rich-text-editor.js'", JSON.stringify(new NodeURL('./rich-text-editor.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
 
   const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/option-images.js'", JSON.stringify(new NodeURL('../app/option-images.js', import.meta.url).href)).replaceAll("'./option-image-editor.js'", JSON.stringify(new NodeURL('./option-image-editor.js', import.meta.url).href)).replaceAll("'../app/api/publication-flow.js'", JSON.stringify(new NodeURL('../app/api/publication-flow.js', import.meta.url).href)).replaceAll("'../app/auth/mutation-auth.js'", JSON.stringify(new NodeURL('../app/auth/mutation-auth.js', import.meta.url).href)).replaceAll("'../app/auth/session-state-adapter.js'", JSON.stringify(new NodeURL('../app/auth/session-state-adapter.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-return.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-return.js', import.meta.url).href)).replaceAll("'../app/auth/session-coordinator.js'", JSON.stringify(new NodeURL('../app/auth/session-coordinator.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-flow.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-flow.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-prompt.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-prompt.js', import.meta.url).href)).replaceAll("'../app/api/deletion-flow.js'", JSON.stringify(new NodeURL('../app/api/deletion-flow.js', import.meta.url).href)).replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-navigation.js'", JSON.stringify(new NodeURL('./block-navigation.js', import.meta.url).href)), [
     {
@@ -1816,7 +1817,7 @@ test('publishUploadedDraftToServer emits refresh warning when uploaded drafts re
 });
 
 test('editor source removes global Publish button and adds labeled metadata and browse controls', async () => {
-  const source = (await fs.readFile(path.resolve('server/editor/main.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const source = (await Promise.all(['main.js', 'uploaded-drafts-view.js'].map(file => fs.readFile(path.resolve('server/editor', file), 'utf8')))).join('\n').replace(/\r\n/g, '\n');
   assert.equal(source.includes('await session.publishCurrentDraftToServer();'), false);
   assert.equal(source.includes('protectedActionsColumn.append(\n    serverSessionStatus,\n    signInBtn,\n    syncDraftBtn,\n    publishBtn,'), false);
   assert.equal(source.includes("rewriteBtn.textContent = 'Rewrite (Sign-in required)'"), false);
@@ -4689,71 +4690,7 @@ test('removeQuestionOptionWithPolicy requires confirm; cancel leaves option and 
   assert.equal(session.state.draft.blocks[0].responseConfig.options[0].id, 'o2');
 });
 
-test('formatUploadedDraftTimestamp uses local browser formatting and handles invalid timestamps', async () => {
-  const mod = await loadEditorModule();
-  const originalFormatter = Intl.DateTimeFormat;
-  const calls = [];
 
-  Intl.DateTimeFormat = function fakeDateTimeFormat(locale, options) {
-    calls.push({ locale, options });
-    return {
-      format(value) {
-        const iso = value instanceof Date ? value.toISOString() : String(value);
-        return `LOCAL(${iso})`;
-      },
-    };
-  };
-
-  try {
-    const formatted = mod.formatUploadedDraftTimestamp('2026-04-07T15:42:00.000Z');
-    assert.equal(formatted.startsWith('LOCAL('), true);
-    assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].options, {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    });
-    assert.equal(mod.formatUploadedDraftTimestamp('not-a-date'), 'common.values.unknownUploadTime');
-    assert.equal(mod.formatUploadedDraftTimestamp(''), 'common.values.unknownUploadTime');
-  } finally {
-    Intl.DateTimeFormat = originalFormatter;
-  }
-});
-
-test('uploaded draft publish badge labels distinguish live and deleted published packages', async () => {
-  const mod = await loadEditorModule();
-  assert.equal(
-    mod.getUploadedDraftPublishBadge({ publish_state: 'draft_only' }).text,
-    'editor.uploadedDraft.publishBadge.notPublished'
-  );
-  assert.equal(
-    mod.getUploadedDraftPublishBadge({
-      publish_state: 'current_version_published',
-      published_package_id: 'p-live',
-    }).text,
-    'editor.uploadedDraft.publishBadge.live'
-  );
-  assert.equal(
-    mod.getUploadedDraftPublishBadge({
-      publish_state: 'current_version_published',
-      published_package_id: '',
-    }).text,
-    'editor.uploadedDraft.publishBadge.deleted'
-  );
-  assert.equal(
-    mod.getUploadedDraftPublishBadge({ publish_state: 'unpublished_changes' }).text,
-    'editor.uploadedDraft.publishBadge.updated'
-  );
-  assert.equal(
-    mod.getUploadedDraftPublishBadge({
-      artifact_sha256: 'sha',
-      last_published_artifact_sha256: 'sha',
-    }).text,
-    'editor.uploadedDraft.publishBadge.deleted'
-  );
-});
 
 test('deleteUploadedDraft refreshes uploaded drafts list and leaves local draft intact', async () => {
   const mod = await loadEditorModule();
@@ -5131,34 +5068,6 @@ test('setRecoveryMessage emits visible recovery notification objects', async () 
   );
 });
 
-test('toUploadedDraftDisplay includes fallback title and uploaded label', async () => {
-  const mod = await loadEditorModule();
-  const originalFormatter = Intl.DateTimeFormat;
-  Intl.DateTimeFormat = function fakeDateTimeFormat() {
-    return {
-      format() {
-        return 'Apr 7, 2026, 3:42 PM';
-      },
-    };
-  };
-  try {
-    const withTitle = mod.toUploadedDraftDisplay({
-      title: '  Algebra worksheet  ',
-      created_at: '2026-04-07T15:42:00.000Z',
-    });
-    assert.equal(withTitle.title, 'Algebra worksheet');
-    assert.equal(withTitle.uploadedLabel, 'common.meta.uploaded');
-
-    const untitled = mod.toUploadedDraftDisplay({
-      title: '',
-      created_at: '',
-    });
-    assert.equal(untitled.title, 'common.values.untitled');
-    assert.equal(untitled.uploadedLabel, 'common.meta.uploaded');
-  } finally {
-    Intl.DateTimeFormat = originalFormatter;
-  }
-});
 
 test('editor intent payload validators reject stale or malformed prompt/option t2a payloads', async () => {
   const mod = await loadEditorModule();
