@@ -14,3 +14,8 @@ test('chooser names use a plain-text first-line title without injecting workshee
   const sections = describeSections([{blockId:'q',kind:'question',prompt:{format:'limited-markdown-v1',text:'**Useful** title\nLater detail'}},{blockId:'r',kind:'content',content:{text:'Reading title\nBody'}}], (_, {number})=>String(number));
   assert.deepEqual(sections.map(s=>s.title), ['Useful title','Reading title']);
 });
+
+test('navigation keeps its compatibility export bound to the shared completion rule', async () => {
+  const values = await import('./worksheet-values.js');
+  assert.equal(isAnsweredValue, values.isAnsweredValue);
+});
