@@ -1872,10 +1872,10 @@ test('editor keeps selected-block status visible', async () => {
   assert.equal(source.includes('rightPanel.append(rightHeading, statusRow);'), true);
 });
 
-test('editor read and mutation menus remain available signed out with busy guards', async () => {
+test('editor mutation menu keeps its upload busy guards', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.ok(source.includes('browsePublishedBtn.disabled = false;'));
-  assert.ok(source.includes('manageUploadedDraftsBtn.disabled = isRefreshingUploadedDrafts;'));
+  // Read-entry availability and its busy guards are exercised through the DOM
+  // in editor-manager-entry-auth-smoke.mjs.
   assert.ok(source.includes('syncDraftBtn.disabled = isUploadingDraft || isUploadDraftFlowActive;'));
 });
 
@@ -6104,6 +6104,45 @@ test('editor download idle deadline excludes time spent recovering sign-in', asy
   session.importWorksheetPackageFile = async () => ({ imported: true });
   assert.equal((await session.reopenUploadedDraftAsLocalCopy('one')).ok, true);
   assert.equal(count, 2);
+});
+
+test('cancelled editor read entry preserves existing messages without adding an authentication error', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  session.state.serverActionMessage = 'Existing message';
+  const cancelled = { ok: false, cancelled: true, error: { code: 'AUTH_REQUIRED' } };
+  session._readAuth = { ensure: async () => cancelled };
+  const result = await session.ensureReadSessionReady();
+  assert.equal(result.result, cancelled);
+  assert.equal(session.state.serverActionMessage, 'Existing message');
+  assert.equal(session.state.notifications.some(item => item.source === 'session.read'), false);
+});
+
+for (const expired of [false, true]) test(`draft manager entry retains its prepared account guard: expired=${expired}`, async () => {
+  const { createReadAuthFlow } = await import('../app/auth/read-auth-flow.js');
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  let probes = 0, reads = 0;
+  const auth = createReadAuthFlow({
+    subject: () => 'a', invalidate() {},
+    probe: async () => { probes++; return { ok: true, status: 'ready', user: { sub: 'a' } }; },
+    prompt: async () => assert.fail('verified entry must not ask for login again'),
+    signIn: async () => assert.fail('verified entry must not start login'),
+  });
+  session._readAuth = auth;
+  const prepared = await session.ensureReadSessionReady();
+  if (expired) auth.observe({ ok: false, error: { code: 'AUTH_REQUIRED', status: 401 } });
+  session.apiClient.listUploadedDrafts = async () => {
+    reads++;
+    return { ok: true, data: { items: [{ uploaded_draft_id: 'fixture' }] } };
+  };
+  const result = await session.loadUploadedDrafts({ preflight: false, prepared });
+  assert.equal(probes, 1);
+  assert.equal(reads, expired ? 0 : 1);
+  assert.equal(result.ok, !expired);
+  if (expired) assert.equal(result.skipped, true);
+  else assert.equal(session.state.uploadedDrafts[0].uploaded_draft_id, 'fixture');
+  assert.equal(session.state.isLoadingUploadedDrafts, false);
 });
 
 test('superseded draft preflight preserves account-change guidance', async () => {

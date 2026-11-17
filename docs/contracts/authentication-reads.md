@@ -71,6 +71,18 @@ request retry. Default recovery for other consumers remains enabled.
 Save/upload and deletion retain their separate mutation confirmation rules.
 Authentication success never authorizes an automatic mutation.
 
+## Editor manager entry
+
+The editor verifies authentication before opening Manage Uploaded Drafts or
+Browse Published Packages. The selected entry shows Loading during the check;
+both entries are disabled until that check ends. Signed-out Cancel leaves no
+manager or new authentication-error notification. Successful login continues
+the requested list using its verified account guard. A replaced local draft or
+disposed editor shell invalidates the pending opener. Same-tab return uses the
+existing saved read intent. Refresh/search within an already open editor manager
+retain the existing shared recovery behavior; this does not change viewer or
+RolePlayScene authentication policy.
+
 ## Optional context in the shared login prompt
 
 `promptForReadSignIn` accepts optional plain-text `warningText`. Its shared dialog

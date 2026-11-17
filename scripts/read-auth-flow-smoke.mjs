@@ -33,12 +33,13 @@ try {
       await open().catch(async e => { console.log(await page.locator('body').innerText(), errors); throw e; });
       const prompt = page.locator('.read-auth-prompt');
       await prompt.waitFor();
+      if (area === 'editor') assert.equal(await page.locator('.browse-modal').count(), 0);
       assert.equal(reads, 0);
       await prompt.getByRole('button', { name: await label('common.actions.cancel'), exact: true }).click();
       await prompt.waitFor({ state: 'detached' });
       assert.equal(reads, 0);
       // New attempt, then normal verified sign-in resumes the requested list.
-      if (area === 'editor') await page.getByRole('button', { name: await label('common.actions.close'), exact: true }).last().click();
+      if (area === 'editor') assert.equal(await page.locator('.browse-modal').count(), 0);
       if (area === 'viewer') assert.equal(await page.locator('.viewer-published-browse-modal').count(), 0);
       await open(); await prompt.waitFor();
       if (recovery === 'popup') signedIn = true;

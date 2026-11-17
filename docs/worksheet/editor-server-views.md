@@ -18,6 +18,19 @@ acting on a replacement draft. Listener disposal does not cancel a server operat
 already in progress; existing operation guards still decide whether its result
 may apply.
 
+Initial manager entry verifies authentication before mounting either view. Both
+entry buttons are temporarily disabled while one opener owns that check; the
+selected button shows Loading. Cancel leaves the editor intact with no manager
+or authentication error. Successful login opens the requested manager and passes
+the verified account guard to its list read without a duplicate preflight.
+Replacing the draft or disposing the shell invalidates a pending opener. Once
+mounted, the existing modal revisions own list requests and Close/reopen behavior.
+Refresh, search, pagination and mutation recovery retain their existing flows.
+`editor-manager-entry-auth-smoke.mjs` covers both entries, cancellation, duplicate
+clicks, service failure, popup/same-tab continuation and stale draft replacement
+in both locales at desktop/mobile widths. Cross-app read and mutation auth smoke
+tests cover the unchanged shared consumers.
+
 Focused verification combines `editor-uploaded-drafts-view-smoke.mjs` with the
 existing manager-loading, upload-result, publication, deletion, package-load and
 mutation-manager authentication browser suites. Fixtures are isolated; these checks

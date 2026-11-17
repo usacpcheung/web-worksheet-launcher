@@ -3851,9 +3851,9 @@ class EditorDraftSession {
 
   async ensureReadSessionReady(options = {}) {
     const result = await this.readAuth.ensure({ ...options, withContext: true });
-    if (!result.ok && !result.skipped && (options.isCurrent?.() ?? true)) {
+    if (!result.ok && !result.skipped && !result.cancelled && (options.isCurrent?.() ?? true)) {
       this.state.serverActionMessage = getApiErrorMessage(result, 'session');
-      if (!result.cancelled) this.pushNotification({ kind: 'warn', category: 'server', source: 'session.read', text: this.state.serverActionMessage });
+      this.pushNotification({ kind: 'warn', category: 'server', source: 'session.read', text: this.state.serverActionMessage });
       this.notifyStateChange();
     }
     return { ok: result.ok === true, result, isCurrent: result.isCurrent };
@@ -4131,7 +4131,7 @@ class EditorDraftSession {
       this.notifyStateChange();
 
       try {
-        let sessionReady = null;
+        let sessionReady = options.prepared || null;
         if (shouldPreflight) {
           sessionReady = await this.ensureReadSessionReady({ isCurrent: ownsRequest, intent: { kind: 'drafts' } });
           if (!ownsRequest()) return superseded();
@@ -5393,7 +5393,7 @@ function renderEditorShell(session) {
     browsePublishedState = { ...browsePublishedState, loading: true, error: null };
     renderPublishedBrowserModal();
     try {
-      const sessionReady = await session.ensureReadSessionReady({ isCurrent, intent: { kind: 'published', filters: { title: browsePublishedState.title, subject: browsePublishedState.subject, owner: browsePublishedState.owner } } });
+      const sessionReady = options.prepared || await session.ensureReadSessionReady({ isCurrent, intent: { kind: 'published', filters: { title: browsePublishedState.title, subject: browsePublishedState.subject, owner: browsePublishedState.owner } } });
       if (!isCurrent()) {
         if (request === publishedSearchRequest) browsePublishedState = { ...browsePublishedState, loading: false };
         return { ok: false, status: 'superseded' };
@@ -5587,6 +5587,7 @@ function renderEditorShell(session) {
   let browsePublishedDialogRevision = 0;
   let manageUploadedDraftsDialogOpen = false;
   let manageUploadedDraftsDialogRevision = 0;
+  let pendingManagerEntry = null;
   const publishedBrowserView = createPublishedBrowserView({
     root: browsePublishedModalRoot, t, formatTimestamp: formatUploadedDraftTimestamp, createVisualLoadStatus,
     async onCopyLink(item) {
@@ -7093,9 +7094,13 @@ function renderEditorShell(session) {
     }
     cancelUploadBtn.hidden = !isUploadingDraft;
     syncDraftBtn.disabled = isUploadingDraft || isUploadDraftFlowActive;
-    browsePublishedBtn.disabled = false;
-    manageUploadedDraftsBtn.textContent = isRefreshingUploadedDrafts ? t('common.actions.refreshing') : t('editor.uploadedDraft.manage');
-    manageUploadedDraftsBtn.disabled = isRefreshingUploadedDrafts;
+    browsePublishedBtn.disabled = Boolean(pendingManagerEntry);
+    browsePublishedBtn.textContent = pendingManagerEntry?.kind === 'published' ? t('common.actions.loading') : t('editor.published.browse');
+    browsePublishedBtn.setAttribute('aria-busy', String(pendingManagerEntry?.kind === 'published'));
+    manageUploadedDraftsBtn.textContent = pendingManagerEntry?.kind === 'drafts' ? t('common.actions.loading')
+      : isRefreshingUploadedDrafts ? t('common.actions.refreshing') : t('editor.uploadedDraft.manage');
+    manageUploadedDraftsBtn.disabled = Boolean(pendingManagerEntry) || isRefreshingUploadedDrafts;
+    manageUploadedDraftsBtn.setAttribute('aria-busy', String(pendingManagerEntry?.kind === 'drafts'));
     signInBtn.hidden = serverReady;
     if (manageUploadedDraftsDialogOpen) renderManageUploadedDraftsModal();
     refreshPackageLoadControls();
@@ -7562,29 +7567,51 @@ function renderEditorShell(session) {
       updateSummary();
     }
   });
-  browsePublishedBtn.addEventListener('click', async () => {
-    await (async () => {
-      browsePublishedDialogOpen = true;
-      browsePublishedDialogRevision++;
-      renderPublishedBrowserModal();
-      await runPublishedSearch();
-    })();
-  });
+  async function openServerManager(kind) {
+    if (pendingManagerEntry || browsePublishedDialogOpen || manageUploadedDraftsDialogOpen) return;
+    const entry = { kind };
+    const draftId = session.state.draft?.localId;
+    const generation = session._audioDraftGeneration;
+    const contextCurrent = () => !shellDisposed && session.state.draft?.localId === draftId
+      && session._audioDraftGeneration === generation;
+    let isCurrent = () => contextCurrent() && pendingManagerEntry === entry;
+    pendingManagerEntry = entry;
+    updateSummary();
+    try {
+      const intent = kind === 'published'
+        ? { kind, filters: { title: browsePublishedState.title, subject: browsePublishedState.subject, owner: browsePublishedState.owner } }
+        : { kind };
+      const ready = await session.ensureReadSessionReady({ isCurrent, intent });
+      if (!isCurrent() || !ready.ok || !ready.isCurrent?.()) return;
+      // The entry owns only authentication. Once mounted, the modal revision
+      // owns the list so Close/reopen can supersede a pending request immediately.
+      pendingManagerEntry = null;
+      updateSummary();
+      if (kind === 'published') {
+        browsePublishedDialogOpen = true;
+        const revision = ++browsePublishedDialogRevision;
+        isCurrent = () => contextCurrent() && browsePublishedDialogOpen && revision === browsePublishedDialogRevision;
+        await runPublishedSearch({ prepared: ready, isCurrent });
+      } else {
+        manageUploadedDraftsDialogOpen = true;
+        const revision = ++manageUploadedDraftsDialogRevision;
+        isCurrent = () => contextCurrent() && manageUploadedDraftsDialogOpen && revision === manageUploadedDraftsDialogRevision;
+        await session.loadUploadedDrafts({ preflight: false, prepared: ready, isCurrent });
+        if (isCurrent()) renderManageUploadedDraftsModal();
+      }
+    } catch (error) {
+      if (isCurrent()) emitServerNotification({ kind: 'error', source: 'browse.open', text: getApiErrorMessage({ error }, 'list') });
+    } finally {
+      if (pendingManagerEntry === entry) pendingManagerEntry = null;
+      updateSummary();
+    }
+  }
+  browsePublishedBtn.addEventListener('click', () => openServerManager('published'));
   signInBtn.addEventListener('click', () => {
     session.beginServerSignIn();
     updateSummary();
   });
-  manageUploadedDraftsBtn.addEventListener('click', async () => {
-    await (async () => {
-      manageUploadedDraftsDialogOpen = true;
-      manageUploadedDraftsDialogRevision++;
-      renderManageUploadedDraftsModal();
-      const revision = manageUploadedDraftsDialogRevision;
-      await session.loadUploadedDrafts({ isCurrent: () => manageUploadedDraftsDialogOpen && revision === manageUploadedDraftsDialogRevision });
-      renderManageUploadedDraftsModal();
-    })();
-    updateSummary();
-  });
+  manageUploadedDraftsBtn.addEventListener('click', () => openServerManager('drafts'));
 
   worksheetActionsRow.appendChild(startNewWorksheetBtn);
   controlsRow.append(addContentBtn, addQuestionBtn);
