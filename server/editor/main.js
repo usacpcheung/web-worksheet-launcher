@@ -1,3 +1,4 @@
+import { createPublishedBrowserView } from './published-browser-view.js';
 import { createUploadedDraftsView, formatUploadedDraftTimestamp, toUploadedDraftDisplay, normalizeDraftPublishState, getUploadedDraftPublishBadge } from './uploaded-drafts-view.js';
 import { createStatusPanel } from './status-panel.js';
 import { createMultipleChoiceControls } from './multiple-choice-controls.js';
@@ -4860,6 +4861,7 @@ function renderEditorShell(session) {
   session.destroyNotificationPanel?.();
   session.destroyStatusPanel?.();
   session.destroyUploadedDraftsView?.();
+  session.destroyPublishedBrowserView?.();
   if (!app) return;
 
   const shell = document.createElement('div');
@@ -5478,221 +5480,19 @@ function renderEditorShell(session) {
   }
 
   function renderPublishedBrowserModal() {
-    browsePublishedModalRoot.innerHTML = '';
-    if (!browsePublishedDialogOpen) return;
-    const serverReady = session.state.serverSession?.status === 'ready';
-    const overlay = document.createElement('div');
-    overlay.className = 'confirm-modal-overlay';
-    const dialog = document.createElement('section');
-    dialog.className = 'confirm-modal browse-modal';
-    const heading = document.createElement('h3');
-    heading.textContent = t('editor.published.browse');
-    const filterRow = document.createElement('div');
-    filterRow.className = 'browse-modal__filters';
-    const titleFilter = document.createElement('input');
-    titleFilter.className = 'control';
-    titleFilter.placeholder = t('common.publishedBrowser.filterByTitle');
-    titleFilter.value = browsePublishedState.title;
-    const subjectFilter = document.createElement('input');
-    subjectFilter.className = 'control';
-    subjectFilter.placeholder = t('common.publishedBrowser.filterBySubject');
-    subjectFilter.value = browsePublishedState.subject;
-    const ownerFilter = document.createElement('input');
-    ownerFilter.className = 'control';
-    ownerFilter.placeholder = t('common.publishedBrowser.filterByOwnerEmail');
-    ownerFilter.value = browsePublishedState.owner;
-    const searchBtn = document.createElement('button');
-    searchBtn.type = 'button';
-    searchBtn.className = 'browse-modal__search-btn';
-    searchBtn.innerHTML = '<svg class="browse-modal__search-icon" aria-hidden="true" viewBox="0 0 20 20" fill="none"><circle cx="8.5" cy="8.5" r="5.25" stroke="currentColor" stroke-width="1.6"></circle><path d="M12.5 12.5L16.25 16.25" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path></svg>';
-    searchBtn.setAttribute('aria-label', t('common.publishedBrowser.searchAriaLabel'));
-    searchBtn.disabled = browsePublishedState.loading;
-    filterRow.append(titleFilter, subjectFilter, ownerFilter, searchBtn);
-    const results = document.createElement('div');
-    results.className = 'browse-results';
-    if (browsePublishedState.error) {
-      const error = document.createElement('p');
-      error.className = 'control-error';
-      error.textContent = browsePublishedState.error;
-      results.appendChild(error);
-    } else if (browsePublishedState.loading) {
-      const loading = document.createElement('p');
-      loading.className = 'muted';
-      loading.textContent = t('common.publishedBrowser.loading');
-      results.appendChild(loading);
-    } else if (browsePublishedState.items.length === 0) {
-      const empty = document.createElement('p');
-      empty.className = 'muted';
-      empty.textContent = t('common.publishedBrowser.empty');
-      results.appendChild(empty);
-    } else {
-      browsePublishedState.items.forEach((item) => {
-        const row = document.createElement('div');
-        row.className = 'published-result-row';
-        const titleLine = document.createElement('div');
-        titleLine.className = 'published-result-title-line';
-        const title = document.createElement('strong');
-        title.className = 'published-result-title';
-        title.textContent = item.title || t('common.values.untitled');
-        const publishedDate = document.createElement('span');
-        publishedDate.className = 'published-result-date muted';
-        publishedDate.textContent = formatUploadedDraftTimestamp(item.published_at);
-        titleLine.append(title, publishedDate);
-        const subjectOwner = document.createElement('div');
-        subjectOwner.className = 'muted published-result-subject-owner';
-        subjectOwner.textContent = t('editor.published.metaSubjectOwner', {
-          subject: item.subject || '—',
-          owner: item.owner_email || item.owner_name || item.owner_sub || '—',
-        });
-        const publishedMeta = document.createElement('div');
-        publishedMeta.className = 'muted published-result-id';
-        publishedMeta.textContent = t('common.meta.packageId', { value: item.published_package_id });
-        row.append(titleLine, subjectOwner, publishedMeta);
-        const copyBtn = document.createElement('button');
-        copyBtn.type = 'button';
-        copyBtn.className = 'uploaded-draft-action published-result-action';
-        copyBtn.textContent = t('editor.published.copyViewerLink');
-        copyBtn.addEventListener('click', async () => {
-          const viewerUrl = buildPublishedPackageViewerUrl(item.published_package_id);
-          const copied = await copyTextToClipboard(viewerUrl);
-          emitServerNotification({
-            kind: copied ? 'success' : 'warn',
-            source: 'clipboard.publishedId',
-            text: copied
-              ? editorNotification('clipboard.viewerLinkCopied')
-              : editorNotification('clipboard.unavailable'),
-          });
-        });
-        const openInEditorBtn = document.createElement('button');
-        openInEditorBtn.type = 'button';
-        openInEditorBtn.className = 'uploaded-draft-action published-result-action';
-        openInEditorBtn.dataset.editorPackageLoad = `published:${item.published_package_id}`;
-        openInEditorBtn.dataset.idleLabel = t('editor.published.openInEditor');
-        const isOpening = session.state.openingPublishedPackageIds.has(item.published_package_id);
-        openInEditorBtn.textContent = isOpening ? t('editor.published.openingInEditor') : t('editor.published.openInEditor');
-        openInEditorBtn.disabled = browsePublishedState.loading || isOpening;
-        openInEditorBtn.addEventListener('click', async () => {
-          if (session.packageLoad.current || session.state.openingPublishedPackageIds.has(item.published_package_id)) return;
-          const confirmed = await showConfirmDialog({
-            title: t('editor.replaceWorksheet.title'),
-            bodyText: t('editor.uploadedDraft.openDialog.description', { title: item.title || item.published_package_id }),
-            warningText: t('editor.uploadedDraft.openDialog.warning'),
-            confirmLabel: t('editor.replaceWorksheet.confirm'),
-            variant: 'warning',
-          });
-          if (!confirmed || session.packageLoad.current) return;
-          const revision = browsePublishedDialogRevision;
-          const isCurrent = () => browsePublishedDialogOpen && revision === browsePublishedDialogRevision;
-          const reopenPromise = session.reopenPublishedPackageAsLocalCopy(item.published_package_id, { isCurrent });
-          renderPublishedBrowserModal();
-          const reopenResult = await reopenPromise.catch((error) => ({ ok: false, error }));
-          if (!isCurrent() || reopenResult?.skipped) return;
-          if (reopenResult?.ok) {
-            emitPublishedBrowseNotification({
-              kind: 'success',
-              source: 'browse.published.open',
-              text: editorNotification('browsePublished.openedPublishedPackageInEditor', { id: item.published_package_id }),
-            });
-            browsePublishedDialogOpen = false;
-            browsePublishedDialogRevision++;
-          } else if (reopenResult?.canceled) {
-            browsePublishedState = {
-              ...browsePublishedState,
-              error: null,
-            };
-          } else {
-            const openError = getApiErrorMessage(reopenResult, 'open');
-            browsePublishedState = {
-              ...browsePublishedState,
-              error: openError,
-            };
-            emitPublishedBrowseNotification({
-              kind: 'error',
-              source: 'browse.published.open',
-              text: openError,
-            });
-          }
-          renderPublishedBrowserModal();
-          updateSummary();
-        });
-        const actionRow = document.createElement('div');
-        actionRow.className = 'published-result-actions';
-        actionRow.append(copyBtn, openInEditorBtn);
-        const currentUserSub = session.state.serverSession?.user?.sub || '';
-        if (currentUserSub && item.owner_sub === currentUserSub) {
-          const deletePublishedBtn = document.createElement('button');
-          deletePublishedBtn.type = 'button';
-          deletePublishedBtn.className = 'uploaded-draft-action uploaded-draft-action--danger published-result-action';
-          deletePublishedBtn.textContent = t('common.actions.delete');
-          deletePublishedBtn.addEventListener('click', async () => {
-            const generation = session._audioDraftGeneration;
-            const revision = browsePublishedDialogRevision;
-            const isCurrent = () => browsePublishedDialogOpen && revision === browsePublishedDialogRevision && generation === session._audioDraftGeneration;
-            await session.deletePublishedPackage(item.published_package_id, {
-              isCurrent, refresh: () => runPublishedSearch({ isCurrent }),
-              confirm: () => showConfirmDialog({
-                title: 'Delete published package?',
-                entityLabel: item.title || 'Untitled',
-                descriptionText: 'This deletes the published package. Existing viewer links for this package will stop working.',
-                removalItems: ['Published package ZIP artifact', 'Published package metadata'],
-                confirmLabel: 'Delete package',
-              }),
-            });
-          });
-          actionRow.appendChild(deletePublishedBtn);
-        }
-        row.appendChild(actionRow);
-        results.appendChild(row);
-      });
-    }
-    const actions = document.createElement('div');
-    actions.className = 'confirm-modal__actions';
-    const loadMoreBtn = document.createElement('button');
-    loadMoreBtn.type = 'button';
-    loadMoreBtn.className = 'confirm-modal__btn';
-    loadMoreBtn.textContent = browsePublishedState.loading ? t('common.actions.loading') : t('common.actions.loadMore');
-    loadMoreBtn.hidden = !browsePublishedState.hasMore;
-    loadMoreBtn.disabled = browsePublishedState.loading;
-    const refreshBtn = document.createElement('button');
-    refreshBtn.type = 'button';
-    refreshBtn.className = 'confirm-modal__btn';
-    refreshBtn.textContent = t('common.actions.refresh');
-    refreshBtn.disabled = browsePublishedState.loading;
-    const closeBtn = document.createElement('button');
-    closeBtn.type = 'button';
-    closeBtn.className = 'confirm-modal__btn';
-    closeBtn.textContent = t('common.actions.close');
-    actions.append(loadMoreBtn, refreshBtn, closeBtn);
-    dialog.append(heading, filterRow, results, actions);
-    dialog.appendChild(createVisualLoadStatus());
-    overlay.appendChild(dialog);
-    browsePublishedModalRoot.appendChild(overlay);
+    const revision = browsePublishedDialogRevision;
+    const generation = session._audioDraftGeneration;
+    const isCurrent = () => !shellDisposed && browsePublishedDialogOpen
+      && revision === browsePublishedDialogRevision && generation === session._audioDraftGeneration;
+    publishedBrowserView.render({
+      open: browsePublishedDialogOpen,
+      title: browsePublishedState.title, subject: browsePublishedState.subject, owner: browsePublishedState.owner,
+      loading: browsePublishedState.loading, error: browsePublishedState.error,
+      items: browsePublishedState.items, hasMore: browsePublishedState.hasMore,
+      currentUserSub: session.state.serverSession?.user?.sub || '',
+      openingIds: [...session.state.openingPublishedPackageIds],
+    }, isCurrent);
     refreshPackageLoadControls();
-
-    const captureFilters = () => {
-      browsePublishedState = {
-        ...browsePublishedState,
-        title: titleFilter.value,
-        subject: subjectFilter.value,
-        owner: ownerFilter.value,
-      };
-    };
-    searchBtn.addEventListener('click', async () => {
-      captureFilters();
-      await runPublishedSearch();
-    });
-    loadMoreBtn.addEventListener('click', async () => {
-      await runPublishedSearch({ append: true });
-    });
-    refreshBtn.addEventListener('click', async () => {
-      captureFilters();
-      await runPublishedSearch();
-    });
-    closeBtn.addEventListener('click', () => {
-      browsePublishedDialogOpen = false;
-      browsePublishedDialogRevision++;
-      renderPublishedBrowserModal();
-    });
   }
   ['content', 'question'].forEach((kind) => {
     const option = document.createElement('option');
@@ -5787,6 +5587,97 @@ function renderEditorShell(session) {
   let browsePublishedDialogRevision = 0;
   let manageUploadedDraftsDialogOpen = false;
   let manageUploadedDraftsDialogRevision = 0;
+  const publishedBrowserView = createPublishedBrowserView({
+    root: browsePublishedModalRoot, t, formatTimestamp: formatUploadedDraftTimestamp, createVisualLoadStatus,
+    async onCopyLink(item) {
+      const viewerUrl = buildPublishedPackageViewerUrl(item.published_package_id);
+      const copied = await copyTextToClipboard(viewerUrl);
+      emitServerNotification({
+        kind: copied ? 'success' : 'warn',
+        source: 'clipboard.publishedId',
+        text: copied
+          ? editorNotification('clipboard.viewerLinkCopied')
+          : editorNotification('clipboard.unavailable'),
+      });
+    },
+    async onOpen(item) {
+      if (session.packageLoad.current || session.state.openingPublishedPackageIds.has(item.published_package_id)) return;
+      const confirmed = await showConfirmDialog({
+        title: t('editor.replaceWorksheet.title'),
+        bodyText: t('editor.uploadedDraft.openDialog.description', { title: item.title || item.published_package_id }),
+        warningText: t('editor.uploadedDraft.openDialog.warning'),
+        confirmLabel: t('editor.replaceWorksheet.confirm'),
+        variant: 'warning',
+      });
+      if (!confirmed || session.packageLoad.current) return;
+      const revision = browsePublishedDialogRevision;
+      const isCurrent = () => browsePublishedDialogOpen && revision === browsePublishedDialogRevision;
+      const reopenPromise = session.reopenPublishedPackageAsLocalCopy(item.published_package_id, { isCurrent });
+      renderPublishedBrowserModal();
+      const reopenResult = await reopenPromise.catch((error) => ({ ok: false, error }));
+      if (!isCurrent() || reopenResult?.skipped) return;
+      if (reopenResult?.ok) {
+        emitPublishedBrowseNotification({
+          kind: 'success',
+          source: 'browse.published.open',
+          text: editorNotification('browsePublished.openedPublishedPackageInEditor', { id: item.published_package_id }),
+        });
+        browsePublishedDialogOpen = false;
+        browsePublishedDialogRevision++;
+      } else if (reopenResult?.canceled) {
+        browsePublishedState = {
+          ...browsePublishedState,
+          error: null,
+        };
+      } else {
+        const openError = getApiErrorMessage(reopenResult, 'open');
+        browsePublishedState = {
+          ...browsePublishedState,
+          error: openError,
+        };
+        emitPublishedBrowseNotification({
+          kind: 'error',
+          source: 'browse.published.open',
+          text: openError,
+        });
+      }
+      renderPublishedBrowserModal();
+      updateSummary();
+    },
+    async onDelete(item) {
+      const generation = session._audioDraftGeneration;
+      const revision = browsePublishedDialogRevision;
+      const isCurrent = () => browsePublishedDialogOpen && revision === browsePublishedDialogRevision && generation === session._audioDraftGeneration;
+      await session.deletePublishedPackage(item.published_package_id, {
+        isCurrent, refresh: () => runPublishedSearch({ isCurrent }),
+        confirm: () => showConfirmDialog({
+          title: 'Delete published package?',
+          entityLabel: item.title || 'Untitled',
+          descriptionText: 'This deletes the published package. Existing viewer links for this package will stop working.',
+          removalItems: ['Published package ZIP artifact', 'Published package metadata'],
+          confirmLabel: 'Delete package',
+        }),
+      });
+    },
+    async onSearch(filters) {
+      browsePublishedState = { ...browsePublishedState, ...filters };
+      await runPublishedSearch();
+    },
+    async onRefresh(filters) {
+      browsePublishedState = { ...browsePublishedState, ...filters };
+      await runPublishedSearch();
+    },
+    async onLoadMore() {
+      await runPublishedSearch({ append: true });
+    },
+    onClose() {
+      browsePublishedDialogOpen = false;
+      browsePublishedDialogRevision++;
+      renderPublishedBrowserModal();
+    },
+  });
+  session.destroyPublishedBrowserView = publishedBrowserView.destroy;
+
   const detailViewStates = new Map();
   const detailViewKey = block => `${session.state.draft?.localId}:${block.blockId}`;
   const detailViewState = block => {
