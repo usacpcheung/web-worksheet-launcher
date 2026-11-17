@@ -57,5 +57,7 @@ export function getEditorStatusModel(state, t) {
     savedTime: date && Number.isFinite(date.getTime()) ? date.toLocaleString(getLocale())
       : t(state.lastSavedRevision > 0 ? 'editor.saveTime.unknown' : 'editor.saveTime.never'),
     error: state.lastPersistenceError || '', warning,
+    errorExplanation: state.lastPersistenceError ? t(state.draftRevision > state.lastSavedRevision
+      ? 'editorStatus.unsavedAfterFailure' : 'editorStatus.savedBeforeFailure') : '',
   };
 }

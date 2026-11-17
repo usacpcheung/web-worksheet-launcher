@@ -64,7 +64,7 @@ export function createStatusPanel({ t, icon, backgroundRoot, getState, getGenera
     } else {
       body.append(el('p', 'muted', t('editorStatus.savedTime', { time: model.savedTime })));
       if (model.error) {
-        body.append(el('p', 'editor-status-error', model.error));
+        body.append(el('p', 'editor-status-error', model.error), el('p', null, model.errorExplanation));
         const retry = button('editor-status-link', t('editorStatus.retrySave')); retry.dataset.statusAction = 'retry'; retry.disabled = retrying;
         retry.onclick = async () => {
           const owner = active;

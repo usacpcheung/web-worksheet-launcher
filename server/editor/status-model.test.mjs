@@ -57,3 +57,11 @@ test('known validation messages stay actionable without exposing technical paths
     }
   } finally { setLocale('en', { persist: false }); }
 });
+
+test('save failure explanation distinguishes saved content from unsaved edits', () => {
+  const unchanged = getEditorStatusModel(state({ lastPersistenceError: 'Write failed' }), t);
+  assert.equal(unchanged.errorExplanation, t('editorStatus.savedBeforeFailure'));
+  const edited = getEditorStatusModel(state({ lastPersistenceError: 'Write failed', draftRevision: 4 }), t);
+  assert.equal(edited.errorExplanation, t('editorStatus.unsavedAfterFailure'));
+  assert.equal(getEditorStatusModel(state(), t).errorExplanation, '');
+});

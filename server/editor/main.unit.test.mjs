@@ -65,6 +65,96 @@ test('same-revision saves completing out of order retain the newer save status',
   assert.equal(session.state.lastSavedAt, newer.metadata.updatedAt);
 });
 
+for (const edited of [false, true]) test(`manual save failure persists and retries with edited=${edited}`, async () => {
+  const mod = await loadEditorModule();
+  const storage = createSessionForTests();
+  const session = new mod.EditorDraftSession(storage);
+  await session.createOrOpenByLocalDraftId('save-failure');
+  clearTimeout(session.autosaveTimer);
+  await session.saveNow();
+  const savedTime = session.state.lastSavedAt;
+  const savedRevision = session.state.lastSavedRevision;
+  if (edited) { session.updateTitle('Changed'); clearTimeout(session.autosaveTimer); }
+  const put = storage.drafts.put;
+  storage.drafts.put = async () => { throw new Error('Storage failure'); };
+  try {
+    await assert.rejects(session.saveNow(), /Storage failure/);
+    assert.equal(session.state.lastPersistenceError, 'Storage failure');
+    assert.equal(session.state.lastSavedAt, savedTime);
+    assert.equal(session.state.lastSavedRevision, savedRevision);
+    session.pushNotification({ kind: 'success', text: 'Unrelated success' });
+    assert.equal(session.state.lastPersistenceError, 'Storage failure');
+  } finally { storage.drafts.put = put; }
+  await session.saveNow();
+  assert.equal(session.state.lastPersistenceError, null);
+  assert.equal(session.state.lastSavedRevision, session.state.draftRevision);
+});
+
+test('manual save reports preparation failure before the storage write', async () => {
+  const mod = await loadEditorModule();
+  const storage = createSessionForTests();
+  const session = new mod.EditorDraftSession(storage);
+  await session.createOrOpenByLocalDraftId('save-preparation');
+  clearTimeout(session.autosaveTimer);
+  await session.saveNow();
+  const validate = session.validateCurrentDraft;
+  session.validateCurrentDraft = () => { throw new Error('Preparation failed'); };
+  try {
+    await assert.rejects(session.saveNow(), /Preparation failed/);
+    assert.equal(session.state.lastPersistenceError, 'Preparation failed');
+    assert.equal(session.state.notifications.find(item => item.source === 'save.manual').kind, 'error');
+  } finally { session.validateCurrentDraft = validate; }
+  await session.saveNow();
+  assert.equal(session.state.lastPersistenceError, null);
+});
+
+// Complete a newer save before an older one, with both success/failure orderings.
+for (const newerFails of [false, true]) for (const olderFails of [false, true]) {
+  test(`save completion ordering: newer failure=${newerFails}, older failure=${olderFails}`, async () => {
+    const mod = await loadEditorModule();
+    const storage = createSessionForTests();
+    const session = new mod.EditorDraftSession(storage);
+    await session.createOrOpenByLocalDraftId('save-order');
+    clearTimeout(session.autosaveTimer);
+    await session.saveNow();
+    const pending = [];
+    storage.drafts.put = value => new Promise((resolve, reject) => pending.push({ value, resolve, reject }));
+    const older = session.saveNow().catch(error => error);
+    while (pending.length < 1) await new Promise(resolve => setImmediate(resolve));
+    const newer = session.saveNow().catch(error => error);
+    while (pending.length < 2) await new Promise(resolve => setImmediate(resolve));
+    const finish = (index, fails) => fails ? pending[index].reject(new Error(`failure-${index}`)) : pending[index].resolve(pending[index].value);
+    finish(1, newerFails); await newer;
+    const manual = session.state.notifications.find(item => item.source === 'save.manual');
+    finish(0, olderFails); await older;
+    assert.equal(session.state.lastPersistenceError, newerFails ? 'failure-1' : null);
+    assert.equal(session.state.notifications.find(item => item.source === 'save.manual'), manual);
+    if (newerFails && !olderFails) assert.equal(session.state.lastSavedAt, pending[0].value.metadata.updatedAt);
+    storage.drafts.put = async value => value;
+    await session.saveNow();
+    assert.equal(session.state.lastPersistenceError, null);
+  });
+}
+
+for (const sameId of [false, true]) test(`failed save cannot affect a replacement draft, same ID=${sameId}`, async () => {
+  const mod = await loadEditorModule();
+  const storage = createSessionForTests();
+  const session = new mod.EditorDraftSession(storage);
+  await session.createOrOpenByLocalDraftId('original-save');
+  clearTimeout(session.autosaveTimer);
+  await session.saveNow();
+  let rejectWrite;
+  storage.drafts.put = () => new Promise((resolve, reject) => { rejectWrite = reject; });
+  const pending = session.saveNow().catch(error => error);
+  while (!rejectWrite) await new Promise(resolve => setImmediate(resolve));
+  await session.createOrOpenByLocalDraftId(sameId ? 'original-save' : 'replacement');
+  clearTimeout(session.autosaveTimer);
+  const notifications = structuredClone(session.state.notifications);
+  rejectWrite(new Error('Old draft failure')); await pending;
+  assert.equal(session.state.lastPersistenceError, null);
+  assert.deepEqual(session.state.notifications, notifications);
+});
+
 test('audio generation rejects worksheet switches and reopening the same worksheet', async () => {
   const mod = await loadEditorModule();
   for (const target of ['prompt', 'option']) for (const sameId of [false, true]) {

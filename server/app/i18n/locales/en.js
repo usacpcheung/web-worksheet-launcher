@@ -2,6 +2,8 @@ import roleplayscene from './roleplayscene/en.js';
 
 export default {
   editorStatus: {
+    "unsavedAfterFailure": "Your latest changes have not been saved.",
+    "savedBeforeFailure": "The latest save attempt failed. Your previously saved version is still available.",
     "emptyOptions": "Add at least one option.",
     "emptyOption": "Each option needs text or an image.",
     "duplicateOptions": "Option values must be unique. Repeated value: {value}.",

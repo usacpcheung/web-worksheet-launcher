@@ -1171,6 +1171,7 @@ class EditorDraftSession {
     this.inFlightSaveCount = 0;
     this.saveSequence = 0;
     this.lastAppliedSaveSequence = 0;
+    this.lastFailedSaveSequence = 0;
     this.autosaveGeneration = 0;
     this.deletedDraftIds = new Set();
     this.inFlightSaveCountsByDraftId = new Map();
@@ -3325,7 +3326,8 @@ class EditorDraftSession {
         this.lastAppliedSaveSequence = saveSequence;
         const wasNeverSavedBefore = this.state.lastSavedRevision === 0;
         this.state.lastSavedRevision = revisionAtSaveStart;
-        this.state.lastPersistenceError = null;
+        // A delayed older success records what was saved without hiding a newer failure.
+        if (saveSequence > this.lastFailedSaveSequence) this.state.lastPersistenceError = null;
         this.state.lastSavedLocalValidationIssueCount = validation.errors.length;
         this.state.lastContractValidationIssueCount = contractValidation.errors.length;
 
@@ -3359,10 +3361,13 @@ class EditorDraftSession {
     } catch (error) {
       const shouldApplyErrorStatus =
         this._audioDraftGeneration === draftGenerationAtSaveStart &&
-        snapshotToPersist &&
-        this.state.draft?.localId === snapshotToPersist.metadata?.localId &&
-        revisionAtSaveStart > this.state.lastSavedRevision;
+        this.state.draft?.localId === draftIdAtSaveStart &&
+        generationAtSaveStart === this.autosaveGeneration &&
+        !this.deletedDraftIds.has(draftIdAtSaveStart) &&
+        revisionAtSaveStart >= this.state.lastSavedRevision &&
+        saveSequence > Math.max(this.lastAppliedSaveSequence, this.lastFailedSaveSequence);
       if (shouldApplyErrorStatus) {
+        this.lastFailedSaveSequence = saveSequence;
         this.state.lastPersistenceError = error?.message || String(error);
         this.setNotificationForSource({
           source: 'autosave.persistence',
@@ -3606,8 +3611,17 @@ class EditorDraftSession {
   }
 
   async saveNow() {
+    const draftId = this.state.draft?.localId;
+    const generation = this._audioDraftGeneration;
+    let sequence;
+    const ownsStatus = () => this.state.draft?.localId === draftId
+      && this._audioDraftGeneration === generation
+      && sequence === Math.max(this.lastAppliedSaveSequence, this.lastFailedSaveSequence);
     try {
-      const persisted = await this.autosave();
+      const saving = this.autosave();
+      sequence = this.saveSequence;
+      const persisted = await saving;
+      if (!persisted || !ownsStatus()) return persisted;
       this.state.lastManualSaveAt = nowIso();
       this.replaceNotificationForSource({
         kind: 'success',
@@ -3622,6 +3636,7 @@ class EditorDraftSession {
       this.notifyStateChange();
       return persisted;
     } catch (error) {
+      if (!ownsStatus()) throw error;
       console.error('Manual save failed', error);
       this.replaceNotificationForSource({
         kind: 'error',
@@ -7473,7 +7488,8 @@ function renderEditorShell(session) {
     updateSummary();
   });
   saveBtn.addEventListener('click', async () => {
-    await session.saveNow();
+    try { await session.saveNow(); }
+    catch { /* Save state and notifications already explain the failure. */ }
     updateSummary();
   });
   startNewWorksheetBtn.addEventListener('click', async () => {
@@ -7537,7 +7553,8 @@ function renderEditorShell(session) {
       updateSummary();
       return;
     }
-    await session.saveNow();
+    try { await session.saveNow(); }
+    catch { updateSummary(); return; }
     if (session.state.draft?.localId !== localDraftId) return;
     try { session.requireReadyWorksheet(); }
     catch (error) {

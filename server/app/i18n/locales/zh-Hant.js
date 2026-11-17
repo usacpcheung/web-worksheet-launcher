@@ -2,6 +2,8 @@ import roleplayscene from './roleplayscene/zh-Hant.js';
 
 export default {
   editorStatus: {
+    "unsavedAfterFailure": "最新修改尚未儲存。",
+    "savedBeforeFailure": "最近一次儲存失敗。先前成功儲存的版本仍然保留。",
     "emptyOptions": "請新增至少一個選項。",
     "emptyOption": "每個選項都需要文字或圖片。",
     "duplicateOptions": "選項值不可重複。重複值：{value}。",

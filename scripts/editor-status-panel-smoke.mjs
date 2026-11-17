@@ -48,23 +48,35 @@ try {
    assert.equal(await modal.getByRole('button', { name: await label('editorStatus.goBlock'), exact: true }).count(), 1);
    await modal.getByRole('button', { name: await label('editorStatus.goFeedback'), exact: true }).click();
    assert.equal(await page.evaluate(() => window.editorSession.state.feedbackSettingsDraftId === window.editorSession.state.draft.localId), true);
-   // Actual persistence failure, then retry through the existing saveNow operation.
-   await page.evaluate(async () => {
-    const s = window.editorSession; clearTimeout(s.autosaveTimer);
-    s.updateTitle('Unsaved revision'); clearTimeout(s.autosaveTimer);
-    window.originalDraftPut = s.storage.drafts.put;
-    s.storage.drafts.put = async () => { throw new Error('Quota fixture'); };
-    try { await s.saveNow(); } catch { /* expected */ }
-   });
-   assert.equal(await badge.getAttribute('data-tone'), 'error');
-   await page.evaluate(() => { const s = window.editorSession; s.pushNotification({ kind: 'success', text: 'Export complete fixture' }); s.notifyStateChange(); });
-   assert.equal(await badge.getAttribute('data-tone'), 'error');
-   await badge.click();
-   await modal.getByText('Quota fixture', { exact: true }).waitFor();
-   await page.evaluate(() => { const s = window.editorSession; s.storage.drafts.put = window.originalDraftPut; });
-   await modal.getByRole('button', { name: await label('editorStatus.retrySave'), exact: true }).click();
-   await page.waitForFunction(() => !window.editorSession.state.lastPersistenceError);
-   assert.equal(await modal.count(), 1);
+   // Exercise the real Save button, both after autosave and with new edits.
+   for (const edited of [false, true]) {
+    await page.evaluate(async edited => {
+     const s = window.editorSession; clearTimeout(s.autosaveTimer);
+     await s.autosave(); clearTimeout(s.autosaveTimer);
+     window.savedTimeBeforeFailure = s.state.lastSavedAt;
+     if (edited) { s.updateTitle('Unsaved revision'); clearTimeout(s.autosaveTimer); }
+     window.originalDraftPut = s.storage.drafts.put;
+     s.storage.drafts.put = async () => { throw new Error('Quota fixture'); };
+    }, edited);
+    try {
+     await page.getByRole('button', { name: await label('editor.actions.saveLocalDraft'), exact: true }).click();
+     await page.waitForFunction(() => window.editorSession.state.lastPersistenceError === 'Quota fixture');
+     assert.equal(await badge.getAttribute('data-tone'), 'error');
+     assert.equal(await page.evaluate(() => window.editorSession.state.lastSavedAt === window.savedTimeBeforeFailure), true);
+     await page.evaluate(() => { const s = window.editorSession; s.pushNotification({ kind: 'success', text: 'Export complete fixture' }); s.notifyStateChange(); });
+     assert.equal(await badge.getAttribute('data-tone'), 'error');
+     await badge.click();
+     await modal.getByText('Quota fixture', { exact: true }).waitFor();
+     await modal.getByText(await label(edited ? 'editorStatus.unsavedAfterFailure' : 'editorStatus.savedBeforeFailure'), { exact: true }).waitFor();
+    } finally {
+     await page.evaluate(() => { window.editorSession.storage.drafts.put = window.originalDraftPut; });
+    }
+    await modal.getByRole('button', { name: await label('editorStatus.retrySave'), exact: true }).click();
+    await page.waitForFunction(() => !window.editorSession.state.lastPersistenceError);
+    assert.equal(await modal.count(), 1);
+    assert.deepEqual(errors, [], 'Save button handles expected storage rejection');
+    if (!edited) await modal.locator('.editor-status-close').click();
+   }
    if (process.env.VIEWER_SMOKE_SCREENSHOTS) { await mkdir(process.env.VIEWER_SMOKE_SCREENSHOTS, { recursive: true }); await page.screenshot({ path: path.join(process.env.VIEWER_SMOKE_SCREENSHOTS, `status-${locale}-${width}.png`) }); }
    // A refresh does not replace unchanged dialog controls or reset scroll/focus.
    await modal.locator('.editor-status-close').evaluate(el => { window.sameClose = el; });
@@ -89,6 +101,21 @@ try {
    await page.locator('.language-selector select').selectOption(locale);
    assert.equal(await page.locator('.notification-toast').count(), 0, 'dismissed notice does not reappear after language switch');
    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+   await page.evaluate(async () => {
+    const s = window.editorSession; clearTimeout(s.autosaveTimer);
+    s.state.draft.feedback = undefined;
+    s.state.draft.blocks = [{ blockId: 'preview-reading', position: 0, kind: 'content', content: { text: 'Ready for preview' } }];
+    s.touchDraft(); clearTimeout(s.autosaveTimer); await s.autosave(); clearTimeout(s.autosaveTimer);
+    window.originalDraftPut = s.storage.drafts.put;
+    s.storage.drafts.put = async () => { throw new Error('Preview save fixture'); };
+   });
+   const editorUrl = page.url();
+   try {
+    await page.getByRole('button', { name: await label('editor.actions.openViewer'), exact: true }).click();
+    await page.waitForFunction(() => window.editorSession.state.lastPersistenceError === 'Preview save fixture');
+    assert.equal(page.url(), editorUrl, 'failed save must not start preview');
+    assert.deepEqual(errors, [], 'Preview button handles expected storage rejection');
+   } finally { await page.evaluate(() => { window.editorSession.storage.drafts.put = window.originalDraftPut; }); }
    // Imported identifiers are rendered as literal input values, never markup.
    const unsafeId = '<img src=x onerror=alert(1)>';
    await page.evaluate(id => { window.editorSession.state.draft.localId = id; window.editorSession.notifyStateChange(); }, unsafeId);

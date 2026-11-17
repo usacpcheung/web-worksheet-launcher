@@ -29,6 +29,12 @@ Targets are rechecked against current state. Draft/shell replacement closes the
 dialog and prevents retained controls acting on a replacement draft.
 
 The status dialog's Retry saving action uses the existing local save operation.
+A failed write is reported even when no content has changed since the last
+successful save. Details distinguish unsaved edits from a failed repeat save;
+the last successful timestamp is retained. Delayed results cannot replace a
+newer save outcome or apply to a replaced draft (including a same-ID reopen).
+Save and preview buttons handle rejected saves without an uncaught page error;
+preview stays in the editor after failure.
 No generic notification-to-command or upload-retry mechanism is introduced.
 Existing validation rules, including the untitled-worksheet fallback, are unchanged.
 Known validation messages have friendly labels; unrecognized messages remain
