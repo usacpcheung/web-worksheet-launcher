@@ -303,7 +303,7 @@ async function loadViewerModule(overrides = {}) {
   globalThis.document = globalThis[bagName].document;
   globalThis.window = globalThis[bagName].window;
 
-  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource.replace(/from '(\.\/(?:answer-(?:voice-workflow|voice-ui)|voice-sign-in|attempt-menu|browser-entry|package-load-progress|block-view-host|block-presentation|check-feedback|number-answer-control|boolean-answer-control|section-navigation|worksheet-navigation|entry-motion)\.js)'/g, (_, path) => 'from ' + JSON.stringify(new NodeURL(path, import.meta.url).href)))}`;
+  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource.replace(/from '(\.\/(?:answer-(?:voice-workflow|voice-ui)|voice-sign-in|attempt-menu|browser-entry|package-load-progress|block-view-host|block-presentation|check-feedback|number-answer-control|boolean-answer-control|text-answer-presentation|section-navigation|worksheet-navigation|entry-motion)\.js)'/g, (_, path) => 'from ' + JSON.stringify(new NodeURL(path, import.meta.url).href)))}`;
   return import(dataUrl);
 }
 
@@ -2876,77 +2876,6 @@ test('ensureControlDescribedBy links control to existing error id without duplic
   mod.ensureControlDescribedBy(control, 'answer-q1-error');
   mod.ensureControlDescribedBy(control, 'answer-q1-error');
   assert.equal(control.getAttribute('aria-describedby'), 'answer-q1-error');
-});
-
-test('computeTextLengthFeedback returns normal, warning, and over-limit states', async () => {
-  const mod = await loadViewerModule();
-  assert.deepEqual(mod.computeTextLengthFeedback('abcd', 50), {
-    current: 4,
-    max: 50,
-    remaining: 46,
-    state: 'normal',
-    statusText: '',
-    counterText: '4/50',
-  });
-  assert.deepEqual(mod.computeTextLengthFeedback('x'.repeat(45), 50), {
-    current: 45,
-    max: 50,
-    remaining: 5,
-    state: 'warning',
-    statusText: 'textAnswer.remaining',
-    counterText: '45/50',
-  });
-  assert.deepEqual(mod.computeTextLengthFeedback('x'.repeat(55), 50), {
-    current: 55,
-    max: 50,
-    remaining: -5,
-    state: 'over',
-    statusText: 'textAnswer.over',
-    counterText: '55/50',
-  });
-});
-
-test('computeTextLengthFeedback handles non-integer finite maxLength via Math.trunc', async () => {
-  const mod = await loadViewerModule();
-  const result = mod.computeTextLengthFeedback('abcd', 50.7);
-  assert.equal(result.max, 50);
-  assert.equal(result.current, 4);
-  assert.equal(result.counterText, '4/50');
-});
-
-test('computeTextLengthFeedback uses singular character when count is 1', async () => {
-  const mod = await loadViewerModule();
-  const warningResult = mod.computeTextLengthFeedback('x'.repeat(49), 50);
-  assert.equal(warningResult.state, 'warning');
-  assert.equal(warningResult.statusText, 'textAnswer.remainingOne');
-
-  const overResult = mod.computeTextLengthFeedback('x'.repeat(51), 50);
-  assert.equal(overResult.state, 'over');
-  assert.equal(overResult.statusText, 'textAnswer.over');
-});
-
-test('computeTextLengthFeedback uses plural characters when count is not 1', async () => {
-  const mod = await loadViewerModule();
-  const warningResult = mod.computeTextLengthFeedback('x'.repeat(45), 50);
-  assert.equal(warningResult.statusText, 'textAnswer.remaining');
-
-  const overResult = mod.computeTextLengthFeedback('x'.repeat(55), 50);
-  assert.equal(overResult.statusText, 'textAnswer.over');
-});
-
-test('updateTextCounterUI sets text and semantic classes', async () => {
-  const mod = await loadViewerModule();
-  const counterNode = { textContent: '', className: '' };
-  const statusNode = { textContent: '', className: '' };
-  mod.updateTextCounterUI(counterNode, statusNode, {
-    counterText: '99/100',
-    statusText: 'textAnswer.remainingOne',
-    state: 'warning',
-  });
-  assert.equal(counterNode.textContent, '99/100');
-  assert.equal(counterNode.className, 'text-counter text-counter--warning');
-  assert.equal(statusNode.textContent, 'textAnswer.remainingOne');
-  assert.equal(statusNode.className, 'text-counter-status text-counter-status--warning');
 });
 
 function createFakeDom() {
@@ -5551,7 +5480,7 @@ test('rewrite assist snapshots answer text from answer record value', async () =
   assert.equal(source.includes('const buildViewerRewriteIntentPayloadForBlock = (questionBlock) => {'), true);
   assert.equal(source.includes('const getRawAnswerTextForBlock = (blockId) => {'), true);
   assert.equal(source.includes('answerTextRawAtClickTime: getRawAnswerTextForBlock(blockId),'), true);
-  assert.equal(source.includes("if (!rewriteButton.disabled) voiceUi.rewrite();"), true);
+  assert.equal(source.includes('onRewrite: () => voiceControl.rewrite(),'), true);
 });
 
 test('voice and rewrite use a session preflight before recording or sending text', async () => {
@@ -5560,18 +5489,7 @@ test('voice and rewrite use a session preflight before recording or sending text
   assert.ok(source.includes('if (!fresh(op))'));
 });
 
-test('rewrite controls remain always mounted for text questions and enforce disabled states by rules', async () => {
-  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes("if (inputType === 'text') {"), true);
-  assert.equal(source.includes("rewriteButton.className = 'question-card__rewrite-btn icon-nav-btn';"), true);
-  assert.equal(source.includes("undoButton.className = 'question-card__undo-btn icon-nav-btn';"), true);
-  assert.equal(source.includes('const canRewriteByLength = trimmedAnswerLength > 0 && trimmedAnswerLength <= REWRITE_INPUT_LIMIT;'), true);
-  assert.equal(source.includes('const canRewrite = !isAttemptCompleted && !session.voice.active && !hasPendingRecovery(getVoiceRecovery(session.state.voiceRecovery, block.blockId)) && canRewriteByLength;'), true);
-  assert.equal(source.includes('rewriteButton.disabled = !canRewrite;'), true);
-  assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || Boolean(session.voice.active) || !hasUndoEntry;'), true);
-  assert.equal(source.includes("rewriteHint.textContent = t('viewer.rewrite.hintEnterText');"), true);
-  assert.equal(source.includes("rewriteHint.textContent = t('viewer.rewrite.hintTooLong', { max: REWRITE_INPUT_LIMIT });"), true);
-});
+
 
 test('render signature excludes rewrite-row dynamic flags to avoid remounting for text length transitions', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
@@ -5853,8 +5771,7 @@ test('stale replay context aborts without calling rewrite API or mutating answer
 test('undo lifecycle wiring exists for post-rewrite visibility, restore, and manual input clear', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes('const hasUndoEntry = Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId);'), true);
-  assert.equal(source.includes("undoButton.textContent = t('viewer.rewrite.undo');"), true);
-  assert.equal(source.includes('if (undoButton.disabled || isRewriteInFlight) {'), true);
+  assert.equal(source.includes('if (isRewriteInFlight) {'), true);
   assert.equal(source.includes("cacheRawControlValue(block.blockId, String(savedUndoAnswer ?? ''));"), true);
   assert.equal(source.includes('session.setAnswer(block.blockId, savedUndoAnswer, { restoreUndo: true });'), true);
   assert.equal(source.includes('delete nextUndoBuffer[block.blockId];'), true);
@@ -5869,22 +5786,9 @@ test('text control sync prefers focused edit cache and falls back to canonical s
   assert.equal(source.includes("if (!isControlFocused && cachedRawValue !== undefined && String(cachedRawValue) !== stateValue) {"), true);
 });
 
-test('in-flight rewrite state renders loading label while preserving always-visible controls', async () => {
-  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes('const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;'), true);
-  assert.equal(source.includes("rewriteButton.querySelector('.viewer-action-label').textContent = isRewriteInFlight ? t('viewer.rewrite.inProgress') : t('viewer.rewrite.action');"), true);
-  assert.equal(source.includes('rewriteButton.disabled = !canRewrite;'), true);
-  assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || Boolean(session.voice.active) || !hasUndoEntry;'), true);
-});
 
-test('rewrite row updates happen in place without mount/unmount checks', async () => {
-  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes("rewriteRow.append(voiceUi.add, rewriteButton, undoButton);"), true);
-  assert.equal(source.includes("rewriteMessages.append(textStatus, rewriteHint);"), true);
-  assert.equal(source.includes("textActionsRow.append(textCounter, rewriteRow);"), true);
-  assert.equal(source.includes("card.append(helper, control, reviewStatus, mediaFeedback, textFooter, inputError);"), true);
-  assert.equal(source.includes('if (rewriteRow.childNodes.length > 0) {'), false);
-});
+
+
 
 test('rewrite API failure keeps original answer unchanged and clears in-flight flags', async () => {
   const mod = await loadViewerModule();
