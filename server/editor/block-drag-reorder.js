@@ -16,6 +16,7 @@ export function edgeScrollSpeed(y, top, bottom) {
 export function attachBlockDragReorder(list, { getBlocks, getDraftId, onMove, onFinish, onStart }) {
   const doc = list.ownerDocument;
   const win = doc.defaultView;
+  let destroyed = false;
   let drag = null;
   let frame = null;
   let point = null;
@@ -84,7 +85,8 @@ export function attachBlockDragReorder(list, { getBlocks, getDraftId, onMove, on
     mark(point.y);
     frame = win.requestAnimationFrame(tick);
   };
-  list.addEventListener('dragstart', event => {
+  const onDragStart = event => {
+    if (destroyed) return;
     const handle = event.target.closest('.block-drag-handle');
     if (!handle || !list.contains(handle)) return;
     finish(false);
@@ -105,8 +107,10 @@ export function attachBlockDragReorder(list, { getBlocks, getDraftId, onMove, on
     doc.addEventListener('visibilitychange', visibility);
     win.addEventListener('blur', end);
     win.addEventListener('pagehide', end);
-  });
-  list.addEventListener('dragover', event => {
+  };
+  list.addEventListener('dragstart', onDragStart);
+  const onDragOver = event => {
+    if (destroyed) return;
     if (!drag) return; // Never accept an external file/text drag as a block move.
     if (!current()) { finish(); return; }
     if (!inside(event.clientX, event.clientY)) { pause(); return; }
@@ -115,13 +119,17 @@ export function attachBlockDragReorder(list, { getBlocks, getDraftId, onMove, on
     point = { x: event.clientX, y: event.clientY };
     mark(point.y);
     if (frame === null) frame = win.requestAnimationFrame(tick);
-  });
-  list.addEventListener('dragleave', event => {
+  };
+  list.addEventListener('dragover', onDragOver);
+  const onDragLeave = event => {
+    if (destroyed) return;
     if (event.relatedTarget && list.contains(event.relatedTarget)) return;
     // Child-to-child transitions keep their marker; only leaving the list pauses.
     if (!inside(event.clientX, event.clientY)) pause();
-  });
-  list.addEventListener('drop', event => {
+  };
+  list.addEventListener('dragleave', onDragLeave);
+  const onDrop = event => {
+    if (destroyed) return;
     if (!drag) return;
     if (!current() || !inside(event.clientX, event.clientY)) { finish(); return; }
     event.preventDefault();
@@ -129,6 +137,15 @@ export function attachBlockDragReorder(list, { getBlocks, getDraftId, onMove, on
     const target = mark(event.clientY);
     finish(false); // Stop animation before mutation triggers a synchronous render.
     onMove(id, target);
-  });
-  return { get active() { return Boolean(drag); }, current, cancel: () => finish(false) };
+  };
+  list.addEventListener('drop', onDrop);
+  const destroy = () => {
+    destroyed = true;
+    finish(false);
+    list.removeEventListener('dragstart', onDragStart);
+    list.removeEventListener('dragover', onDragOver);
+    list.removeEventListener('dragleave', onDragLeave);
+    list.removeEventListener('drop', onDrop);
+  };
+  return { destroy, get active() { return Boolean(drag); }, current, cancel: () => finish(false) };
 }
