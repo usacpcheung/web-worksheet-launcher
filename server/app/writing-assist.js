@@ -26,12 +26,13 @@ function render() {
     const own = owner?.field === field;
     const active = own ? runtime?.voice.active : null;
     const pendingElsewhere = Boolean(audioOwner && audioOwner !== field);
-    const isBlocked = Boolean(owner || record || pendingElsewhere || input.disabled || input.readOnly);
+    const editable = !input.matches(':disabled') && !input.readOnly && input.maxLength > 0;
+    const isBlocked = Boolean(owner || record || pendingElsewhere || !editable);
     buttons.voice.disabled = isBlocked;
     const tooLong = input.value.length > 2000 && Array.from(input.value.trim()).length > 2000;
     buttons.rewrite.disabled = isBlocked || !input.value.trim() || tooLong;
     buttons.rewrite.title = tooLong ? label('limit') : '';
-    buttons.undo.disabled = isBlocked || field.undo?.after !== input.value;
+    buttons.undo.disabled = isBlocked || field.undo?.after !== input.value || field.undo.before.length > input.maxLength;
     buttons.stop.hidden = active?.state !== 'recording';
     buttons.cancel.hidden = !own;
     buttons.stop.disabled = !own;
@@ -49,8 +50,8 @@ function render() {
       buttons.retry.hidden = stale || !buttons.login.hidden || record.phase === 'preflight';
       buttons.retry.textContent = record.candidate !== undefined ? label('apply')
         : hasText ? label('retryRewrite') : record.authenticated ? label('retryAudio') : label('again');
-      buttons.retry.disabled = Boolean(owner) || pendingElsewhere || (hasText && !text.trim());
-      buttons.login.disabled = Boolean(owner) || pendingElsewhere;
+      buttons.retry.disabled = !editable || Boolean(owner) || pendingElsewhere || (hasText && !text.trim());
+      buttons.login.disabled = !editable || Boolean(owner) || pendingElsewhere;
       buttons.discard.disabled = Boolean(owner);
       recoveredText.readOnly = Boolean(owner);
       message = stale ? label('stale')
@@ -74,7 +75,7 @@ function cancel(field) {
   if (owner?.field !== field) return;
   const ticket = owner;
   if (runtime?.voice.active) runtime.voice.cancel();
-  runtime?.cancelPopup();
+  runtime?.cancelSignIn(field.id);
   field.message = label('cancelled');
   release(ticket);
 }
@@ -87,7 +88,7 @@ async function run(field, action) {
   const snapshot = input.value;
   const intent = { deliberate: field.hasCaret, snapshot, index: input.selectionEnd, replaceStart: input.selectionStart };
   const current = () => owner === ticket && document.getElementById(id) === input
-    && !input.readOnly && !input.disabled && input.value === snapshot;
+    && !input.readOnly && !input.matches(':disabled') && input.maxLength > 0 && input.value === snapshot;
   owner = ticket;
   clearTimeout(field.timer);
   field.message = label('preparing');
@@ -255,7 +256,13 @@ const observer = new MutationObserver(records => {
   for (const [id, field] of fields) {
     if (document.getElementById(id) !== field.input) detach(field.input);
   }
-  if (records.some(record => record.type === 'attributes' && fields.get(record.target.id)?.input === record.target)) render();
+  if (records.some(record => record.type === 'attributes' &&
+    (record.target instanceof HTMLFieldSetElement || fields.get(record.target.id)?.input === record.target))) {
+    if (owner && (owner.field.input.matches(':disabled, [readonly]') || owner.field.input.maxLength < 1)) {
+      cancel(owner.field);
+    }
+    render();
+  }
 });
 observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['readonly', 'disabled', 'maxlength', 'id'] });
 window.addEventListener('pagehide', () => {

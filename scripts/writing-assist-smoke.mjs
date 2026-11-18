@@ -11,6 +11,7 @@ try {
   const entry = '/worksheet_launcher/app/writing-assist.js';
   let result = 'Revised\nanswer';
   let delay;
+  let signedIn = true;
   page.on('pageerror', error => errors.push(error.message));
   await page.route(root + '/**', async route => {
     const pathname = new URL(route.request().url()).pathname;
@@ -19,8 +20,9 @@ try {
       const fields = Array.from({ length: 30 }, (_, i) =>
         `<label for="q${i}">Question ${i}</label><textarea data-writing-assist="toolbar" id="q${i}" maxlength="20"></textarea>`);
       return route.fulfill({ contentType: 'text/html', body:
-        `<html lang="en"><script type="module" src="${entry}"></script><body>${fields.join('')}</body></html>` });
+        `<html lang="en"><script type="module" src="${entry}"></script><body>${fields.join('')}<fieldset id="group"><label for="short">Short</label><input id="short" maxlength="5" data-writing-assist="toolbar"></fieldset></body></html>` });
     }
+    if (pathname.endsWith('/session') && !signedIn) return route.fulfill({ status: 401, body: 'Unauthorized' });
     if (pathname.endsWith('/session')) return route.fulfill({ json: { ok: true, data: { user: { sub: 'fixture' } } } });
     if (pathname.endsWith('/rewrite')) {
       if (delay) await delay;
@@ -37,7 +39,7 @@ try {
   const message = field.locator('.assist-message');
   await input.fill('🌱\noriginal');
   assert.equal(await field.locator('.field-count').textContent(), '11/20');
-  assert.equal(await page.locator('.wa-field').count(), 30);
+  assert.equal(await page.locator('.wa-field').count(), 31);
   assert.ok(!requests.some(path => path.startsWith('/api/') || path.endsWith('/workflow.js')));
   await button('rewrite').click();
   await page.waitForFunction(() => document.querySelector('#q0').value === 'Revised\nanswer');
@@ -45,6 +47,43 @@ try {
   await page.waitForFunction(() => document.querySelector('.assist-message').textContent === '');
   await button('undo').click();
   assert.equal(await input.inputValue(), '🌱\noriginal');
+  const short = page.locator('#short');
+  const shortField = page.locator('.wa-field').filter({ has: short });
+  const shortAction = action => shortField.locator(`[data-action="${action}"]`);
+  await short.fill('start');
+  signedIn = false;
+  await shortAction('voice').click();
+  await page.getByRole('dialog').waitFor();
+  await page.locator('#group').evaluate(group => { group.disabled = true; });
+  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  await page.locator('#group').evaluate(group => { group.disabled = false; });
+  await page.waitForFunction(() => !document.querySelector('#group [data-action="voice"]').disabled);
+  assert.equal(await shortField.locator('.recovery').isVisible(), false);
+  signedIn = true;
+  result = 'ab\n\ncd';
+  await shortAction('rewrite').click();
+  await page.waitForFunction(() => document.querySelector('#short').value === 'ab cd', null, { timeout: 4000 });
+  result = '🌱\r\n\r\n🌱x';
+  await shortAction('rewrite').click();
+  await shortField.locator('.recovery').waitFor({ state: 'visible' });
+  assert.equal(await short.inputValue(), 'ab cd');
+  await shortField.locator('.recovery textarea').fill('🌱\n\n🌱');
+  await shortAction('retry').click();
+  await page.waitForFunction(() => document.querySelector('#short').value === '🌱 🌱');
+  assert.equal(await shortField.locator('.field-count').textContent(), '5/5');
+  let unlock;
+  delay = new Promise(resolve => { unlock = resolve; });
+  const started = page.waitForRequest(root + '/api/rewrite-bridge/rewrite');
+  await shortAction('rewrite').click();
+  await started;
+  await page.locator('#group').evaluate(group => { group.disabled = true; });
+  unlock();
+  delay = null;
+  await shortAction('cancel').waitFor({ state: 'hidden' });
+  assert.equal(await short.inputValue(), '🌱 🌱');
+  assert.equal(await shortAction('rewrite').isDisabled(), true);
+  await page.locator('#group').evaluate(group => { group.disabled = false; });
+  await page.waitForFunction(() => !document.querySelector('#group [data-action="rewrite"]').disabled);
   result = 'x'.repeat(21);
   await button('rewrite').click();
   await field.locator('.recovery').waitFor({ state: 'visible' });
@@ -66,7 +105,7 @@ try {
   }, entry);
   release();
   assert.equal(await input.inputValue(), 'replacement');
-  assert.equal(await page.locator('.wa-field').count(), 30);
+  assert.equal(await page.locator('.wa-field').count(), 31);
   assert.equal(requests.filter(path => path.endsWith('/writing-assist/workflow.js')).length, 1);
   assert.deepEqual(errors, []);
   console.log('Writing assistance smoke passed');

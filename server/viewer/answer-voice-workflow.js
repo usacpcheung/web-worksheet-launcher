@@ -90,7 +90,7 @@ function waitFor(promise, signal) {
 }
 
 export function createVoiceWorkflow({ context, apply, recover, changed = () => {},
-  api, checkSession, getProviderAuth, recording = createAnswerRecording, setTimer = setInterval, clearTimer = clearInterval }) {
+  api, checkSession, getProviderAuth, normalizeCandidate, recording = createAnswerRecording, setTimer = setInterval, clearTimer = clearInterval }) {
   let sequence = 0, active = null, timer = null;
   let pendingAudio = null;
   let lastDiagnostic = null;
@@ -121,6 +121,8 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
     if (op.accountCurrent && !op.accountCurrent()) { keep(op, 'STALE_CONTEXT'); return false; }
     if (!fresh(op)) { keep(op, 'STALE_CONTEXT', candidate); return false; }
     const config = read(op.blockId).block.responseConfig;
+    // Host fields can normalize a segment before insertion, caret calculation and limit checks.
+    if (normalizeCandidate) candidate = normalizeCandidate(op.blockId, candidate);
     // Inline blanks use the same single-line normalization as typed/pasted input.
     if (config?.blankTarget) candidate = candidate.replace(/[\r\n]+/g, ' ');
     const value = op.mode === 'rewrite' ? { text: candidate, caret: candidate.length }

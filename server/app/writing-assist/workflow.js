@@ -1,5 +1,5 @@
 // Loaded only on first use. All imports refer to the existing same-origin release.
-import { createVoiceWorkflow } from '../../viewer/answer-voice-workflow.js';
+import { createVoiceWorkflow, isInitialAuthRecovery } from '../../viewer/answer-voice-workflow.js';
 import { requestVoiceSignIn } from '../../viewer/voice-sign-in.js';
 import { createServerApiClient } from '../api/server-api-client.js';
 import { createReadAuthFlow } from '../auth/read-auth-flow.js';
@@ -38,7 +38,7 @@ export function createLessonWorkflow(fields, render) {
   const editable = id => {
     const field = fields.get(id);
     return field?.input.isConnected && document.getElementById(id) === field.input
-      && !field.input.disabled && !field.input.readOnly;
+      && !field.input.matches(':disabled') && !field.input.readOnly && field.input.maxLength > 0;
   };
 
   const voice = createVoiceWorkflow({
@@ -49,7 +49,7 @@ export function createLessonWorkflow(fields, render) {
       if (!field) return { editable: false };
       return {
         attemptId: state.localAttemptId, contextKey: field, editable: editable(id),
-        block: { kind: 'question', responseConfig: { inputType: 'text', maxLength: field.input.maxLength < 0 ? Number.MAX_SAFE_INTEGER : field.input.maxLength } },
+        block: { kind: 'question', responseConfig: { inputType: 'text', maxLength: field.input.maxLength } },
         answer: field.input.value, recovery: state.voiceRecovery[id],
       };
     },
@@ -58,10 +58,14 @@ export function createLessonWorkflow(fields, render) {
       else delete state.voiceRecovery[id];
       render();
     },
+    normalizeCandidate(id, candidate) {
+      return fields.get(id).input instanceof HTMLInputElement
+        ? candidate.replace(/[\r\n]+/g, ' ')
+        : candidate.replace(/\r\n?/g, '\n');
+    },
     apply(id, value, before, caret) {
       const field = fields.get(id);
-      if (field.input instanceof HTMLInputElement) value = value.replace(/[\r\n]+/g, ' ');
-      field.write(value, Math.min(caret, value.length));
+      field.write(value, caret);
       field.undo = value !== before && field.input.value === value ? { before, after: value } : null;
     },
     changed: render,
@@ -89,7 +93,12 @@ export function createLessonWorkflow(fields, render) {
       if (record?.phase === 'capture' && (record.code === 'AUTH_REQUIRED' || record.authenticated)) voice.discard(id);
       else delete state.voiceRecovery[id];
     },
-    cancelPopup() { popup?.cancel(); popup?.popupWindow?.close(); },
+    cancelSignIn(id) {
+      popup?.cancel();
+      popup?.popupWindow?.close();
+      // An initial prompt owns no recording or transcript, even if the host just disabled the field.
+      if (isInitialAuthRecovery(state.voiceRecovery[id])) delete state.voiceRecovery[id];
+    },
     clear() { popup?.cancel(); voice.teardown(); },
   };
 }
