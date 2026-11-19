@@ -41,7 +41,7 @@ export function controls() {
 <button type="button" data-action="stop" hidden>${label('stop')}</button>
 <button type="button" data-action="cancel" hidden>${label('cancel')}</button>
 </div>
-<p class="assist-message" role="status"></p>
+<div class="wa-status"><span class="assist-message" role="status"></span> <span class="wa-clock" role="timer" aria-live="off" hidden></span></div>
 <div class="recovery" hidden>
 <label>${label('recovery')}<textarea rows="2"></textarea></label>
 <button type="button" data-action="login">${label('login')}</button>

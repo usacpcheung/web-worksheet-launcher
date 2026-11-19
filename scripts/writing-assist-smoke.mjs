@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright';
 
-const browser = await chromium.launch();
+const browser = await chromium.launch({ args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] });
 try {
-  const page = await browser.newPage();
+  const page = await browser.newPage({ permissions: ['microphone'], viewport: { width: 390, height: 844 } });
   const errors = [];
   const requests = [];
   const root = 'https://lesson.test';
@@ -24,6 +24,7 @@ try {
     }
     if (pathname.endsWith('/session') && !signedIn) return route.fulfill({ status: 401, body: 'Unauthorized' });
     if (pathname.endsWith('/session')) return route.fulfill({ json: { ok: true, data: { user: { sub: 'fixture' } } } });
+    if (pathname.endsWith('/transcriptions')) return route.fulfill({ json: { ok: true, result: 'Voice' } });
     if (pathname.endsWith('/rewrite')) {
       if (delay) await delay;
       return route.fulfill({ json: { ok: true, result } });
@@ -107,6 +108,30 @@ try {
   assert.equal(await input.inputValue(), 'replacement');
   assert.equal(await page.locator('.wa-field').count(), 31);
   assert.equal(requests.filter(path => path.endsWith('/writing-assist/workflow.js')).length, 1);
+  await page.clock.install();
+  result = 'Voice';
+  delay = null;
+  const timer = field.getByRole('timer');
+  for (const finish of ['cancel', 'stop', 'automatic']) {
+    await input.fill('');
+    const before = requests.filter(path => path.endsWith('/transcriptions')).length;
+    await button('voice').click();
+    await timer.waitFor();
+    assert.equal(await timer.textContent(), '0:00 / 1:00');
+    assert.equal(await page.getByRole('timer').count(), 1);
+    await page.clock.fastForward(1000);
+    await page.waitForFunction(() => document.querySelector('.wa-clock:not([hidden])')?.textContent === '0:01 / 1:00');
+    const clockBox = await timer.boundingBox();
+    const countBox = await field.locator('.field-count').boundingBox();
+    assert.ok(clockBox.x + clockBox.width <= countBox.x);
+    if (finish === 'automatic') await page.clock.fastForward(58500);
+    else await button(finish).click();
+    await timer.waitFor({ state: 'hidden' });
+    await button('cancel').waitFor({ state: 'hidden' });
+    assert.equal(requests.filter(path => path.endsWith('/transcriptions')).length, before + Number(finish !== 'cancel'));
+    assert.equal(await input.inputValue(), finish === 'cancel' ? '' : 'Voice');
+    if (await button('discard').isVisible()) await button('discard').click();
+  }
   assert.deepEqual(errors, []);
   console.log('Writing assistance smoke passed');
 } finally {

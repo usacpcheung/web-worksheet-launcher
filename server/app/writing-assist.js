@@ -12,6 +12,10 @@ function success(field, message) {
   }, 3000);
 }
 
+function clockTime(seconds) {
+  return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
+}
+
 function render() {
   const records = runtime?.records ?? {};
   const audioOwner = [...fields.values()].find(({ input }) => {
@@ -33,7 +37,15 @@ function render() {
     buttons.rewrite.disabled = isBlocked || !input.value.trim() || tooLong;
     buttons.rewrite.title = tooLong ? label('limit') : '';
     buttons.undo.disabled = isBlocked || field.undo?.after !== input.value || field.undo.before.length > input.maxLength;
-    buttons.stop.hidden = active?.state !== 'recording';
+    const recording = active?.state === 'recording';
+    field.clock.hidden = !recording;
+    if (recording) {
+      const limit = runtime.recordingLimitSeconds;
+      const elapsed = Math.min(limit, Math.floor(runtime.voice.elapsedSeconds));
+      const time = clockTime(elapsed) + ' / ' + clockTime(limit);
+      if (field.clock.textContent !== time) field.clock.textContent = time;
+    }
+    buttons.stop.hidden = !recording;
     buttons.cancel.hidden = !own;
     buttons.stop.disabled = !own;
     const showRecovery = Boolean(record && !own);
@@ -166,6 +178,7 @@ export function attach(input) {
   const field = {
     id: input.id, panel, count, input, container, buttons, recoveredText: panel.querySelector('textarea'),
     recovery: panel.querySelector('.recovery'), status: panel.querySelector('.assist-message'),
+    clock: panel.querySelector('.wa-clock'),
     undo: null, message: '', hasCaret: false,
     write(value, caret) {
       input.value = value;

@@ -1,5 +1,6 @@
 // Loaded only on first use. All imports refer to the existing same-origin release.
 import { createVoiceWorkflow, isInitialAuthRecovery } from '../../viewer/answer-voice-workflow.js';
+import { MAX_RECORDING_MS } from '../../viewer/answer-recording.js';
 import { requestVoiceSignIn } from '../../viewer/voice-sign-in.js';
 import { createServerApiClient } from '../api/server-api-client.js';
 import { createReadAuthFlow } from '../auth/read-auth-flow.js';
@@ -84,7 +85,7 @@ export function createLessonWorkflow(fields, render) {
     },
   };
   return {
-    voice, records: state.voiceRecovery, t,
+    voice, recordingLimitSeconds: MAX_RECORDING_MS / 1000, records: state.voiceRecovery, t,
     signIn(id, confirm, isCurrent) { return requestVoiceSignIn(session, { blockId: id, confirm, isCurrent }); },
     discard(id) {
       // The shared workflow owns one audio blob. Clearing an unrelated text
