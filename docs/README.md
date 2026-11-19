@@ -40,6 +40,7 @@ Contributor instructions, discoverable UI skills, colocated module/font notes an
 - [Fill-in-the-blanks authoring, answering and package contract](worksheet/fill-in-the-blanks.md)
 - [Worksheet assessment and feedback](worksheet/worksheet-feedback.md)
 - [Learner voice, rewrite, recovery and Undo](worksheet/viewer-voice-workflow.md)
+- [Writing assistance for same-origin HTML lessons](worksheet/lesson-writing-assist.md)
 - [Published loading feedback](worksheet/viewer-package-load-progress.md)
 - [Current viewer layout and interaction guidance](worksheet/viewer-ui-refactor-plan.md)
 - [Long text answers](worksheet/long-text-answers.md)
