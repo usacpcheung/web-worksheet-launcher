@@ -8,7 +8,7 @@
 .wa-panel .wa-status { grid-area:2/1; margin:0; font-size:.85em; }
 .wa-panel button { font:inherit; color:inherit; cursor:pointer; border:1px solid var(--wa-border,#bdc9c4); border-radius:var(--wa-radius,.4rem); background:var(--wa-background,white); padding:.3em .65em; }
 .wa-panel button:disabled { opacity:.55; cursor:default; }
-.wa-panel .field-tools { grid-area:1/1/2/-1; justify-self:end; margin-right:calc(var(--wa-right-gap,0px) + .2rem); width:2.25rem; padding:.2rem; min-height:2rem; border:0; background:transparent; position:relative; }
+.wa-panel .field-tools { display:grid; place-items:center; grid-area:1/1/2/-1; justify-self:end; margin-right:calc(var(--wa-right-gap,0px) + .2rem); width:2.25rem; padding:.2rem; min-height:2rem; border:0; background:transparent; position:relative; }
 .wa-panel .field-actions,.wa-panel .field-progress { grid-column:1/-1; display:flex; gap:.35em; flex-wrap:wrap; }
 .wa-panel .field-progress:not(:has(button:not([hidden]))) { display:none; }
 .wa-panel .field-actions[popover] { position:fixed; inset:auto; margin:0; padding:.35em; width:max-content; max-width:calc(100vw - 8px); flex-direction:column; color:inherit; background:var(--wa-background,white); border:1px solid var(--wa-border,#bdc9c4); border-radius:var(--wa-radius,.4rem); box-shadow:0 4px 16px #0002; }

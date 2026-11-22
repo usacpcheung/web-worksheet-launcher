@@ -31,7 +31,11 @@ const messages = {
 export const label = key => messages[key][/^zh/i.test(document.documentElement.lang) ? 1 : 0];
 
 export function controls() {
-  return `<button type="button" class="field-tools" aria-haspopup="menu" aria-expanded="false">•••</button>
+  return `<button type="button" class="field-tools" aria-haspopup="menu" aria-expanded="false">
+  <svg aria-hidden="true" focusable="false" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+    <circle cx="5" cy="12" r="1.75"/><circle cx="12" cy="12" r="1.75"/><circle cx="19" cy="12" r="1.75"/>
+  </svg>
+</button>
 <div class="field-actions">
 <button type="button" data-action="voice">${label('voice')}</button>
 <button type="button" data-action="rewrite">${label('rewrite')}</button>
