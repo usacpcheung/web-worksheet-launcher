@@ -38,6 +38,39 @@ try {
   const input = page.locator('#q0');
   const button = action => field.locator(`[data-action="${action}"]`);
   const message = field.locator('.assist-message');
+  const short = page.locator('#short');
+  const shortField = page.locator('.wa-field').filter({ has: short });
+  // Some lesson fonts spread text dots beyond the hit target on mobile.
+  await page.setViewportSize({ width: 393, height: 844 });
+  await page.addStyleTag({ content: '.field-tools { font-size: 28px !important; letter-spacing: 12px; }' });
+  await page.evaluate(async path => {
+    (await import(path)).setLayout(document.querySelector('#short'), 'compact');
+  }, entry);
+  const trigger = shortField.getByRole('button', { name: 'Short · Writing tools' });
+  for (const width of ['100%', '75%']) {
+    await short.evaluate((el, w) => { el.style.width = w; }, width);
+    await short.focus();
+    await page.waitForFunction(() => {
+      const input = document.querySelector('#short');
+      const trigger = input.parentElement.querySelector('.field-tools');
+      const icon = trigger.querySelector('svg')?.getBoundingClientRect();
+      const box = trigger.getBoundingClientRect();
+      const field = input.getBoundingClientRect();
+      return icon?.width === 20 && icon.height === 20
+        && box.right <= field.right && box.left >= field.left
+        && icon.left >= box.left && icon.right <= box.right
+        && Math.abs(icon.left + icon.right - box.left - box.right) <= 1
+        && Math.abs(icon.top + icon.bottom - box.top - box.bottom) <= 1;
+    });
+  }
+  await trigger.locator('svg').click();
+  await shortField.getByRole('menu').waitFor();
+  await page.keyboard.press('Escape');
+  assert.equal(await trigger.evaluate(el => el === document.activeElement), true);
+  await page.evaluate(async path => {
+    (await import(path)).setLayout(document.querySelector('#short'), 'toolbar');
+  }, entry);
+  await page.setViewportSize({ width: 390, height: 844 });
   await input.fill('🌱\noriginal');
   assert.equal(await field.locator('.field-count').textContent(), '11/20');
   assert.equal(await page.locator('.wa-field').count(), 31);
@@ -48,8 +81,6 @@ try {
   await page.waitForFunction(() => document.querySelector('.assist-message').textContent === '');
   await button('undo').click();
   assert.equal(await input.inputValue(), '🌱\noriginal');
-  const short = page.locator('#short');
-  const shortField = page.locator('.wa-field').filter({ has: short });
   const shortAction = action => shortField.locator(`[data-action="${action}"]`);
   await short.fill('start');
   signedIn = false;
