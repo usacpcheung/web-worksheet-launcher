@@ -681,7 +681,7 @@ export default {
         "audioReplacementCanceled": "Audio replacement canceled.",
         "imageReplacementCanceled": "Image replacement canceled.",
         "imagePreviewBlocked": "Image preview was blocked. Allow pop-ups and try again.",
-        "imagePreviewLoadFailed": "Unable to load attached image for preview.",
+        "imagePreviewLoadFailed": "Unable to preview this image. Please attach a valid PNG, JPEG or WebP image.",
         "imagePreviewOpenFailed": "Unable to open attached image for preview.",
         "noOptionAudioToRemove": "No option audio attachment found to remove.",
         "optionAudioRegenerationCanceled": "Option audio regeneration canceled.",
