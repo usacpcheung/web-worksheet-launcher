@@ -434,6 +434,15 @@ function extFromName(name = '') {
   return match ? match[1] : '';
 }
 
+// Question images support PNG, JPEG and WebP. Imported MIME metadata is advisory.
+function questionImageMime(bytes) {
+  if ([137, 80, 78, 71, 13, 10, 26, 10].every((value, i) => bytes[i] === value)) return 'image/png';
+  if (bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) return 'image/jpeg';
+  if (String.fromCharCode(...bytes.subarray(0, 4)) === 'RIFF'
+    && String.fromCharCode(...bytes.subarray(8, 12)) === 'WEBP') return 'image/webp';
+  return null;
+}
+
 function fileLooksLikeType(file, mimeTypes, extensions) {
   const type = String(file?.type || '').toLowerCase();
   if (type) {
@@ -1547,71 +1556,37 @@ class EditorDraftSession {
       this.setMediaFeedback(t('editor.media.feedback.imagePreviewBlocked'));
       return { ok: false, reason: 'blocked' };
     }
-    try {
-      previewWindow.opener = null;
-    } catch (error) {
-      // Ignore cross-browser quirks when hardening the newly opened window.
-    }
-    try {
-      previewWindow.document.title = t('editor.media.preview.loadingImagePreview');
-      previewWindow.document.body.textContent = t('editor.media.preview.loadingImagePreview');
-    } catch (error) {
-      // Ignore cross-browser document access quirks for newly opened windows.
-    }
-
+    previewWindow.opener = null;
+    const doc = previewWindow.document;
+    let leftPreview = false;
+    previewWindow.addEventListener('pagehide', () => { leftPreview = true; }, { once: true });
+    doc.title = t('editor.media.preview.loadingImagePreview');
+    doc.body.textContent = doc.title;
     const record = await this.getLocalAssetRecord(assetId);
-    if (!record) {
-      previewWindow.close();
-      this.setMediaFeedback(t('editor.media.feedback.imagePreviewLoadFailed'));
-      return { ok: false, reason: 'missing-asset' };
-    }
-    const draftAsset = this.findAsset(assetId);
-    const fallbackImageMimeType = draftAsset?.mimeType || 'image/png';
-    const objectUrl = this.createObjectUrlForAsset(record, fallbackImageMimeType);
-    if (!objectUrl) {
-      previewWindow.close();
-      this.setMediaFeedback(t('editor.media.feedback.imagePreviewLoadFailed'));
-      return { ok: false, reason: 'missing-binary' };
-    }
-
-    let didNavigate = false;
+    if (leftPreview || previewWindow.closed) return { ok: false, reason: 'closed' };
     try {
-      previewWindow.location.replace(objectUrl);
-      didNavigate = true;
-    } catch (error) {
-      // Some browsers can block direct navigation on a noopener handle.
-    }
-
-    if (!didNavigate) {
-      try {
-        const doc = previewWindow.document;
-        if (doc?.body && typeof doc.createElement === 'function') {
-          doc.title = t('editor.media.preview.imagePreviewTitle');
-          doc.body.innerHTML = '';
-          const image = doc.createElement('img');
-          image.src = objectUrl;
-          image.alt = t('editor.media.preview.attachedImageAlt');
-          image.style.maxWidth = '100%';
-          image.style.height = 'auto';
-          image.style.display = 'block';
-          doc.body.style.margin = '0';
-          doc.body.style.padding = '12px';
-          doc.body.appendChild(image);
-          didNavigate = true;
-        }
-      } catch (error) {
-        // Ignore and fail with a user-facing feedback message below.
-      }
-    }
-
-    if (!didNavigate) {
+      const binary = record?.binary;
+      const bytes = binary instanceof ArrayBuffer ? new Uint8Array(binary) : binary;
+      const mime = bytes instanceof Uint8Array && questionImageMime(bytes);
+      if (!mime) throw new Error('Unsupported image');
+      const image = doc.createElement('img');
+      image.alt = t('editor.media.preview.attachedImageAlt');
+      image.style.maxWidth = '100%';
+      image.style.height = 'auto';
+      // The preview document owns this URL. Closing or navigating the tab releases it.
+      // Keep the bytes in an image context even when the package supplies another MIME.
+      image.src = previewWindow.URL.createObjectURL(new Blob([bytes], { type: mime }));
+      await image.decode();
+      if (leftPreview || previewWindow.closed) return { ok: false, reason: 'closed' };
+      doc.title = t('editor.media.preview.imagePreviewTitle');
+      doc.body.replaceChildren(image);
+    } catch {
+      if (leftPreview || previewWindow.closed) return { ok: false, reason: 'closed' };
       previewWindow.close();
-      this.setMediaFeedback(t('editor.media.feedback.imagePreviewOpenFailed'));
-      URL.revokeObjectURL(objectUrl);
-      return { ok: false, reason: 'navigation-failed' };
+      this.setMediaFeedback(t('editor.media.feedback.imagePreviewLoadFailed'));
+      return { ok: false, reason: record ? 'invalid-image' : 'missing-asset' };
     }
 
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
     this.clearMediaFeedback();
     this.notifyStateChange();
     return { ok: true };

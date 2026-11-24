@@ -671,7 +671,7 @@ export default {
         "audioReplacementCanceled": "已取消取代音訊。",
         "imageReplacementCanceled": "已取消取代圖片。",
         "imagePreviewBlocked": "圖片預覽被封鎖。請允許彈出式視窗後再試一次。",
-        "imagePreviewLoadFailed": "無法載入附加圖片作預覽。",
+        "imagePreviewLoadFailed": "無法預覽這張圖片。請重新附加有效的 PNG、JPEG 或 WebP 圖片。",
         "imagePreviewOpenFailed": "無法開啟附加圖片預覽。",
         "noOptionAudioToRemove": "找不到可移除的選項音訊附件。",
         "optionAudioRegenerationCanceled": "已取消重新生成選項音訊。",

@@ -4078,150 +4078,44 @@ test('openAssetImage returns blocked when window.open returns null', async () =>
   }
 });
 
-test('openAssetImage omits noopener/noreferrer features so browsers return window handle', async () => {
-  // Per spec (and Chrome 88+), window.open returns null when noopener or
-  // noreferrer is in the features string, even though a tab still opens.
+test('question image preview detects the raster type and uses only a decoded image element', async () => {
   const mod = await loadEditorModule();
   const { session, assetStore } = createSessionWithQuestion(mod);
-  assetStore.set('asset_img', { localId: 'asset_img', binary: new Uint8Array([255, 0]), metadata: { mimeType: 'image/png' } });
-
-  const origCreate = URL.createObjectURL;
-  const origRevoke = URL.revokeObjectURL;
-  URL.createObjectURL = () => 'blob:test/image2';
-  URL.revokeObjectURL = () => {};
-  const origOpen = globalThis.window.open;
-  const origSetTimeout = globalThis.window.setTimeout;
-  let receivedFeatures = null;
-  let navigatedTo = null;
-  globalThis.window.open = (_url, _target, features) => {
-    receivedFeatures = features ?? null;
-    // Simulate spec behaviour: return null when noopener or noreferrer present.
-    if (features?.includes('noreferrer') || features?.includes('noopener')) return null;
-    return {
-      set opener(_) {},
-      document: { get title() { return ''; }, set title(_) {}, body: { set textContent(_) {} } },
-      location: { replace(url) { navigatedTo = url; } },
-    };
-  };
+  const originalOpen = globalThis.window.open;
   try {
-    globalThis.window.setTimeout = () => 0;
-    const result = await session.openAssetImage('asset_img');
-    assert.equal(result.ok, true, 'should succeed without noopener/noreferrer features');
-    assert.ok(
-      !receivedFeatures?.includes('noreferrer') && !receivedFeatures?.includes('noopener'),
-      `features must not contain noopener or noreferrer, got: ${receivedFeatures}`
-    );
-    assert.equal(navigatedTo, 'blob:test/image2');
-    assert.equal(session.state.mediaFeedback, null);
-  } finally {
-    URL.createObjectURL = origCreate;
-    URL.revokeObjectURL = origRevoke;
-    globalThis.window.open = origOpen;
-    globalThis.window.setTimeout = origSetTimeout;
-  }
-});
-
-test('openAssetImage returns missing-asset when asset not in storage', async () => {
-  const mod = await loadEditorModule();
-  const { session } = createSessionWithQuestion(mod);
-  let closed = false;
-  globalThis.window.open = () => ({
-    close() { closed = true; },
-    set opener(_) {},
-    document: { get title() { return ''; }, set title(_) {}, body: { set textContent(_) {} } },
-    location: { replace() {} },
-  });
-  try {
-    const result = await session.openAssetImage('no_such_id');
-    assert.equal(result.ok, false);
-    assert.equal(result.reason, 'missing-asset');
-    assert.equal(closed, true);
-  } finally {
-    delete globalThis.window.open;
-  }
-});
-
-test('openAssetImage navigates new window to object URL on success', async () => {
-  const mod = await loadEditorModule();
-  const { session, assetStore } = createSessionWithQuestion(mod);
-  assetStore.set('asset_img', { localId: 'asset_img', binary: new Uint8Array([255, 0]), metadata: { mimeType: 'image/png' } });
-
-  const origCreate = URL.createObjectURL;
-  const revokedUrls = [];
-  const origRevoke = URL.revokeObjectURL;
-  URL.createObjectURL = () => 'blob:test/image1';
-  URL.revokeObjectURL = (u) => revokedUrls.push(u);
-
-  let navigatedTo = null;
-  globalThis.window.open = () => ({
-    set opener(_) {},
-    document: { get title() { return ''; }, set title(_) {}, body: { set textContent(_) {} } },
-    location: { replace(url) { navigatedTo = url; } },
-  });
-  const origSetTimeout = globalThis.window.setTimeout;
-  globalThis.window.setTimeout = (fn) => fn();
-  try {
-    const result = await session.openAssetImage('asset_img');
-    assert.equal(result.ok, true);
-    assert.equal(navigatedTo, 'blob:test/image1');
-    assert.ok(revokedUrls.includes('blob:test/image1'), 'URL should be revoked via setTimeout');
-    assert.equal(session.state.mediaFeedback, null);
-  } finally {
-    URL.createObjectURL = origCreate;
-    URL.revokeObjectURL = origRevoke;
-    delete globalThis.window.open;
-    globalThis.window.setTimeout = origSetTimeout;
-  }
-});
-
-test('openAssetImage falls back to in-window img render when location.replace throws', async () => {
-  const mod = await loadEditorModule();
-  const { session, assetStore } = createSessionWithQuestion(mod);
-  assetStore.set('asset_img', { localId: 'asset_img', binary: new Uint8Array([255, 0]), metadata: { mimeType: 'image/png' } });
-
-  const origCreate = URL.createObjectURL;
-  const origRevoke = URL.revokeObjectURL;
-  URL.createObjectURL = () => 'blob:test/image-fallback';
-  URL.revokeObjectURL = () => {};
-
-  let appendedSrc = null;
-  globalThis.window.open = () => {
-    const body = {
-      innerHTML: '',
-      style: {},
-      appendChild(node) {
-        appendedSrc = node?.src || null;
-      },
-    };
-    return {
-      set opener(_) {},
-      document: {
-        title: '',
-        body,
-        createElement() {
-          return { src: '', alt: '', style: {} };
+    for (const [binary, mime, decodable] of [
+      [[137, 80, 78, 71, 13, 10, 26, 10], 'image/png', true],
+      [[255, 216, 255], 'image/jpeg', true],
+      [[82, 73, 70, 70, 0, 0, 0, 0, 87, 69, 66, 80], 'image/webp', true],
+      [[255, 216, 255], 'image/jpeg', false],
+      [[60, 104, 116, 109, 108], null, false],
+      [[60, 115, 118, 103], null, false],
+      [null, null, false],
+    ]) {
+      if (binary) assetStore.set('preview', { binary: Uint8Array.from(binary), metadata: { mimeType: 'text/html' } });
+      else assetStore.delete('preview');
+      let blob, rendered;
+      const image = { style: {}, decode: async () => { if (!decodable) throw new Error('decode failed'); } };
+      const popup = {
+        document: {
+          body: { replaceChildren(node) { rendered = node; } },
+          createElement(tag) { assert.equal(tag, 'img'); return image; },
         },
-      },
-      location: {
-        replace() {
-          throw new Error('navigation blocked');
-        },
-      },
-      close() {},
-    };
-  };
-  const origSetTimeout = globalThis.window.setTimeout;
-  globalThis.window.setTimeout = (fn) => fn();
-  try {
-    const result = await session.openAssetImage('asset_img');
-    assert.equal(result.ok, true);
-    assert.equal(appendedSrc, 'blob:test/image-fallback');
-    assert.equal(session.state.mediaFeedback, null);
+        URL: { createObjectURL(value) { blob = value; return 'blob:preview'; } },
+        addEventListener() {},
+        close() { this.closed = true; },
+      };
+      globalThis.window.open = () => popup;
+      const result = await session.openAssetImage('preview');
+      assert.equal(result.ok, decodable);
+      assert.equal(blob?.type ?? null, mime);
+      assert.equal(rendered, decodable ? image : undefined);
+      assert.equal(Boolean(popup.closed), !decodable);
+      assert.equal(popup.opener, null);
+      if (!binary) assert.equal(result.reason, 'missing-asset');
+    }
   } finally {
-    URL.createObjectURL = origCreate;
-    URL.revokeObjectURL = origRevoke;
-    delete globalThis.window.open;
-    globalThis.window.setTimeout = origSetTimeout;
+    globalThis.window.open = originalOpen;
   }
 });
 
