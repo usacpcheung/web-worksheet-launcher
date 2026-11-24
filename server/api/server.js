@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { isUtf8 } from 'node:buffer';
 import fs from 'node:fs/promises';
 import { loadConfig } from './config.js';
 import { requireAuthenticatedIdentity, AuthError } from './auth.js';
@@ -35,10 +36,10 @@ class RequestBodyTooLargeError extends Error {
   }
 }
 
-async function readRequestBody(req, maxBytes = 30 * 1024 * 1024) {
+async function readRequestBody(stream, maxBytes) {
   const chunks = [];
   let total = 0;
-  for await (const chunk of req) {
+  for await (const chunk of stream) {
     const part = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     total += part.length;
     if (total > maxBytes) {
@@ -49,10 +50,19 @@ async function readRequestBody(req, maxBytes = 30 * 1024 * 1024) {
   return Buffer.concat(chunks);
 }
 
-async function readJsonBody(req) {
-  const bytes = await readRequestBody(req);
+const PUBLISH_METADATA_MAX_BYTES = 64 * 1024;
+class InvalidPublishBodyError extends Error {}
+
+async function readPublishMetadata(req) {
+  // Keep the socket available for a 413 response when a streamed body exceeds the limit.
+  const bytes = await readRequestBody(req.iterator({ destroyOnReturn: false }), PUBLISH_METADATA_MAX_BYTES);
   if (!bytes.length) return {};
-  return JSON.parse(bytes.toString('utf8'));
+  if (!isUtf8(bytes)) throw new SyntaxError('Publish metadata must be valid UTF-8.');
+  const payload = JSON.parse(bytes.toString('utf8'));
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new InvalidPublishBodyError('Publish metadata must be a JSON object.');
+  }
+  return payload;
 }
 
 function parseRoute(url) {
@@ -259,7 +269,7 @@ export function createRequestHandler({ service, rolePlaySceneDraftService, artif
       }
 
       if (req.method === 'POST' && url.pathname === '/api/v1/roleplayscene/published') {
-        const payload = await readJsonBody(req);
+        const payload = await readPublishMetadata(req);
         if (!payload.uploadedDraftId) {
           return json(
             res,
@@ -465,7 +475,7 @@ export function createRequestHandler({ service, rolePlaySceneDraftService, artif
       }
 
       if (req.method === 'POST' && url.pathname === '/api/v1/published') {
-        const payload = await readJsonBody(req);
+        const payload = await readPublishMetadata(req);
         if (!payload.uploadedDraftId) {
           return json(
             res,
@@ -603,7 +613,11 @@ export function createRequestHandler({ service, rolePlaySceneDraftService, artif
         return json(res, error.statusCode, fail(error.code, error.message));
       }
       if (error instanceof RequestBodyTooLargeError) {
+        res.shouldKeepAlive = false;
         return json(res, 413, fail('REQUEST_BODY_TOO_LARGE', 'Request body is too large.'));
+      }
+      if (error instanceof InvalidPublishBodyError) {
+        return json(res, 400, fail('INVALID_REQUEST', error.message));
       }
       if (error instanceof SyntaxError) {
         return json(res, 400, fail('INVALID_JSON', 'Malformed JSON body.'));

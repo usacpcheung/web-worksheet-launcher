@@ -1050,44 +1050,63 @@ test('DELETE /api/v1/roleplayscene/published/:id forwards owner-scoped delete', 
   });
 });
 
-test('POST /api/v1/published returns 413 with REQUEST_BODY_TOO_LARGE when body exceeds configured max', async () => {
-  let publishCalled = false;
-  await withServer(
-    {
-      configOverrides: {
-        packageUploadMaxBytes: 16,
-      },
-      service: {
-        async publishFromDraft() {
-          publishCalled = true;
-          return { ok: true, statusCode: 201, data: {} };
-        },
-      },
-    },
-    async (baseUrl) => {
-      const oversizedPayload = JSON.stringify({
-        uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
-        x: 'a'.repeat((31 * 1024 * 1024) + 128),
-      });
-      const res = await fetch(`${baseUrl}/api/v1/published`, {
-        method: 'POST',
-        headers: {
-          ...authHeaders,
-          'content-type': 'application/json',
-        },
-        body: oversizedPayload,
-      });
-
-      assert.equal(res.status, 413);
-      const payload = await res.json();
-      assert.equal(payload.ok, false);
-      assert.equal(payload.error.code, 'REQUEST_BODY_TOO_LARGE');
-      assert.equal(payload.error.message, 'Request body is too large.');
+for (const route of ['/api/v1/published', '/api/v1/roleplayscene/published']) {
+  test(`POST ${route} validates publish metadata and its UTF-8 byte limit before publishing`, async () => {
+    const published = [];
+    async function publish(payload) {
+      published.push(payload);
+      return { ok: true, statusCode: 201, data: {} };
     }
-  );
+    await withServer({
+      configOverrides: { packageUploadMaxBytes: 16 },
+      service: { publishFromDraft: publish },
+      rolePlaySceneDraftService: { publishRolePlaySceneFromDraft: publish },
+    }, async baseUrl => {
+      const post = body => fetch(baseUrl + route, {
+        method: 'POST', headers: { ...authHeaders, 'content-type': 'application/json' }, body,
+      });
+      for (const body of ['null', '[]', 'true', '42', '"hello"', '{}', '']) {
+        const res = await post(body);
+        assert.equal(res.status, 400);
+        assert.equal((await res.json()).error.code, 'INVALID_REQUEST');
+      }
+      const malformed = await post('{');
+      assert.equal(malformed.status, 400);
+      assert.equal((await malformed.json()).error.code, 'INVALID_JSON');
 
-  assert.equal(publishCalled, false);
-});
+      const invalidTitle = Buffer.concat([
+        Buffer.from('{"uploadedDraftId":"550e8400-e29b-41d4-a716-446655440000","title":"'),
+        Buffer.from([0xc3]), // Incomplete multibyte character inside a JSON string.
+        Buffer.from('"}'),
+      ]);
+      const invalidEncoding = await post(invalidTitle);
+      assert.equal(invalidEncoding.status, 400);
+      assert.equal((await invalidEncoding.json()).error.code, 'INVALID_JSON');
+
+      const title = '學'.repeat(21000) + '😀�';
+      const valid = JSON.stringify({ title, uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000' });
+      const atLimit = valid + ' '.repeat(64 * 1024 - Buffer.byteLength(valid));
+      const oversized = await post(atLimit + ' ');
+      assert.equal(oversized.status, 413);
+      assert.equal((await oversized.json()).error.code, 'REQUEST_BODY_TOO_LARGE');
+      // With no Content-Length the receiver must count incoming bytes.
+      async function* chunks() {
+        yield atLimit;
+        yield ' ';
+      }
+      const streamed = await fetch(baseUrl + route, {
+        method: 'POST', headers: authHeaders, body: chunks(), duplex: 'half',
+      });
+      assert.equal(streamed.status, 413);
+      assert.equal((await streamed.json()).error.code, 'REQUEST_BODY_TOO_LARGE');
+      assert.equal(published.length, 0);
+
+      assert.equal((await post(atLimit)).status, 201);
+      assert.equal(published.length, 1);
+      assert.equal(published[0].title, title);
+    });
+  });
+}
 
 test('GET /api/v1/session returns ready identity payload', async () => {
   await withServer({}, async (baseUrl) => {
