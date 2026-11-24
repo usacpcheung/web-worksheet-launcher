@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { isUtf8 } from 'node:buffer';
 import fs from 'node:fs/promises';
 import { loadConfig } from './config.js';
 import { requireAuthenticatedIdentity, AuthError } from './auth.js';
@@ -56,6 +57,7 @@ async function readPublishMetadata(req) {
   // Keep the socket available for a 413 response when a streamed body exceeds the limit.
   const bytes = await readRequestBody(req.iterator({ destroyOnReturn: false }), PUBLISH_METADATA_MAX_BYTES);
   if (!bytes.length) return {};
+  if (!isUtf8(bytes)) throw new SyntaxError('Publish metadata must be valid UTF-8.');
   const payload = JSON.parse(bytes.toString('utf8'));
   if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new InvalidPublishBodyError('Publish metadata must be a JSON object.');

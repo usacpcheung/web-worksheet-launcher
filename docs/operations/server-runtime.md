@@ -29,7 +29,7 @@ npm run start:api
 | `ROLEPLAYSCENE_PACKAGE_MAX_ENTRIES` | `200`. |
 | `ROLEPLAYSCENE_PACKAGE_MAX_ENTRY_NAME_LENGTH` | `512`. |
 
-The worksheet and RolePlayScene publish endpoints accept a JSON object with a maximum request body of 65,536 UTF-8 bytes, including JSON syntax and whitespace. An oversized body returns HTTP 413 (`REQUEST_BODY_TOO_LARGE`). A non-object value returns HTTP 400 (`INVALID_REQUEST`), and malformed JSON within the limit returns HTTP 400 (`INVALID_JSON`). ZIP uploads use `PACKAGE_UPLOAD_MAX_BYTES`.
+The worksheet and RolePlayScene publish endpoints accept a JSON object with a maximum request body of 65,536 UTF-8 bytes, including JSON syntax and whitespace. An oversized body returns HTTP 413 (`REQUEST_BODY_TOO_LARGE`). A non-object value returns HTTP 400 (`INVALID_REQUEST`), and malformed JSON or invalid UTF-8 within the limit returns HTTP 400 (`INVALID_JSON`). ZIP uploads use `PACKAGE_UPLOAD_MAX_BYTES`.
 
 Slots are currently fixed configuration values: three worksheet drafts, three uploaded attempts, and three RolePlayScene drafts per owner (separate resource lists). Browse defaults to 20 rows, maximum 100; offset is nonnegative. Lists return `draftSlotLimit`/`attemptSlotLimit` where applicable. There is no corresponding slot-limit environment variable.
 

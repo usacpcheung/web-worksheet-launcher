@@ -1074,7 +1074,16 @@ for (const route of ['/api/v1/published', '/api/v1/roleplayscene/published']) {
       assert.equal(malformed.status, 400);
       assert.equal((await malformed.json()).error.code, 'INVALID_JSON');
 
-      const title = '學'.repeat(21000);
+      const invalidTitle = Buffer.concat([
+        Buffer.from('{"uploadedDraftId":"550e8400-e29b-41d4-a716-446655440000","title":"'),
+        Buffer.from([0xc3]), // Incomplete multibyte character inside a JSON string.
+        Buffer.from('"}'),
+      ]);
+      const invalidEncoding = await post(invalidTitle);
+      assert.equal(invalidEncoding.status, 400);
+      assert.equal((await invalidEncoding.json()).error.code, 'INVALID_JSON');
+
+      const title = '學'.repeat(21000) + '😀�';
       const valid = JSON.stringify({ title, uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000' });
       const atLimit = valid + ' '.repeat(64 * 1024 - Buffer.byteLength(valid));
       const oversized = await post(atLimit + ' ');
