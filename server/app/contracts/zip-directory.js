@@ -15,7 +15,7 @@ export function checkZipLimit(limit, maximum, actual, path) {
   }
 }
 
-export function readZipDirectory(bytes, { allowDeflate = false, limits = {} } = {}) {
+export function readZipDirectory(bytes, { allowDeflate = false, decodeName = bytes => decoder.decode(bytes), limits = {} } = {}) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const u16 = offset => view.getUint16(offset, true);
   const u32 = offset => view.getUint32(offset, true);
@@ -52,7 +52,7 @@ export function readZipDirectory(bytes, { allowDeflate = false, limits = {} } = 
     if (method !== 0 && !(allowDeflate && method === 8)) invalid('unsupported ZIP compression method');
     if (method === 0 && compressed !== size) invalid('stored entry size mismatch');
     const nameBytes = bytes.subarray(nameStart, nameStart + nameLength);
-    const name = decoder.decode(nameBytes);
+    const name = decodeName(nameBytes, Boolean(flags & 0x0800));
     if (names.has(name)) invalid('duplicate entry name "' + name + '"');
     names.add(name);
     checkZipLimit('maxEntryNameLength', limits.maxEntryNameLength ?? 65535, name.length, name);
@@ -68,9 +68,13 @@ export function readZipDirectory(bytes, { allowDeflate = false, limits = {} } = 
     let rangeEnd = dataEnd;
     if (flags & 8) {
       // A streaming writer places sizes and CRC after the data.
-      if (rangeEnd + 4 <= central && u32(rangeEnd) === 0x08074b50) rangeEnd += 4;
-      if (rangeEnd + 12 > central || u32(rangeEnd) !== checksum || u32(rangeEnd + 4) !== compressed
-        || u32(rangeEnd + 8) !== size) invalid('data descriptor mismatch');
+      const matches = at => at + 12 <= central && u32(at) === checksum
+        && u32(at + 4) === compressed && u32(at + 8) === size;
+      if (rangeEnd + 16 <= central && u32(rangeEnd) === 0x08074b50 && matches(rangeEnd + 4)) {
+        rangeEnd += 4;
+      } else if (!matches(rangeEnd)) {
+        invalid('data descriptor mismatch');
+      }
       rangeEnd += 12;
     } else if (u32(local + 14) !== checksum || u32(local + 18) !== compressed || u32(local + 22) !== size) {
       invalid('inconsistent local checksum or size');

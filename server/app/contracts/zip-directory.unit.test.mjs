@@ -33,3 +33,31 @@ test('stored archive ranges must be disjoint, including local header space', () 
   }
   assert.throws(() => parseStoredZip(bytes), /overlapping entries/);
 });
+
+test('streaming ZIP descriptors can have a CRC equal to the optional signature', () => {
+  const data = Uint8Array.of(172, 10, 122, 213);
+  const original = createStoredZip([{ path: 'x', data }]);
+  const central = new DataView(original.buffer).getUint32(original.length - 6, true);
+  for (const signed of [true, false]) {
+    const descriptor = new Uint8Array(signed ? 16 : 12);
+    const fields = new DataView(descriptor.buffer);
+    const offset = signed ? 4 : 0;
+    if (signed) fields.setUint32(0, 0x08074b50, true);
+    fields.setUint32(offset, 0x08074b50, true);
+    fields.setUint32(offset + 4, data.length, true);
+    fields.setUint32(offset + 8, data.length, true);
+    const archive = new Uint8Array(original.length + descriptor.length);
+    archive.set(original.subarray(0, central));
+    archive.set(descriptor, central);
+    const directory = central + descriptor.length;
+    archive.set(original.subarray(central), directory);
+    const view = new DataView(archive.buffer);
+    view.setUint32(archive.length - 6, directory, true);
+    view.setUint16(6, 8, true);
+    view.setUint16(directory + 8, 8, true);
+    archive.fill(0, 14, 26);
+    assert.deepEqual(parseStoredZip(archive).get('x'), data);
+    archive[central + descriptor.length - 1] ^= 1;
+    assert.throws(() => parseStoredZip(archive), /descriptor mismatch/);
+  }
+});

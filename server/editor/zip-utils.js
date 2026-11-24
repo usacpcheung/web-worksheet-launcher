@@ -78,6 +78,7 @@ function createStoredZip(entries) {
   entries.forEach((entry) => {
     const path = normalizePath(String(entry.path || ''));
     const nameBytes = textEncoder.encode(path);
+    const nameFlags = nameBytes.some(byte => byte >= 0x80) ? 0x0800 : 0;
     const data = toUint8Array(entry.data);
     const checksum = crc32(data);
 
@@ -85,7 +86,7 @@ function createStoredZip(entries) {
     const localView = new DataView(localHeader.buffer);
     writeUint32(localView, 0, 0x04034b50);
     writeUint16(localView, 4, 20);
-    writeUint16(localView, 6, 0);
+    writeUint16(localView, 6, nameFlags);
     writeUint16(localView, 8, 0); // compression method: stored
     writeUint16(localView, 10, 0);
     writeUint16(localView, 12, 0);
@@ -103,7 +104,7 @@ function createStoredZip(entries) {
     writeUint32(centralView, 0, 0x02014b50);
     writeUint16(centralView, 4, 20);
     writeUint16(centralView, 6, 20);
-    writeUint16(centralView, 8, 0);
+    writeUint16(centralView, 8, nameFlags);
     writeUint16(centralView, 10, 0);
     writeUint16(centralView, 12, 0);
     writeUint16(centralView, 14, 0);

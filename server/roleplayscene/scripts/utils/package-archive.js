@@ -1,6 +1,6 @@
 import { readZipDirectory, checkZipLimit } from '../../../app/contracts/zip-directory.js';
 import { crc32 } from '../../../editor/zip-utils.js';
-import { Inflate } from '../vendor/fflate.module.js';
+import { Inflate, strFromU8 } from '../vendor/fflate.module.js';
 
 export const DEFAULT_ROLEPLAYSCENE_PACKAGE_LIMITS = Object.freeze({
   maxUncompressedBytes: 64 * 1024 * 1024,
@@ -28,7 +28,9 @@ export function checkSceneExportSizes(entries) {
 // Never hand the inflater a whole untrusted stream with only its declared size.
 function* extract(bytes, overrides) {
   const limits = { ...DEFAULT_ROLEPLAYSCENE_PACKAGE_LIMITS, ...overrides };
-  const entries = readZipDirectory(bytes, { allowDeflate: true, limits });
+  const entries = readZipDirectory(bytes, {
+    allowDeflate: true, limits, decodeName: (raw, utf8) => strFromU8(raw, !utf8),
+  });
   const files = new Map();
   for (const entry of entries) {
     const input = bytes.subarray(entry.dataStart, entry.dataEnd);
@@ -44,7 +46,15 @@ function* extract(bytes, overrides) {
       if (!input.length) throw new Error('Invalid ZIP: missing compressed data.');
       const step = 4096;
       for (let pos = 0; pos < input.length; pos += step) {
-        inflater.push(input.subarray(pos, pos + step), pos + step >= input.length);
+        const lastChunk = pos + step >= input.length;
+        inflater.push(input.subarray(pos, pos + step), lastChunk);
+        // In the bundled fflate, f marks the final block; l is cleared when
+        // its end is decoded. p retains the partly consumed byte (if any).
+        const ended = inflater.s.f && !inflater.s.l;
+        if (ended && (!lastChunk || inflater.p.length > Math.ceil(inflater.s.p / 8))) {
+          throw new Error('Invalid ZIP: trailing compressed data.');
+        }
+        if (lastChunk && !ended) throw new Error('Invalid ZIP: incomplete DEFLATE stream.');
         yield;
       }
       if (written !== entry.size) throw new Error('Invalid ZIP: incomplete entry.');
