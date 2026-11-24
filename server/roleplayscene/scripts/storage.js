@@ -1,10 +1,10 @@
 import { voiceChoiceFields, generatedVoiceFields } from './t2a-presets.js';
 import { createProject, createScene, SceneType } from './model.js';
 import { zip } from './utils/zip.js';
-import { readLocalSceneArchive, checkSceneExportSizes } from './utils/package-archive.js';
+import { readLocalSceneArchive, checkSceneExportSizes, resolveLegacySceneNames, sceneMediaPath, sceneMediaPaths } from './utils/package-archive.js';
 import { seedIdSequencesFromProject } from './utils/id.js';
 import { getSceneName } from './scene-name.js';
-import { validateSceneIdentity } from './scene-identity.js';
+import { sceneImportErrors } from './project-import-shape.js';
 
 const DB_NAME = 'roleplayscene';
 const DB_VERSION = 1;
@@ -272,24 +272,24 @@ function buildManifest(snapshot) {
   return { manifest, binaries };
 }
 
-function restoreAsset(manifestAsset, files, warnings) {
-  if (!manifestAsset) return null;
-  const name = manifestAsset.name ?? '';
-  const path = manifestAsset.path ?? null;
-  if (path && files[path]) {
-    const type = manifestAsset.type || 'application/octet-stream';
-    const blob = new Blob([files[path]], { type });
-    return { ...generatedVoiceFields(manifestAsset), name, blob };
+function manifestToSerialized(manifest, files, warnings) {
+  const blobs = new Map();
+  function restoreAsset(asset) {
+    if (!asset) return null;
+    const name = asset.name ?? '';
+    const path = sceneMediaPath(files, asset.path);
+    let blob = null;
+    if (files.has(path)) {
+      const type = asset.type || 'application/octet-stream';
+      if (!blobs.has(path)) blobs.set(path, new Blob([files.get(path)], { type }));
+      blob = blobs.get(path);
+      if (blob.type !== type) blob = blob.slice(0, blob.size, type);
+    } else if (path) {
+      warnings.push(path);
+    }
+    return { ...generatedVoiceFields(asset), name, blob };
   }
-  if (path && warnings) {
-    warnings.push(path);
-  }
-  return { ...generatedVoiceFields(manifestAsset), name, blob: null };
-}
-
-function manifestToSerialized(manifest, files, warnings = []) {
-  if (!manifest) return null;
-  const scenes = Array.isArray(manifest.scenes) ? manifest.scenes.slice(0, 20) : [];
+  const scenes = manifest.scenes;
   return {
     meta: { ...manifest.meta },
     speakers: Array.isArray(manifest.speakers)
@@ -301,13 +301,13 @@ function manifestToSerialized(manifest, files, warnings = []) {
         id: scene.id,
         name: getSceneName(scene),
         type: scene.type,
-        image: restoreAsset(scene.image, files, warnings),
-        backgroundAudio: restoreAsset(scene.backgroundAudio, files, warnings),
+        image: restoreAsset(scene.image),
+        backgroundAudio: restoreAsset(scene.backgroundAudio),
         dialogue: dialogue.map(line => ({
           text: line.text ?? '',
           speakerId: line.speakerId ?? null,
           ...voiceChoiceFields(line),
-          audio: restoreAsset(line.audio, files, warnings),
+          audio: restoreAsset(line.audio),
           bubble: line.bubble ? { ...line.bubble } : undefined,
         })),
         choices: Array.isArray(scene.choices)
@@ -699,7 +699,7 @@ function serializePlainProjectJson(json) {
     throw new ProjectImportError(ImportErrorCode.INVALID_PROJECT, 'Project scenes must be an array');
   }
   validateImportDraftShape(json);
-  const scenes = Array.isArray(json.scenes) ? json.scenes.slice(0, 20) : [];
+  const scenes = json.scenes;
   return {
     meta: { ...json.meta },
     speakers: Array.isArray(json.speakers) ? json.speakers.map(speaker => ({ ...speaker })) : [],
@@ -709,23 +709,7 @@ function serializePlainProjectJson(json) {
 }
 
 function validateImportDraftShape(project) {
-  if (!project || !Array.isArray(project.scenes)) {
-    throw new ProjectImportError(ImportErrorCode.INVALID_PROJECT, 'Project scenes are missing');
-  }
-  const errors = validateSceneIdentity(project);
-  for (const [index, scene] of project.scenes.entries()) {
-    if (scene?.dialogue == null) continue;
-    if (!Array.isArray(scene.dialogue)) {
-      errors.push(`scenes[${index}].dialogue must be an array.`);
-      continue;
-    }
-    for (const [lineIndex, line] of scene.dialogue.entries()) {
-      if (!line || typeof line !== 'object' || Array.isArray(line)
-        || (line.text != null && typeof line.text !== 'string')) {
-        errors.push(`scenes[${index}].dialogue[${lineIndex}] must be an object with string text.`);
-      }
-    }
-  }
+  const errors = sceneImportErrors(project);
   if (errors.length) {
     throw new ProjectImportError(ImportErrorCode.INVALID_PROJECT, 'Project data is invalid', { errors });
   }
@@ -779,9 +763,9 @@ export async function applyPreparedProjectImport(store, preparedImport) {
 }
 
 export async function extractProjectFromArchive(fileOrBytes, options = {}) {
-  let unpacked;
+  let archive;
   try {
-    unpacked = await readLocalSceneArchive(fileOrBytes);
+    archive = await readLocalSceneArchive(fileOrBytes);
   } catch (err) {
     if (err.code === 'ZIP_RESOURCE_LIMIT') throw new ProjectImportError(ImportErrorCode.ZIP_LIMIT, err.message);
     throw new ProjectImportError(ImportErrorCode.INVALID_ZIP, 'Project archive is unreadable');
@@ -797,34 +781,35 @@ export async function extractProjectFromArchive(fileOrBytes, options = {}) {
   }
 
   let manifest;
-  const files = { ...unpacked };
-  if (unpacked[PACKAGE_MANIFEST_PATH]) {
-    const packageManifest = parseJsonEntry(unpacked[PACKAGE_MANIFEST_PATH], 'Archive manifest.json is invalid');
+  const { files } = archive;
+  let packageManifest;
+  if (files.get(PACKAGE_MANIFEST_PATH)) {
+    packageManifest = parseJsonEntry(files.get(PACKAGE_MANIFEST_PATH), 'Archive manifest.json is invalid');
     if (
       packageManifest?.format !== PACKAGE_FORMAT
       || packageManifest?.packageVersion !== PACKAGE_VERSION
     ) {
       throw new ProjectImportError(ImportErrorCode.UNSUPPORTED_PACKAGE, 'Unsupported RolePlayScene package format');
     }
-    const projectEntry = unpacked[PACKAGE_PROJECT_PATH];
+    const projectEntry = files.get(PACKAGE_PROJECT_PATH);
     if (!projectEntry) {
       throw new ProjectImportError(ImportErrorCode.MISSING_PACKAGE_PROJECT, 'Archive is missing content/project.json');
     }
     manifest = parseJsonEntry(projectEntry, 'Archive content/project.json is invalid');
-    delete files[PACKAGE_MANIFEST_PATH];
-    delete files[PACKAGE_PROJECT_PATH];
+    files.delete(PACKAGE_MANIFEST_PATH);
+    files.delete(PACKAGE_PROJECT_PATH);
   } else {
-    if (unpacked[PACKAGE_PROJECT_PATH]) {
+    if (files.get(PACKAGE_PROJECT_PATH)) {
       throw new ProjectImportError(ImportErrorCode.MISSING_PACKAGE_MANIFEST, 'Archive is missing manifest.json');
     }
-    const projectEntry = unpacked[LEGACY_PROJECT_PATH];
+    const projectEntry = files.get(LEGACY_PROJECT_PATH);
     if (!projectEntry) {
       throw new ProjectImportError(ImportErrorCode.MISSING_PROJECT_JSON, 'Archive is missing project.json');
     }
     const parsed = parseJsonEntry(projectEntry, 'Archive project.json is invalid');
-    const manifestVersion = parsed.manifestVersion ?? 0;
+    const manifestVersion = parsed?.manifestVersion ?? 0;
     manifest = manifestVersion ? parsed.project : parsed;
-    delete files[LEGACY_PROJECT_PATH];
+    files.delete(LEGACY_PROJECT_PATH);
   }
   if (!manifest || typeof manifest !== 'object') {
     throw new ProjectImportError(ImportErrorCode.INVALID_PROJECT, 'Archive manifest missing project data');
@@ -833,6 +818,7 @@ export async function extractProjectFromArchive(fileOrBytes, options = {}) {
     throw new ProjectImportError(ImportErrorCode.INVALID_PROJECT, 'Archive project scenes must be an array');
   }
   validateImportDraftShape(manifest);
+  if (archive.legacyNames.size) resolveLegacySceneNames(archive, sceneMediaPaths(manifest, packageManifest));
   const missingMediaPaths = [];
   const serialized = manifestToSerialized(manifest, files, missingMediaPaths);
   if (!serialized) {

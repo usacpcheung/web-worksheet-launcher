@@ -358,8 +358,8 @@ function rewriteWorksheetPackageTitle(arrayBuffer, title) {
     title: nextTitle,
   };
   const entries = [
-    { path: 'manifest.json', data: JSON.stringify(manifest, null, 2) },
-    { path: 'content/worksheet.json', data: JSON.stringify(worksheet, null, 2) },
+    { path: 'manifest.json', data: JSON.stringify(manifest) },
+    { path: 'content/worksheet.json', data: JSON.stringify(worksheet) },
     ...parsed.assets.map((asset) => ({ path: asset.path, data: asset.binary })),
   ];
   return createStoredZip(entries);

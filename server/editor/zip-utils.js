@@ -57,8 +57,8 @@ function normalizePath(path) {
     throw new Error('ZIP entry path must be a non-empty string.');
   }
   const normalized = path.replace(/\\/g, '/').replace(/^\/+/, '');
-  if (normalized.includes('..')) {
-    throw new Error(`ZIP entry path cannot contain '..': ${path}`);
+  if (normalized.split('/').some(part => /^\.\.[.\s]*$/.test(part))) {
+    throw new Error(`ZIP entry path cannot contain a parent directory segment: ${path}`);
   }
   return normalized;
 }
@@ -78,6 +78,7 @@ function createStoredZip(entries) {
   entries.forEach((entry) => {
     const path = normalizePath(String(entry.path || ''));
     const nameBytes = textEncoder.encode(path);
+    if (nameBytes.length > 65535) throw new Error('ZIP entry name exceeds the classic ZIP limit.');
     const nameFlags = nameBytes.some(byte => byte >= 0x80) ? 0x0800 : 0;
     const data = toUint8Array(entry.data);
     const checksum = crc32(data);

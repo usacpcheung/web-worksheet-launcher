@@ -437,9 +437,18 @@ export class PackageService {
         ? await this.findAvailableCopyTitle({ client, identity, title: normalizedTitle, subject: normalizedSubject })
         : normalizedTitle;
       const uploadedDraftId = crypto.randomUUID();
-      const storedZipBytes = finalTitle !== normalizedTitle
-        ? Buffer.from(rewriteWorksheetPackageTitle(zipBytes, finalTitle))
-        : zipBytes;
+      let storedZipBytes = zipBytes;
+      if (finalTitle !== normalizedTitle) {
+        try {
+          storedZipBytes = Buffer.from(rewriteWorksheetPackageTitle(zipBytes, finalTitle));
+        } catch (error) {
+          await client.query('ROLLBACK');
+          return {
+            ok: false, statusCode: 400,
+            error: { code: 'INVALID_WORKSHEET_PACKAGE', message: 'Unable to create a copy of this package.', details: { reason: error.message } },
+          };
+        }
+      }
       artifact = await this.createDraftArtifact({ identity, uploadedDraftId, zipBytes: storedZipBytes });
 
       const row = await client.query(

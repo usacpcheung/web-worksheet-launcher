@@ -1,6 +1,6 @@
-import { validateSceneIdentity } from '../../roleplayscene/scripts/scene-identity.js';
+import { sceneImportErrors } from '../../roleplayscene/scripts/project-import-shape.js';
 import { createStoredZip, decodeUtf8 } from '../../editor/zip-utils.js';
-import { readSceneArchiveSync } from '../../roleplayscene/scripts/utils/package-archive.js';
+import { readSceneArchiveSync, resolveLegacySceneNames, sceneMediaPath, sceneMediaPaths } from '../../roleplayscene/scripts/utils/package-archive.js';
 export { DEFAULT_ROLEPLAYSCENE_PACKAGE_LIMITS } from '../../roleplayscene/scripts/utils/package-archive.js';
 
 export const ROLEPLAYSCENE_PACKAGE_FORMAT = 'roleplayscene-package';
@@ -54,36 +54,6 @@ function parseJsonEntry(files, path, {
       cause: error,
     });
   }
-}
-
-function collectReferencedMediaPaths(project) {
-  const paths = new Set();
-  const scenes = Array.isArray(project?.scenes) ? project.scenes : [];
-  for (const scene of scenes) {
-    for (const asset of [scene?.image, scene?.backgroundAudio]) {
-      if (typeof asset?.path === 'string' && asset.path.trim()) {
-        paths.add(asset.path.trim());
-      }
-    }
-    const dialogue = Array.isArray(scene?.dialogue) ? scene.dialogue : [];
-    for (const line of dialogue) {
-      if (typeof line?.audio?.path === 'string' && line.audio.path.trim()) {
-        paths.add(line.audio.path.trim());
-      }
-    }
-  }
-  return paths;
-}
-
-function collectManifestAssetPaths(manifest) {
-  const paths = new Set();
-  const assets = Array.isArray(manifest?.assets) ? manifest.assets : [];
-  for (const asset of assets) {
-    if (typeof asset?.path === 'string' && asset.path.trim()) {
-      paths.add(asset.path.trim());
-    }
-  }
-  return paths;
 }
 
 function fail(code, message, details = {}) {
@@ -178,7 +148,8 @@ function validateRolePlaySceneBubbleConfig(project) {
 }
 
 export function rewriteRolePlayScenePackageTitle(zipBytes, title, options = {}) {
-  const files = parseZipEntries(zipBytes, options);
+  const archive = parseZipEntries(zipBytes, options);
+  const { files } = archive;
   const manifest = parseJsonEntry(files, MANIFEST_PATH, {
     missingCode: 'ROLEPLAYSCENE_PACKAGE_MISSING_MANIFEST',
     missingMessage: 'RolePlayScene package is missing manifest.json.',
@@ -191,6 +162,7 @@ export function rewriteRolePlayScenePackageTitle(zipBytes, title, options = {}) 
     invalidCode: 'INVALID_ROLEPLAYSCENE_PROJECT_JSON',
     invalidMessage: 'RolePlayScene package content/project.json is malformed.',
   });
+  if (archive.legacyNames.size) resolveLegacySceneNames(archive, sceneMediaPaths(project, manifest));
   const nextTitle = normalizeText(title, normalizeText(project?.meta?.title ?? manifest?.project?.title, 'Untitled RolePlayScene'));
   const nextManifest = {
     ...manifest,
@@ -212,11 +184,16 @@ export function rewriteRolePlayScenePackageTitle(zipBytes, title, options = {}) 
   };
 
   const entries = [...files.entries()].map(([path, bytes]) => {
+    // The stored writer normalizes non-relative names. A copy must preserve
+    // the exact names used by the project.
+    if (!path.trim() || path.startsWith('/') || path.includes('\\')) {
+      throw new Error('Cannot preserve a non-relative archive entry name in a copy.');
+    }
     if (path === MANIFEST_PATH) {
-      return { path, data: textEncoder.encode(JSON.stringify(nextManifest, null, 2)) };
+      return { path, data: textEncoder.encode(JSON.stringify(nextManifest)) };
     }
     if (path === PROJECT_PATH) {
-      return { path, data: textEncoder.encode(JSON.stringify(nextProject, null, 2)) };
+      return { path, data: textEncoder.encode(JSON.stringify(nextProject)) };
     }
     return { path, data: bytes };
   });
@@ -236,7 +213,6 @@ function validateRolePlaySceneProjectForPlay(project) {
   const speakerIds = new Set((Array.isArray(project.speakers) ? project.speakers : [])
     .map(speaker => speaker?.id)
     .filter(Boolean));
-  errors.push(...validateSceneIdentity(project));
   const startScenes = scenes.filter(scene => scene?.type === 'start');
   if (startScenes.length !== 1) {
     errors.push(`Project must have exactly 1 start scene (found ${startScenes.length}).`);
@@ -332,12 +308,9 @@ export function validateRolePlayScenePackageForPublish(zipBytes, options = {}) {
     return validation;
   }
 
-  const errors = [];
-  if (validation.metadata.missingMediaCount > 0) {
-    errors.push(...validation.warnings
-      .filter(warning => warning?.code === 'ROLEPLAYSCENE_MEDIA_MISSING')
-      .map(warning => warning.message || String(warning)));
-  }
+  const errors = validation.warnings
+    .filter(warning => warning?.code === 'ROLEPLAYSCENE_MEDIA_MISSING')
+    .map(warning => warning.message);
   const playValidation = validateRolePlaySceneProjectForPlay(validation.project);
   const bubbleValidation = validateRolePlaySceneBubbleConfig(validation.project);
   errors.push(...playValidation.errors);
@@ -361,9 +334,9 @@ export function validateRolePlayScenePackageForPublish(zipBytes, options = {}) {
 }
 
 export function validateRolePlayScenePackage(zipBytes, options = {}) {
-  let files;
+  let archive;
   try {
-    files = parseZipEntries(zipBytes, options);
+    archive = parseZipEntries(zipBytes, options);
   } catch (error) {
     if (error?.code === ROLEPLAYSCENE_PACKAGE_RESOURCE_LIMIT_EXCEEDED) {
       return fail(
@@ -377,6 +350,7 @@ export function validateRolePlayScenePackage(zipBytes, options = {}) {
     });
   }
 
+  const { files } = archive;
   let manifest;
   try {
     manifest = parseJsonEntry(files, MANIFEST_PATH, {
@@ -427,20 +401,24 @@ export function validateRolePlayScenePackage(zipBytes, options = {}) {
   if (project.scenes.length === 0) {
     return fail('INVALID_ROLEPLAYSCENE_PROJECT', 'Uploaded RolePlayScene project must contain at least one scene.');
   }
-  const identityErrors = validateSceneIdentity(project);
-  if (identityErrors.length) {
-    return fail('INVALID_ROLEPLAYSCENE_PROJECT', 'Uploaded RolePlayScene scene IDs are invalid.', { errors: identityErrors });
+  const shapeErrors = sceneImportErrors(project);
+  if (shapeErrors.length) {
+    return fail('INVALID_ROLEPLAYSCENE_PROJECT', 'Uploaded RolePlayScene project data is invalid.', { errors: shapeErrors });
   }
   const startSceneCount = project.scenes.filter(scene => scene?.type === 'start').length;
   if (startSceneCount < 1) {
     return fail('INVALID_ROLEPLAYSCENE_PROJECT', 'Uploaded RolePlayScene project must contain a start scene.');
   }
 
+  const expectedMediaPaths = sceneMediaPaths(project, manifest);
+  resolveLegacySceneNames(archive, expectedMediaPaths);
   const mediaPaths = new Set([...files.keys()].filter(path => path.startsWith(MEDIA_PREFIX)));
-  const referencedMediaPaths = collectReferencedMediaPaths(project);
-  const manifestAssetPaths = collectManifestAssetPaths(manifest);
-  const expectedMediaPaths = new Set([...referencedMediaPaths, ...manifestAssetPaths]);
-  const missingMediaPaths = [...expectedMediaPaths].filter(path => !mediaPaths.has(path)).sort();
+  const missing = new Set();
+  for (const reference of expectedMediaPaths) {
+    const path = sceneMediaPath(files, reference);
+    if (!mediaPaths.has(path)) missing.add(path);
+  }
+  const missingMediaPaths = [...missing].sort();
   const warnings = missingMediaPaths.map(path => ({
     code: 'ROLEPLAYSCENE_MEDIA_MISSING',
     path,

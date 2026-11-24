@@ -476,9 +476,18 @@ export class RolePlaySceneDraftService {
         ? await this.findAvailableCopyTitle({ client, identity, title: normalizedTitle })
         : normalizedTitle;
       const uploadedDraftId = crypto.randomUUID();
-      const storedZipBytes = finalTitle !== normalizedTitle
-        ? Buffer.from(rewriteRolePlayScenePackageTitle(zipBytes, finalTitle, this.packageValidationOptions))
-        : zipBytes;
+      let storedZipBytes = zipBytes;
+      if (finalTitle !== normalizedTitle) {
+        try {
+          storedZipBytes = Buffer.from(rewriteRolePlayScenePackageTitle(zipBytes, finalTitle, this.packageValidationOptions));
+        } catch (error) {
+          await client.query('ROLLBACK');
+          return {
+            ok: false, statusCode: 400,
+            error: { code: 'INVALID_ROLEPLAYSCENE_PACKAGE_ZIP', message: 'Unable to create a copy of this package.', details: { reason: error.message } },
+          };
+        }
+      }
       const storedValidation = storedZipBytes === zipBytes
         ? validation
         : validateRolePlayScenePackage(storedZipBytes, this.packageValidationOptions);

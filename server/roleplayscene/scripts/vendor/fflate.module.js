@@ -257,6 +257,10 @@ var inflt = function (dat, st, buf, dict) {
                         err(0);
                     break;
                 }
+                // Local integrity check (RFC 1951, section 3.2.4): the
+                // stored length and its complement must agree.
+                if ((l ^ (dat[s - 2] | (dat[s - 1] << 8))) != 65535)
+                    err(1);
                 // ensure size
                 if (noBuf)
                     cbuf(bt + l);

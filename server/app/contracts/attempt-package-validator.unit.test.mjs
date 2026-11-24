@@ -31,3 +31,23 @@ test('legacy answer coercion remains available while unknown checking IDs fail u
   args[2].checking = { items: { unknown: { result: 'correct' } } };
   assert.throws(() => assertAttemptPackage(...args), /unknown blockId/);
 });
+
+test('v1/v2 restore budgets count media aliases while preserving optional assets and large unique files', () => {
+  const args = fixture();
+  const path = 'media/voice';
+  const assets = [{ assetId: 'a', path }, { assetId: 'b', path }, { assetId: 'optional', path: 'media/missing' }];
+  // Only lengths enter the contract check, so the fixture needs no large allocation.
+  const file = { byteLength: 15 * 1024 * 1024 };
+  const files = new Map([[path, file]]);
+  for (const version of [1, 2]) {
+    args[0] = { ...args[0], packageVersion: version, assets };
+    for (const allowLegacyEnvelope of [true, false]) {
+      file.byteLength = 15 * 1024 * 1024;
+      assert.doesNotThrow(() => assertAttemptPackage(...args, { files, allowLegacyEnvelope }));
+      file.byteLength += 1;
+      assert.throws(() => assertAttemptPackage(...args, { files, allowLegacyEnvelope }), /restore size limit/);
+    }
+    file.byteLength = 31 * 1024 * 1024;
+    assert.doesNotThrow(() => assertAttemptPackage({ ...args[0], assets: [assets[0]] }, args[1], args[2], { files }));
+  }
+});
