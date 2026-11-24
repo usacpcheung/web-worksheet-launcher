@@ -231,6 +231,7 @@ export default {
     "importFailed": "Import failed.",
     "importFailedSafe": "Import failed. The current project was not replaced.",
     "importCanceled": "Import canceled. The current project was not replaced.",
+    "importZipLimit": "Import failed: the archive exceeds the supported package limits.",
     "importInvalidZip": "Import failed: the ZIP file could not be read.",
     "importMissingProjectJson": "Import failed: the archive is missing project.json.",
     "importMissingPackageManifest": "Import failed: the package is missing manifest.json.",

@@ -24,7 +24,9 @@ Reviewed against main `7bb19de` on 2026-10-06. Code authorities: `server/editor/
 | Attempt containing feedback configuration/responses | `worksheet-attempt-package` | 8 / 1 | Includes the worksheet-owned settings and separate feedback responses. |
 | RolePlayScene | `roleplayscene-package` | 1 | Browser imports also accept plain project JSON and legacy root `project.json` ZIPs; server draft upload requires the current package envelope. |
 
-Worksheet/attempt ZIP helpers support stored (uncompressed) entries and validate entry sizes, CRCs and duplicate names. RolePlayScene uses bundled `fflate` archive reading and has separate API decompression resource limits; do not generalize its compression support to worksheet ZIP import.
+Worksheet and attempt readers accept stored entries. Before reading payloads they verify the complete classic ZIP directory, matching local headers, disjoint byte ranges and unique names. The directory count is bounded by the classic ZIP format (65,535 entries) and the directory length. Total stored payload cannot exceed the bytes preceding the directory. Each payload must match its CRC. The server upload byte ceiling is separate from local import.
+
+RolePlayScene accepts stored and DEFLATE entries. Browser imports and the API default to 200 entries, 512 characters per name, 32 MiB per entry and 64 MiB total expanded data. The browser also checks a 72 MiB archive-file ceiling before reading a local ZIP. Exports check the same expanded budgets. The API retains its configured upload and expansion limits. Both readers require each DEFLATE stream to consume its compressed entry, and verify decoded length and CRC before applying an import. RolePlayScene uses the legacy single-byte mapping for unflagged filenames. Older server copies sometimes used UTF-8 without setting the flag. Import and title-copy use that spelling when the project or manifest references it, the single-byte spelling is unreferenced and the alternate name is available. New stored exports mark non-ASCII filenames as UTF-8 in both headers.
 
 ## Worksheet ZIP
 
@@ -59,6 +61,8 @@ content/attempt.json
 media/*
 ```
 
+For v1/v2 attempts, several asset IDs can reference the same file. The combined bytes restored across those IDs may be up to the greater of 30 MiB and the total unpacked file bytes. The API and both viewer restore paths check this before storage. Optional missing legacy media remains supported.
+
 The embedded worksheet includes title/subject/owner, blocks, and compatibility IDs in metadata. Attempt content has schema version 1, `kind: worksheet-attempt`, timestamps, answers, optional checking data and status `in_progress`, `submitted` or `checked`. Manifest `attempt.localAttemptId` is local provenance, not the server `uploaded_attempt_id`.
 
 Resume restores from embedded content, never from a newer external worksheet. Restore creates new local identities and supports answer/check review without requiring the old local records. Recovery transcripts and raw recorded audio are excluded; packaged worksheet media remains included. Explicit upload uses the private `/attempts/upload` API with owner slots and conflict recovery, not automatic sync.
@@ -80,6 +84,8 @@ media/*
 ```
 
 The version-1 serializer includes project metadata, speakers, scenes and packaged media references. Scene flow uses exact unique IDs; scene names are presentation metadata. Optional `speakers[].lastVoiceChoice`, dialogue `voiceChoice`, and audio `generatedVoiceChoice` survive current saves/package round trips without a version bump. Older app builds may drop optional authoring fields when resaving.
+
+Browser import and API validation check the editor’s capacity before normalization. A project can contain up to 20 scenes, each with up to three dialogue lines, three choices and four speech bubble anchors. Invalid collection shapes and over-capacity imports return a validation error before content is applied or stored. Multiple references can share a packaged media file. A server title-copy that cannot preserve an entry name returns a client error before storing a copy.
 
 Browser import prepares and validates before replacement confirmation; apply is separate. Incomplete drafts can be repaired in the editor. Server publish validates a complete playable graph and required media, rather than treating upload warnings as publish permission. Legacy browser import support does not mean arbitrary legacy ZIPs can be uploaded directly to the API.
 

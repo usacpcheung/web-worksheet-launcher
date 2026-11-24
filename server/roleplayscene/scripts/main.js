@@ -1082,6 +1082,7 @@ function showImportError(err) {
   const errors = Array.isArray(err?.errors) ? err.errors : [];
   const warnings = Array.isArray(err?.warnings) ? err.warnings : [];
   const codeToTextId = {
+    [ImportErrorCode.ZIP_LIMIT]: 'messages.importZipLimit',
     [ImportErrorCode.INVALID_ZIP]: 'messages.importInvalidZip',
     [ImportErrorCode.MISSING_PROJECT_JSON]: 'messages.importMissingProjectJson',
     [ImportErrorCode.MISSING_PACKAGE_MANIFEST]: 'messages.importMissingPackageManifest',

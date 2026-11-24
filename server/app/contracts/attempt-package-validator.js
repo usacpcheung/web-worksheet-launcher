@@ -6,6 +6,23 @@ import { assertPackageAssets } from './package-assets.js';
 import { hasOptionImages, assertOptionImages } from '../option-images.js';
 import { assertWorksheetTextFormats, hasMarkdown, hasRichText } from '../worksheet-text.js';
 
+// Legacy manifests can give several IDs to one media file. Each ID becomes
+// its own IndexedDB record on restore. Keep ordinary aliases and missing
+// optional assets compatible, while bounding the actual bytes to persist.
+function assertLegacyRestoreBudget(assets, files) {
+  if (!Array.isArray(assets) || !files) return;
+  let packageBytes = 0;
+  for (const file of files.values()) packageBytes += file.byteLength;
+  const budget = Math.max(ATTEMPT_BYTES, packageBytes);
+  let restoredBytes = 0;
+  for (const asset of assets) {
+    if (typeof asset?.assetId !== 'string' || !asset.assetId
+      || typeof asset.path !== 'string' || !asset.path.startsWith('media/')) continue;
+    restoredBytes += files.get(asset.path)?.byteLength ?? 0;
+    if (restoredBytes > budget) throw new Error('Attempt media exceeds restore size limit.');
+  }
+}
+
 // Share the package/worksheet boundary. Local readers retain their historical
 // envelope defaults and answer coercion; uploads keep the existing strict envelope.
 export function assertAttemptPackage(manifest, worksheet, attempt, { allowLegacyEnvelope = false, files } = {}) {
@@ -28,7 +45,9 @@ export function assertAttemptPackage(manifest, worksheet, attempt, { allowLegacy
   if (hasRichText(worksheet.blocks) && manifest.packageVersion < 6) throw new Error('Rich text requires attempt package version 6.');
   if (hasMarkdown(worksheet.blocks) && manifest.packageVersion < 2) throw new Error('Markdown requires attempt package version 2.');
   if (hasOptionImages(worksheet.blocks) && manifest.packageVersion < 3) throw new Error('Option images require attempt package version 3.');
-  if (manifest.packageVersion >= 3) {
+  if (manifest.packageVersion < 3) {
+    assertLegacyRestoreBudget(manifest.assets, files);
+  } else {
     const assets = assertPackageAssets(manifest.assets, files);
     if (manifest.packageVersion >= 4) {
       assertImageAnswers(worksheet.blocks, attempt?.answers, assets, files);

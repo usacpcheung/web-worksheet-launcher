@@ -231,6 +231,7 @@ export default {
     "importFailed": "匯入失敗。",
     "importFailedSafe": "匯入失敗。目前專案未被取代。",
     "importCanceled": "已取消匯入。目前專案未被取代。",
+    "importZipLimit": "匯入失敗：封存檔超出支援的套件限制。",
     "importInvalidZip": "匯入失敗：無法讀取 ZIP 檔案。",
     "importMissingProjectJson": "匯入失敗：封存檔缺少 project.json。",
     "importMissingPackageManifest": "匯入失敗：套件缺少 manifest.json。",

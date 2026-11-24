@@ -9,7 +9,8 @@ import {
   ROLEPLAYSCENE_PACKAGE_RESOURCE_LIMIT_EXCEEDED,
   validateRolePlayScenePackage,
 } from './roleplayscene-package.js';
-import { createStoredZip } from '../../editor/zip-utils.js';
+import { createStoredZip, parseStoredZip } from '../../editor/zip-utils.js';
+import { zipSync } from '../../roleplayscene/scripts/vendor/fflate.module.js';
 
 const identity = {
   sub: 'oidc-sub',
@@ -514,6 +515,20 @@ test('uploadRolePlaySceneDraft copy stores artifact with server-selected copy ti
   assert.equal(storedValidation.metadata.title, 'Clinic Practice (3)');
   assert.equal(storedValidation.manifest.project.title, 'Clinic Practice (3)');
   assert.equal(storedValidation.project.meta.title, 'Clinic Practice (3)');
+});
+
+test('a copy that cannot preserve its entry names rolls back before writing an artifact', async () => {
+  const files = Object.fromEntries(parseStoredZip(createRolePlaySceneZip()));
+  files['/cover-note.txt'] = new TextEncoder().encode('Cover');
+  const zipBytes = zipSync(files);
+  const db = createFakeDb({ draftCount: 1, conflictRow: createConflictRow(), conflictTitles: ['clinic practice'] });
+  let writes = 0;
+  const service = createService({ db, artifactStore: { async storeArtifact() { writes++; } } });
+  const result = await service.uploadRolePlaySceneDraft({ identity, title: 'Clinic Practice', zipBytes, conflictAction: 'copy' });
+  assert.equal(result.statusCode, 400);
+  assert.match(result.error.details.reason, /entry name/);
+  assert.equal(writes, 0);
+  assert.ok(db.state.queries.includes('ROLLBACK'));
 });
 
 test('uploadRolePlaySceneDraft slot limit returns uploaded drafts and does not store artifact', async () => {
