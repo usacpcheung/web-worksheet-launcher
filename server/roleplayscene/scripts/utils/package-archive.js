@@ -1,0 +1,79 @@
+import { readZipDirectory, checkZipLimit } from '../../../app/contracts/zip-directory.js';
+import { crc32 } from '../../../editor/zip-utils.js';
+import { Inflate } from '../vendor/fflate.module.js';
+
+export const DEFAULT_ROLEPLAYSCENE_PACKAGE_LIMITS = Object.freeze({
+  maxUncompressedBytes: 64 * 1024 * 1024,
+  maxEntryBytes: 32 * 1024 * 1024,
+  maxEntries: 200,
+  maxEntryNameLength: 512,
+});
+
+// Includes room for headers and DEFLATE overhead on incompressible local media.
+export const LOCAL_ARCHIVE_BYTES = 72 * 1024 * 1024;
+
+export function checkSceneExportSizes(entries) {
+  const limits = DEFAULT_ROLEPLAYSCENE_PACKAGE_LIMITS;
+  checkZipLimit('maxEntries', limits.maxEntries, entries.length);
+  let total = 0;
+  for (const { path, size } of entries) {
+    checkZipLimit('maxEntryNameLength', limits.maxEntryNameLength, path.length, path);
+    checkZipLimit('maxEntryBytes', limits.maxEntryBytes, size, path);
+    total += size;
+    checkZipLimit('maxUncompressedBytes', limits.maxUncompressedBytes, total);
+  }
+}
+
+// Yield between chunks so the browser can time-slice large successful imports.
+// Never hand the inflater a whole untrusted stream with only its declared size.
+function* extract(bytes, overrides) {
+  const limits = { ...DEFAULT_ROLEPLAYSCENE_PACKAGE_LIMITS, ...overrides };
+  const entries = readZipDirectory(bytes, { allowDeflate: true, limits });
+  const files = new Map();
+  for (const entry of entries) {
+    const input = bytes.subarray(entry.dataStart, entry.dataEnd);
+    let output = input;
+    if (entry.method === 8) {
+      output = new Uint8Array(entry.size);
+      let written = 0;
+      const inflater = new Inflate(chunk => {
+        if (chunk.length > output.length - written) throw new Error('Invalid ZIP: decompressed entry exceeds declared size.');
+        output.set(chunk, written);
+        written += chunk.length;
+      });
+      if (!input.length) throw new Error('Invalid ZIP: missing compressed data.');
+      const step = 4096;
+      for (let pos = 0; pos < input.length; pos += step) {
+        inflater.push(input.subarray(pos, pos + step), pos + step >= input.length);
+        yield;
+      }
+      if (written !== entry.size) throw new Error('Invalid ZIP: incomplete entry.');
+    }
+    if (crc32(output) !== entry.checksum) throw new Error('Invalid ZIP: entry checksum mismatch.');
+    files.set(entry.name, output);
+    yield;
+  }
+  return files;
+}
+
+export function readSceneArchiveSync(bytes, limits) {
+  const work = extract(bytes, limits);
+  let result = work.next();
+  while (!result.done) result = work.next();
+  return result.value;
+}
+
+export async function readLocalSceneArchive(file) {
+  checkZipLimit('archive bytes', LOCAL_ARCHIVE_BYTES, file.size ?? file.byteLength);
+  const bytes = file instanceof Uint8Array ? file : new Uint8Array(await file.arrayBuffer());
+  checkZipLimit('archive bytes', LOCAL_ARCHIVE_BYTES, bytes.byteLength);
+  const work = extract(bytes);
+  let deadline = performance.now() + 12;
+  for (let result = work.next(); ; result = work.next()) {
+    if (result.done) return Object.fromEntries(result.value);
+    if (performance.now() >= deadline) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+      deadline = performance.now() + 12;
+    }
+  }
+}

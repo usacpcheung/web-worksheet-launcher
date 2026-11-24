@@ -1,17 +1,12 @@
 import { validateSceneIdentity } from '../../roleplayscene/scripts/scene-identity.js';
 import { createStoredZip, decodeUtf8 } from '../../editor/zip-utils.js';
-import { unzipSync } from '../../roleplayscene/scripts/vendor/fflate.module.js';
+import { readSceneArchiveSync } from '../../roleplayscene/scripts/utils/package-archive.js';
+export { DEFAULT_ROLEPLAYSCENE_PACKAGE_LIMITS } from '../../roleplayscene/scripts/utils/package-archive.js';
 
 export const ROLEPLAYSCENE_PACKAGE_FORMAT = 'roleplayscene-package';
 export const ROLEPLAYSCENE_PACKAGE_VERSION = 1;
 export const ROLEPLAYSCENE_DRAFT_ARTIFACT_BUCKET = 'roleplayscene/drafts';
 export const ROLEPLAYSCENE_PUBLISHED_ARTIFACT_BUCKET = 'roleplayscene/published';
-export const DEFAULT_ROLEPLAYSCENE_PACKAGE_LIMITS = Object.freeze({
-  maxUncompressedBytes: 64 * 1024 * 1024,
-  maxEntryBytes: 32 * 1024 * 1024,
-  maxEntries: 200,
-  maxEntryNameLength: 512,
-});
 export const ROLEPLAYSCENE_PACKAGE_RESOURCE_LIMIT_EXCEEDED = 'ROLEPLAYSCENE_PACKAGE_RESOURCE_LIMIT_EXCEEDED';
 
 const MANIFEST_PATH = 'manifest.json';
@@ -24,76 +19,21 @@ function normalizeText(value, fallback = '') {
   return normalized || fallback;
 }
 
-function normalizePackageLimits(limits = {}) {
-  return {
-    ...DEFAULT_ROLEPLAYSCENE_PACKAGE_LIMITS,
-    ...(limits && typeof limits === 'object' ? limits : {}),
-  };
-}
-
-function createResourceLimitError(limit, details) {
-  return Object.assign(
-    new Error(`RolePlayScene package exceeds ${limit}.`),
-    {
-      code: ROLEPLAYSCENE_PACKAGE_RESOURCE_LIMIT_EXCEEDED,
-      details: {
-        limit,
-        ...details,
-      },
-    }
-  );
-}
-
 function parseZipEntries(zipBytes, options = {}) {
-  const limits = normalizePackageLimits(options.limits);
-  let entryCount = 0;
-  let totalUncompressedBytes = 0;
-  const entries = unzipSync(zipBytes, {
-    filter(entry) {
-      entryCount += 1;
-      if (entryCount > limits.maxEntries) {
-        throw createResourceLimitError('maxEntries', {
-          maxEntries: limits.maxEntries,
-          actualEntries: entryCount,
-        });
-      }
-
-      const entryNameLength = String(entry.name || '').length;
-      if (entryNameLength > limits.maxEntryNameLength) {
-        throw createResourceLimitError('maxEntryNameLength', {
-          path: entry.name,
-          maxEntryNameLength: limits.maxEntryNameLength,
-          actualEntryNameLength: entryNameLength,
-        });
-      }
-
-      const originalSize = Number(entry.originalSize);
-      if (!Number.isSafeInteger(originalSize) || originalSize < 0) {
-        throw createResourceLimitError('entryOriginalSize', {
-          path: entry.name,
-          actualEntryBytes: entry.originalSize,
-        });
-      }
-      if (originalSize > limits.maxEntryBytes) {
-        throw createResourceLimitError('maxEntryBytes', {
-          path: entry.name,
-          maxEntryBytes: limits.maxEntryBytes,
-          actualEntryBytes: originalSize,
-        });
-      }
-
-      totalUncompressedBytes += originalSize;
-      if (totalUncompressedBytes > limits.maxUncompressedBytes) {
-        throw createResourceLimitError('maxUncompressedBytes', {
-          maxUncompressedBytes: limits.maxUncompressedBytes,
-          actualUncompressedBytes: totalUncompressedBytes,
-        });
-      }
-
-      return true;
-    },
-  });
-  return new Map(Object.entries(entries));
+  try {
+    return readSceneArchiveSync(zipBytes, options.limits);
+  } catch (error) {
+    if (error.code === 'ZIP_RESOURCE_LIMIT') {
+      error.code = ROLEPLAYSCENE_PACKAGE_RESOURCE_LIMIT_EXCEEDED;
+      const { actual, ...details } = error.details;
+      const actualKey = {
+        maxEntries: 'actualEntries', maxEntryBytes: 'actualEntryBytes',
+        maxEntryNameLength: 'actualEntryNameLength', maxUncompressedBytes: 'actualUncompressedBytes',
+      }[details.limit];
+      error.details = { ...details, [actualKey]: actual };
+    }
+    throw error;
+  }
 }
 
 function parseJsonEntry(files, path, {

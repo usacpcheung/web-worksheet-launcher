@@ -24,7 +24,9 @@ Reviewed against main `7bb19de` on 2026-10-06. Code authorities: `server/editor/
 | Attempt containing feedback configuration/responses | `worksheet-attempt-package` | 8 / 1 | Includes the worksheet-owned settings and separate feedback responses. |
 | RolePlayScene | `roleplayscene-package` | 1 | Browser imports also accept plain project JSON and legacy root `project.json` ZIPs; server draft upload requires the current package envelope. |
 
-Worksheet/attempt ZIP helpers support stored (uncompressed) entries and validate entry sizes, CRCs and duplicate names. RolePlayScene uses bundled `fflate` archive reading and has separate API decompression resource limits; do not generalize its compression support to worksheet ZIP import.
+Worksheet and attempt readers accept stored entries. Before reading payloads they verify the complete classic ZIP directory, matching local headers, disjoint byte ranges and unique names. The directory count is bounded by the classic ZIP format (65,535 entries) and the directory length. Total stored payload cannot exceed the bytes preceding the directory. Each payload must match its CRC. The server upload byte ceiling is separate from local import.
+
+RolePlayScene accepts stored and DEFLATE entries. Browser imports and the API default to 200 entries, 512 characters per name, 32 MiB per entry and 64 MiB total expanded data. The browser also checks a 72 MiB archive-file ceiling before reading a local ZIP. Exports check the same expanded budgets. The API retains its configured upload and expansion limits. Both readers check the actual output length and CRC before applying an import.
 
 ## Worksheet ZIP
 

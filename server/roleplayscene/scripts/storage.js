@@ -1,6 +1,7 @@
 import { voiceChoiceFields, generatedVoiceFields } from './t2a-presets.js';
 import { createProject, createScene, SceneType } from './model.js';
-import { zip, unzip } from './utils/zip.js';
+import { zip } from './utils/zip.js';
+import { readLocalSceneArchive, checkSceneExportSizes } from './utils/package-archive.js';
 import { seedIdSequencesFromProject } from './utils/id.js';
 import { getSceneName } from './scene-name.js';
 import { validateSceneIdentity } from './scene-identity.js';
@@ -18,6 +19,7 @@ const LEGACY_PROJECT_PATH = 'project.json';
 
 export const ImportErrorCode = Object.freeze({
   INVALID_ZIP: 'invalid_zip',
+  ZIP_LIMIT: 'zip_limit',
   MISSING_PROJECT_JSON: 'missing_project_json',
   MISSING_PACKAGE_MANIFEST: 'missing_package_manifest',
   MISSING_PACKAGE_PROJECT: 'missing_package_project',
@@ -366,6 +368,10 @@ export async function createProjectArchive(project) {
     [PACKAGE_MANIFEST_PATH]: encoder.encode(JSON.stringify(payload.manifest, null, 2)),
     [PACKAGE_PROJECT_PATH]: encoder.encode(JSON.stringify(projectPayload, null, 2)),
   };
+  checkSceneExportSizes([
+    ...Object.entries(entries).map(([path, data]) => ({ path, size: data.byteLength })),
+    ...binaries.map(({ path, blob }) => ({ path, size: blob.size })),
+  ]);
   for (const { path, blob } of binaries) {
     const buffer = await blob.arrayBuffer();
     entries[path] = new Uint8Array(buffer);
@@ -773,13 +779,11 @@ export async function applyPreparedProjectImport(store, preparedImport) {
 }
 
 export async function extractProjectFromArchive(fileOrBytes, options = {}) {
-  const buffer = fileOrBytes instanceof Uint8Array
-    ? fileOrBytes
-    : new Uint8Array(await fileOrBytes.arrayBuffer());
   let unpacked;
   try {
-    unpacked = await unzip(buffer);
+    unpacked = await readLocalSceneArchive(fileOrBytes);
   } catch (err) {
+    if (err.code === 'ZIP_RESOURCE_LIMIT') throw new ProjectImportError(ImportErrorCode.ZIP_LIMIT, err.message);
     throw new ProjectImportError(ImportErrorCode.INVALID_ZIP, 'Project archive is unreadable');
   }
   const decoder = new TextDecoder();
