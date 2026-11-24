@@ -1,3 +1,5 @@
+import { readZipDirectory } from '../app/contracts/zip-directory.js';
+
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
@@ -138,80 +140,15 @@ function createStoredZip(entries) {
   return concatUint8Arrays([localData, centralDirectory, eocd]);
 }
 
-function findEndOfCentralDirectory(bytes) {
-  for (let i = bytes.length - 22; i >= 0; i -= 1) {
-    if (bytes[i] === 0x50 && bytes[i + 1] === 0x4b && bytes[i + 2] === 0x05 && bytes[i + 3] === 0x06) {
-      return i;
-    }
-  }
-  return -1;
-}
-
 function parseStoredZip(arrayBuffer) {
   const bytes = toUint8Array(arrayBuffer);
-  const eocdOffset = findEndOfCentralDirectory(bytes);
-  if (eocdOffset < 0) {
-    throw new Error('Invalid ZIP: missing end of central directory record.');
-  }
-
-  const eocdView = new DataView(bytes.buffer, bytes.byteOffset + eocdOffset, bytes.byteLength - eocdOffset);
-  const entryCount = eocdView.getUint16(10, true);
-  const centralSize = eocdView.getUint32(12, true);
-  const centralOffset = eocdView.getUint32(16, true);
-
-  if (centralOffset + centralSize > bytes.length) {
-    throw new Error('Invalid ZIP: central directory exceeds file length.');
-  }
-
+  const entries = readZipDirectory(bytes);
   const files = new Map();
-  let pointer = centralOffset;
-  for (let i = 0; i < entryCount; i += 1) {
-    const view = new DataView(bytes.buffer, bytes.byteOffset + pointer, bytes.byteLength - pointer);
-    if (view.getUint32(0, true) !== 0x02014b50) {
-      throw new Error('Invalid ZIP: malformed central directory entry.');
-    }
-
-    const compressionMethod = view.getUint16(10, true);
-    const checksum = view.getUint32(16, true);
-    const compressedSize = view.getUint32(20, true);
-    const uncompressedSize = view.getUint32(24, true);
-    const fileNameLength = view.getUint16(28, true);
-    const extraLength = view.getUint16(30, true);
-    const commentLength = view.getUint16(32, true);
-    const localHeaderOffset = view.getUint32(42, true);
-
-    const nameStart = pointer + 46;
-    const nameEnd = nameStart + fileNameLength;
-    const fileName = textDecoder.decode(bytes.slice(nameStart, nameEnd));
-
-    const localView = new DataView(bytes.buffer, bytes.byteOffset + localHeaderOffset, bytes.byteLength - localHeaderOffset);
-    if (localView.getUint32(0, true) !== 0x04034b50) {
-      throw new Error(`Invalid ZIP: malformed local header for ${fileName}.`);
-    }
-    const localNameLength = localView.getUint16(26, true);
-    const localExtraLength = localView.getUint16(28, true);
-    const dataStart = localHeaderOffset + 30 + localNameLength + localExtraLength;
-    const dataEnd = dataStart + compressedSize;
-
-    if (compressionMethod !== 0) {
-      throw new Error(`Unsupported ZIP compression for ${fileName}; only stored entries are supported.`);
-    }
-
+  for (const { name, checksum, dataStart, dataEnd } of entries) {
     const data = bytes.slice(dataStart, dataEnd);
-    if (uncompressedSize !== data.length) {
-      throw new Error(`Invalid ZIP entry size for ${fileName}.`);
-    }
-    if (crc32(data) !== checksum) {
-      throw new Error(`ZIP CRC mismatch for ${fileName}.`);
-    }
-
-    if (files.has(fileName)) {
-      throw new Error(`Invalid ZIP: duplicate entry name "${fileName}".`);
-    }
-    files.set(fileName, data);
-    pointer = nameEnd + extraLength + commentLength;
+    if (crc32(data) !== checksum) throw new Error(`ZIP CRC mismatch for ${name}.`);
+    files.set(name, data);
   }
-
   return files;
 }
 
